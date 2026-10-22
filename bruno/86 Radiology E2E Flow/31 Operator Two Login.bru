@@ -1,0 +1,41 @@
+meta {
+  name: 31 Operator Two Login
+  type: http
+  seq: 31
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{operator2LoginIdentifier}}",
+    "password": "{{operatorPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.accessToken) bru.setVar("operatorToken2", data.accessToken);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured branch-scoped operatorToken2", function () {
+    expect(bru.getVar("operatorToken2")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bug #3 setup (3/3) — log in as the second-branch operator; their token is scoped
+  to the SECOND branch (`active_branch_id = branchId2`).
+}

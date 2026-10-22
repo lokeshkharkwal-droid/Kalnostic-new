@@ -1,0 +1,54 @@
+meta {
+  name: 33 Create Radiology Certificate
+  type: http
+  seq: 33
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-certificates
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "E2E Fitness Certificate {{radRunId}}",
+    "groupName": "Medical",
+    "content": "<p>This is to certify that <b>{patient_name}</b> is medically fit.</p>",
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("radiologyCertificateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured radiologyCertificateId", function () {
+    expect(bru.getVar("radiologyCertificateId")).to.be.a("string").and.not.equal("");
+  });
+  test("name + group persisted", function () {
+    expect(res.getBody().data.groupName).to.equal("Medical");
+  });
+}
+
+docs {
+  Radiology Certificate (new master-data entity, ported from EzHealthTrack
+  `radiologyCertificateCreate` = `rad_medical_certificate`). A named, grouped
+  rich-text certificate authored under a Master Data. Managed by business-admin
+  (Tenant MD) and branch-admin (Branch MD) — there is deliberately NO SiteAdmin
+  import. `name` is unique per master data among active rows (409
+  RADIOLOGY_CERTIFICATE_NAME_CONFLICT on a duplicate).
+}

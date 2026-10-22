@@ -1,0 +1,40 @@
+meta {
+  name: 32 Cross-Branch Action Blocked
+  type: http
+  seq: 32
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/acquire
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken2}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("cross-branch action is blocked (404)", function () {
+    expect(res.getStatus()).to.equal(404);
+  });
+  test("study is not found from the other branch's scope", function () {
+    expect(res.getBody().error.code).to.equal("RADIOLOGY_STUDY_NOT_FOUND");
+  });
+}
+
+docs {
+  Bug #3 proof — the study belongs to the FIRST branch. The SECOND branch's
+  operator (branch-scoped to `branchId2`) must NOT be able to acquire it: the
+  branch-scoped `transition()` lookup filters by the caller's active branch, so a
+  foreign-branch study is simply not found (404). Before the fix, any tenant user
+  could drive any branch's study through its lifecycle.
+}

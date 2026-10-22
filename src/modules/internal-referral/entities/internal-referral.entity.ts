@@ -41,6 +41,8 @@ export type InternalReferralWithRelations = Prisma.InternalReferralGetPayload<{
 export type InternalReferralDetail = InternalReferralWithRelations & {
   branchLabTestListId?: string | null;
   branchLabPanelListId?: string | null;
+  branchRadiologyTestListId?: string | null;
+  branchRadiologyPanelListId?: string | null;
 };
 
 /**
@@ -80,6 +82,8 @@ export type InternalReferralListRow = Prisma.InternalReferralGetPayload<{
 export type InternalReferralListItem = InternalReferralListRow & {
   labTestList: LabListRef | null;
   labPanelList: LabListRef | null;
+  radiologyTestList: LabListRef | null;
+  radiologyPanelList: LabListRef | null;
   /**
    * `true` when at least one active-workflow order references this referral, so
    * the client disables its Delete action (it may still be deactivated). Resolved

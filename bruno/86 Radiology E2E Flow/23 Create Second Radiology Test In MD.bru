@@ -1,0 +1,57 @@
+meta {
+  name: 23 Create Second Radiology Test In MD
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/radiology-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "E2E CT Head {{radRunId}}",
+    "testDisplayName": "CT Head Plain",
+    "testCode": "E2E-BR-CT-{{radRunId}}",
+    "modality": "CT",
+    "bodyPart": "Head",
+    "isContrast": false,
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 300000,
+    "priceMaximum": 300000,
+    "priceMinimum": 200000,
+    "priceOriginal": 250000,
+    "isActive": true
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("radiologyTestId2", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured radiologyTestId2", function () {
+    expect(bru.getVar("radiologyTestId2")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Order-edit coverage (1/5) — create a SECOND radiology test (CT Head) in the
+  branch master data, so the order-update path can be exercised by swapping the
+  order's radiology item to a different test. Regression guard for the bugs where
+  `OrderService.update()` dropped radiology item refs and never generated studies.
+}

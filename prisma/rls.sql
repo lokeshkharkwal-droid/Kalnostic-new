@@ -2269,3 +2269,21 @@ DROP POLICY IF EXISTS radiology_settings_tenant_isolation ON radiology_settings;
 CREATE POLICY radiology_settings_tenant_isolation ON radiology_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── radiology_certificates ────────────────────────────────────────────────────
+ALTER TABLE radiology_certificates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE radiology_certificates FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS radiology_certificates_tenant_isolation ON radiology_certificates;
+CREATE POLICY radiology_certificates_tenant_isolation ON radiology_certificates
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+CREATE UNIQUE INDEX IF NOT EXISTS radiology_certificate_md_name_active_unique
+  ON radiology_certificates (tenant_id, master_data_id, name) WHERE deleted_at IS NULL;
+
+-- ── radiology_certificates_issued ─────────────────────────────────────────────
+ALTER TABLE radiology_certificates_issued ENABLE ROW LEVEL SECURITY;
+ALTER TABLE radiology_certificates_issued FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS radiology_certificates_issued_tenant_isolation ON radiology_certificates_issued;
+CREATE POLICY radiology_certificates_issued_tenant_isolation ON radiology_certificates_issued
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());

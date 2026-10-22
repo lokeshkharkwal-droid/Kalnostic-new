@@ -1,0 +1,44 @@
+meta {
+  name: 25 Resolve Second Branch Radiology Test
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-tests?status=ACTIVE&page=1&limit=50
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: ACTIVE
+  page: 1
+  limit: 50
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length) {
+    const match = data.filter(function (t) { return t.sourceRadiologyTestId === bru.getVar("radiologyTestId2"); });
+    const pick = (match.length ? match : []).find(function (t) { return t.isDefault; }) || match[0];
+    if (pick && pick.id) bru.setVar("branchRadiologyTestId2", pick.id);
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("captured branchRadiologyTestId2", function () {
+    expect(bru.getVar("branchRadiologyTestId2")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Order-edit coverage (3/5) — capture the branch copy id of the second radiology
+  test (`branchRadiologyTestId2`), used as the edited order's new item.
+}

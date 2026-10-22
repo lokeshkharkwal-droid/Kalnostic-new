@@ -32,4 +32,10 @@ docs {
   carries `meta.total` / `meta.totalPages`. Rows are generated when a confirmed
   order carries radiology items (OrderService → RadiologyStudyService), one per
   radiology order item, born `NEW`.
+
+  Each row includes `departmentName` — the display name of the study's department
+  (resolved from the test's `departmentId`, which is a logical reference with no
+  relation) — plus `approvedAt` (set when the study is submitted/approved). These
+  drive the Order Console radiology panel's Department column and the Order
+  Overview radiology Test Details table.
 }

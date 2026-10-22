@@ -574,6 +574,16 @@ export class OrderController {
     return this.orderService.findNotes(id, tenantId, query);
   }
 
+  /**
+   * The order's Timeline — creation, every recorded update (with iteration) and
+   * every ORDER-level note, merged chronologically with the update/note totals.
+   * Drives the radiology worklist's "Timeline" action.
+   */
+  @Get(':id/timeline')
+  timeline(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.orderService.getTimeline(id, tenantId);
+  }
+
   /** Add a note to an order (append-only — never overwrites existing notes). */
   @Post(':id/notes')
   @Audit({

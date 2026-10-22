@@ -24,6 +24,7 @@ import { MasterDataModule } from './modules/master-data/master-data.module';
 import { LabTestModule } from './modules/lab-test/lab-test.module';
 import { LabPanelModule } from './modules/lab-panel/lab-panel.module';
 import { RadiologyTestModule } from './modules/radiology-test/radiology-test.module';
+import { RadiologyCertificateModule } from './modules/radiology-certificate/radiology-certificate.module';
 import { RadiologyPanelModule } from './modules/radiology-panel/radiology-panel.module';
 import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.module';
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
@@ -146,6 +147,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     LabTestModule,
     LabPanelModule,
     RadiologyTestModule,
+    RadiologyCertificateModule,
     RadiologyPanelModule,
     BranchLabTestModule,
     BranchLabPanelModule,

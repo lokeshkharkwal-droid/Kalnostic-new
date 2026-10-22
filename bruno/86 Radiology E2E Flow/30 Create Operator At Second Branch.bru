@@ -1,0 +1,62 @@
+meta {
+  name: 30 Create Operator At Second Branch
+  type: http
+  seq: 30
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Other Branch Operator",
+    "username": "rad.operator2.{{radRunId}}",
+    "dateOfBirth": "1991-07-21",
+    "gender": "FEMALE",
+    "email": "rad.operator2.{{radRunId}}@acme.test",
+    "mobileNumber": "{{operator2Mobile}}",
+    "password": "{{operatorPassword}}",
+    "roleKey": "receptionist",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      {
+        "branchId": "{{branchId2}}",
+        "role": "receptionist",
+        "modules": ["registration"],
+        "defaultModule": "registration",
+        "defaultBranch": true,
+        "status": "ACTIVE"
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.loginIdentifier) bru.setVar("operator2LoginIdentifier", data.loginIdentifier);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured operator2 login identifier", function () {
+    expect(bru.getVar("operator2LoginIdentifier")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bug #3 setup (2/3) — a branch-scoped `receptionist` at the SECOND branch only.
+}

@@ -199,6 +199,76 @@ export class BranchRadiologyTestService {
   }
 
   /**
+   * Import source for the picker's "Available to Add" panel: the active branch's
+   * Master Data radiology tests, paginated + searchable, with `excludeListId`
+   * dropping tests already in that pricing list. Mirrors
+   * `MasterDataService.getImportableLabTests` but for the FLAT radiology model, so
+   * rows carry `modality`/`bodyPart` directly (no classification name resolution).
+   * Shares {@link buildImportableWhere} with the "select all" filter-import so both
+   * match the identical row set.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param params pagination + search + classification filters + excludeListId
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   */
+  async getImportable(
+    tenantId: string,
+    branchId: string,
+    params: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      department?: string;
+      category?: string;
+      subCategory?: string;
+      excludeListId?: string;
+    },
+  ): Promise<
+    PaginatedResult<{
+      id: string;
+      testName: string;
+      testCode: string;
+      modality: string;
+      bodyPart: string | null;
+    }>
+  > {
+    const masterData = await this.masterDataService.findByBranch(
+      branchId,
+      tenantId,
+    );
+    const page = params.page ?? 1;
+    const limit = params.limit ?? 20;
+    const where = await this.buildImportableWhere(
+      masterData.id,
+      tenantId,
+      params.search,
+      {
+        department: params.department,
+        category: params.category,
+        subCategory: params.subCategory,
+      },
+      params.excludeListId,
+    );
+    const [rows, total] = await Promise.all([
+      this.prisma.radiologyTest.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { testName: 'asc' },
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          modality: true,
+          bodyPart: true,
+        },
+      }),
+      this.prisma.radiologyTest.count({ where }),
+    ]);
+    return { data: rows, total, page, limit };
+  }
+
+  /**
    * Build the `where` for the importable Master Data radiology tests — matching
    * the import-picker's "Available to Add" listing. Excludes sources already
    * copied into the target list (by `sourceRadiologyTestId`).

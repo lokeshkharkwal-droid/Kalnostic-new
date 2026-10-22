@@ -130,6 +130,15 @@ export class UpdateOrderDto {
   @IsUUID()
   branchLabPanelListId?: string;
 
+  /** Radiology pricing lists resolved for this order (§B5); items snapshot listPrice. */
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyTestListId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyPanelListId?: string;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

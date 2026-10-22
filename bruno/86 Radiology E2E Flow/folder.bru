@@ -16,7 +16,7 @@ script:pre-request {
   //   process the study acquire -> report -> approve -> publish -> history -> print.
   //
   // Every id/token is captured by each request's post-response via bru.setVar(...)
-  // - nothing is copied by hand. Just Run Folder, or click Next through 01 -> 22.
+  // - nothing is copied by hand. Just Run Folder, or click Next through 01 -> 38.
   // A per-run unique id (radRunId) keeps unique fields from colliding on re-runs.
   //
   // Token map (mirrors the proven EMI/TAT flows):
@@ -47,6 +47,7 @@ script:pre-request {
     bru.setVar("radRunId", n.slice(-6));
     bru.setVar("adminBootstrapPhone", "95" + n.slice(-8)); // admin login identifier (^\d{10}$)
     bru.setVar("operatorMobile",      "98" + n.slice(-8));
+    bru.setVar("operator2Mobile",     "93" + n.slice(-8));
     bru.setVar("patientMobile",       "96" + n.slice(-8));
     bru.setVar("doctorPhone",         "97" + n.slice(-8));
   }
@@ -63,7 +64,7 @@ docs {
   whole lifecycle (acquire -> report -> approve -> publish) and print it.
 
   ## How to run
-  Select this folder and **Run Folder**, or click **Next** through 01 -> 22. Each
+  Select this folder and **Run Folder**, or click **Next** through 01 -> 38. Each
   request captures the ids/tokens the next one needs via `bru.setVar(...)`. A
   `radRunId` is generated once per run so re-runs never collide on unique fields.
   The only credential assumed to exist is the **seeded SiteAdmin**
@@ -92,6 +93,12 @@ docs {
   **Process the study:** 16 list studies for the order (capture the `NEW` study)
   -> 17 acquire -> 18 report (fills findings/impression) -> 19 approve -> 20
   publish -> 21 status history (the full audit trail) -> 22 print the report PDF.
+
+  **Order-edit regression (23-27):** a second radiology test -> import -> resolve
+  -> **edit the order to swap in that item** -> verify the update path persists the
+  new radiology ref AND generates its study (and tombstones the removed item's
+  study). Guards the `OrderService.update()` bugs where radiology items were
+  silently dropped and never entered the worklist on edit.
 
   ## Notes
   - Radiology study routes (`/radiology/studies/*`) are authenticated but NOT

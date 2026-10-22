@@ -309,6 +309,8 @@ export class ReferralDoctorService {
         {
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       );
     }
@@ -538,7 +540,9 @@ export class ReferralDoctorService {
     if (
       branchId &&
       (dto.branchLabTestListId !== undefined ||
-        dto.branchLabPanelListId !== undefined)
+        dto.branchLabPanelListId !== undefined ||
+        dto.branchRadiologyTestListId !== undefined ||
+        dto.branchRadiologyPanelListId !== undefined)
     ) {
       await this.listAssignmentService.upsert(
         tenantId,
@@ -549,6 +553,8 @@ export class ReferralDoctorService {
         {
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       );
     }
@@ -906,6 +912,9 @@ export class ReferralDoctorService {
       })),
       branchLabTestListId: assignment?.branchLabTestListId ?? null,
       branchLabPanelListId: assignment?.branchLabPanelListId ?? null,
+      branchRadiologyTestListId: assignment?.branchRadiologyTestListId ?? null,
+      branchRadiologyPanelListId:
+        assignment?.branchRadiologyPanelListId ?? null,
     };
   }
 
@@ -940,6 +949,8 @@ export class ReferralDoctorService {
       status: row.status,
       labTestList: assignment?.labTestList ?? null,
       labPanelList: assignment?.labPanelList ?? null,
+      radiologyTestList: assignment?.radiologyTestList ?? null,
+      radiologyPanelList: assignment?.radiologyPanelList ?? null,
       hasActiveOrder,
     };
   }

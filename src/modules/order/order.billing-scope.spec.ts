@@ -37,6 +37,25 @@ describe('OrderService — Billings scope hides drafts and quotations', () => {
     status: { notIn: [OrderStatus.DRAFT, OrderStatus.QUOTE] },
   };
 
+  // The DIAGNOSTICS section is scoped by ITEMS now (an order with ≥1 lab test/
+  // panel or free-text line) — parallel to RADIOLOGY — rather than the old
+  // `diagnostics` relation. The relation is created whenever the create form's
+  // Diagnostics toggle is on (the default, even for a radiology order), so the
+  // relation filter leaked radiology orders into the Diagnostics list; the
+  // item-based scope keeps them out and still shows a mixed order in both.
+  const DIAGNOSTICS_SCOPE = {
+    items: {
+      some: {
+        deletedAt: null,
+        OR: [
+          { branchLabTestId: { not: null } },
+          { branchLabPanelId: { not: null } },
+          { direct: { not: null } },
+        ],
+      },
+    },
+  };
+
   beforeEach(() => {
     findMany.mockReset().mockResolvedValue([]);
   });
@@ -54,7 +73,11 @@ describe('OrderService — Billings scope hides drafts and quotations', () => {
       section: 'DIAGNOSTICS',
       hideUnpaidAppointments: true,
     });
-    expect(where.AND).toHaveLength(2);
+    // Three AND clauses now: the drafts/quotes exclusion, the unpaid-appointment
+    // rule, and the item-based DIAGNOSTICS section scope.
+    expect(where.AND).toHaveLength(3);
+    expect(where.AND).toContainEqual(EXCLUDE);
+    expect(where.AND).toContainEqual(DIAGNOSTICS_SCOPE);
   });
 
   it('never hides real bills: orders, appointments and cancelled stay', async () => {
@@ -118,7 +141,8 @@ describe('OrderService — Billings scope hides drafts and quotations', () => {
     expect(where).toMatchObject({
       tenantId: 'tenant-1',
       branchId: 'branch-1',
-      diagnostics: { is: {} },
     });
+    // Section scope is now an item-based AND clause, not a `diagnostics` relation.
+    expect(where.AND).toContainEqual(DIAGNOSTICS_SCOPE);
   });
 });

@@ -58,6 +58,19 @@ const RICH_TEXT_KEYS = new Set([
   'test_file_attachment_without_header',
   'observed1',
   'observed2',
+  // The whole issued radiology certificate HTML embedded into a `radiology_report`
+  // template via `{certificate_body}` — injected verbatim, never escaped, so the
+  // certificate's own formatting (tables, headings, signature image) survives.
+  'certificate_body',
+  // A study's full report body in a flat-authored `radiology_all_report` template
+  // (`{{#each reports}}{body_html}{{/each}}`); the Latte path uses the
+  // `|noescape` filter instead, so this only affects the flat fallback.
+  'body_html',
+  // The two one-shot `radiology_all_report` body tags — every selected study's
+  // body in one token: `reports_body` (continuous) / `reports_body_paged` (each
+  // study on a new page). Injected verbatim so the page-break divs survive.
+  'reports_body',
+  'reports_body_paged',
 ]);
 
 /**

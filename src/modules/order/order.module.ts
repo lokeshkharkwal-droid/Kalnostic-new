@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
 import { AppointmentModule } from '../appointment/appointment.module';
@@ -36,7 +36,10 @@ import { OrderService } from './order.service';
     PhlebotomistScheduleModule,
     PhlebotomistCollectionModule,
     AccessionModule,
-    RadiologyModule,
+    // forwardRef: RadiologyModule now also imports OrderModule (its print
+    // services reuse OrderService.getBillVariables for billing tags), so the two
+    // modules reference each other — NestJS needs forwardRef on both sides.
+    forwardRef(() => RadiologyModule),
     RegistrationSettingsModule,
     ReferralCreditModule,
     CommunicationModule,

@@ -18,6 +18,7 @@ import {
   PaymentMode,
   PaymentStatus,
   Prisma,
+  RadiologyStudyStatus,
   RecipientType,
   QuotationStatus,
   RepeatIntervalUnit,
@@ -85,6 +86,7 @@ import {
   ORDER_INCLUDE,
   ORDER_LIST_INCLUDE,
   OrderListRow,
+  deriveOrderSections,
   OrderWithRelations,
   BILLING_ORDER_INCLUDE,
   BillingOrder,
@@ -301,6 +303,43 @@ export interface OrderNoteView {
   readonly: boolean;
   /** Only set for accession-sourced SAMPLE notes (e.g. 'collect', 'accept'). */
   action?: string;
+}
+
+/** One chronological event on an order's Timeline. */
+export interface OrderTimelineEvent {
+  type:
+    | 'CREATED'
+    | 'UPDATED'
+    | 'REPORT_FILLED'
+    | 'REPORT_APPROVED'
+    | 'REPORT_PUBLISHED'
+    | 'NOTE';
+  at: Date;
+  actorName: string | null;
+  /** UPDATED events only — the 1-based edit iteration number. */
+  iteration?: number;
+  /** NOTE events only — the note body. */
+  body?: string;
+  /** REPORT_FILLED / REPORT_APPROVED / REPORT_PUBLISHED events only — the study (RAD id) involved. */
+  studyNo?: string;
+}
+
+/**
+ * An order's full history for the Timeline view: creation, every recorded update
+ * (with its iteration number, from `Order.updateHistory`), every radiology
+ * report-fill AND report-publish (from `RadiologyStudyStatusHistory`), and every
+ * ORDER-level note — merged into one chronological list, plus the per-kind totals.
+ */
+export interface OrderTimeline {
+  orderId: string;
+  createdAt: Date;
+  createdByName: string | null;
+  updateCount: number;
+  reportFillCount: number;
+  approveCount: number;
+  publishCount: number;
+  noteCount: number;
+  events: OrderTimelineEvent[];
 }
 
 /** The order documents that support "Share and Inform". */
@@ -841,6 +880,8 @@ export class OrderService {
             externalReferralId: dto.externalReferralId ?? null,
             branchLabTestListId: dto.branchLabTestListId ?? null,
             branchLabPanelListId: dto.branchLabPanelListId ?? null,
+            branchRadiologyTestListId: dto.branchRadiologyTestListId ?? null,
+            branchRadiologyPanelListId: dto.branchRadiologyPanelListId ?? null,
           },
         });
         // Order-level barcode — a separate entity from sample barcodes (own
@@ -964,6 +1005,24 @@ export class OrderService {
               branchId,
               order.id,
             ),
+          });
+        }
+        // Persist radiology prescription files as the patient's documents —
+        // identical to the diagnostics section above, so they surface in the
+        // patient page's Documents panel. Kept OUTSIDE the `dto.radiology` block:
+        // the radiology section requires a radiologist, but a prescription can be
+        // attached to a radiology order that has only items and no radiologist.
+        const radAttachments = dto.radiologyPrescriptionAttachments ?? [];
+        if (radAttachments.length) {
+          await this.patientService.createPatientDocumentsInTx(tx, {
+            tenantId,
+            branchId,
+            patientId: dto.patientId,
+            actorId: personId,
+            docs: radAttachments.map((a) => ({
+              name: a.name,
+              documentUrl: a.url,
+            })),
           });
         }
         if (dto.payments?.length) {
@@ -1216,6 +1275,12 @@ export class OrderService {
         : {}),
       ...(source.branchLabPanelListId
         ? { branchLabPanelListId: source.branchLabPanelListId }
+        : {}),
+      ...(source.branchRadiologyTestListId
+        ? { branchRadiologyTestListId: source.branchRadiologyTestListId }
+        : {}),
+      ...(source.branchRadiologyPanelListId
+        ? { branchRadiologyPanelListId: source.branchRadiologyPanelListId }
         : {}),
       ...(items.length ? { items } : {}),
       ...(payments.length ? { payments } : {}),
@@ -1844,6 +1909,9 @@ export class OrderService {
       paidAmount,
       hasInvoice: invoiceCodes.has(id),
       invoiceCode: invoiceCodes.get(id) ?? null,
+      // Item-derived module sections — same classification as the list, so the
+      // Billing detail view / Order Overview label the module consistently.
+      sections: deriveOrderSections(order.items, order.opd != null),
     };
   }
 
@@ -1989,6 +2057,133 @@ export class OrderService {
    * to the caller's tenant and is active, without loading its full graph.
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
    */
+  /**
+   * Assemble an order's Timeline: its creation, every recorded update (with the
+   * 1-based iteration from `Order.updateHistory`), and every ORDER-level note —
+   * merged chronologically, with actor names resolved and the update/note totals.
+   * Uses only real persisted data (creation timestamp, the update-history array,
+   * and OrderNote rows) — nothing is fabricated.
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async getTimeline(id: string, tenantId: string): Promise<OrderTimeline> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        createdAt: true,
+        createdBy: true,
+        updateHistory: true,
+      },
+    });
+    if (!order) {
+      throw new OrderNotFoundException(id);
+    }
+    // Only ORDER-level notes belong on the order timeline (sample/tech notes live
+    // in their own streams).
+    const notes = await this.prisma.orderNote.findMany({
+      where: { orderId: id, tenantId, category: 'ORDER' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const updates = Array.isArray(order.updateHistory)
+      ? (order.updateHistory as Array<{
+          iteration?: number;
+          at?: string;
+          by?: string | null;
+        }>)
+      : [];
+
+    // Radiology report lifecycle for this order's studies — each `report` (fill)
+    // and `publish` action is a separate `RadiologyStudyStatusHistory` row written
+    // when that transition succeeded, so every occurrence (including re-reports and
+    // re-publishes) surfaces independently.
+    const studies = await this.prisma.radiologyStudy.findMany({
+      where: { orderId: id, tenantId, deletedAt: null },
+      select: { id: true, studyNo: true },
+    });
+    const studyNoById = new Map(studies.map((s) => [s.id, s.studyNo]));
+    const studyHistory = studies.length
+      ? await this.prisma.radiologyStudyStatusHistory.findMany({
+          where: {
+            tenantId,
+            studyId: { in: studies.map((s) => s.id) },
+            action: { in: ['report', 'approve', 'publish'] },
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'asc' },
+          select: {
+            studyId: true,
+            action: true,
+            changedBy: true,
+            createdAt: true,
+          },
+        })
+      : [];
+    const reportFills = studyHistory.filter((h) => h.action === 'report');
+    const approvals = studyHistory.filter((h) => h.action === 'approve');
+    const publishes = studyHistory.filter((h) => h.action === 'publish');
+
+    // One batched name lookup for the creator + every updater + reporter/publisher
+    // + note author.
+    const nameById = await this.resolveActorNames([
+      order.createdBy,
+      ...updates.map((u) => u.by ?? null),
+      ...studyHistory.map((h) => h.changedBy),
+      ...notes.map((n) => n.createdBy),
+    ]);
+    const nameOf = (pid?: string | null): string | null =>
+      pid ? (nameById.get(pid) ?? pid) : null;
+
+    const events: OrderTimelineEvent[] = [
+      {
+        type: 'CREATED' as const,
+        at: order.createdAt,
+        actorName: nameOf(order.createdBy),
+      },
+      ...updates.map((u, i) => ({
+        type: 'UPDATED' as const,
+        at: u.at ? new Date(u.at) : order.createdAt,
+        actorName: nameOf(u.by),
+        iteration: u.iteration ?? i + 1,
+      })),
+      ...reportFills.map((r) => ({
+        type: 'REPORT_FILLED' as const,
+        at: r.createdAt,
+        actorName: nameOf(r.changedBy),
+        studyNo: studyNoById.get(r.studyId) ?? undefined,
+      })),
+      ...approvals.map((a) => ({
+        type: 'REPORT_APPROVED' as const,
+        at: a.createdAt,
+        actorName: nameOf(a.changedBy),
+        studyNo: studyNoById.get(a.studyId) ?? undefined,
+      })),
+      ...publishes.map((p) => ({
+        type: 'REPORT_PUBLISHED' as const,
+        at: p.createdAt,
+        actorName: nameOf(p.changedBy),
+        studyNo: studyNoById.get(p.studyId) ?? undefined,
+      })),
+      ...notes.map((n) => ({
+        type: 'NOTE' as const,
+        at: n.createdAt,
+        actorName: nameOf(n.createdBy),
+        body: n.body,
+      })),
+    ].sort((a, b) => a.at.getTime() - b.at.getTime());
+
+    return {
+      orderId: order.id,
+      createdAt: order.createdAt,
+      createdByName: nameOf(order.createdBy),
+      updateCount: updates.length,
+      reportFillCount: reportFills.length,
+      approveCount: approvals.length,
+      publishCount: publishes.length,
+      noteCount: notes.length,
+      events,
+    };
+  }
+
   private async assertOrderExists(id: string, tenantId: string): Promise<void> {
     const order = await this.prisma.order.findFirst({
       where: { id, tenantId, deletedAt: null },
@@ -2584,6 +2779,29 @@ export class OrderService {
         }),
       },
     };
+  }
+
+  /**
+   * Public reuse hook for the **flat bill `{variables}`** of an order — the exact
+   * gross/discount/net/paid/balance/refund money tags (plus patient + referral
+   * tags) the `bill_print` document exposes, built off the same authoritative
+   * `findById` rollup. Used by the radiology report/all-report print paths
+   * (RadiologyPrintService / RadiologyAllReportService) so a radiology template
+   * can carry the same billing figures a lab bill does, without duplicating the
+   * money math. Returns only the flat `variables` map (the bill's `sections`
+   * item/payment rows are not relevant to a radiology report).
+   * @param orderId the order whose bill figures are wanted
+   * @param tenantId tenant scope (from JWT)
+   * @returns the flat `{tag → value}` billing map (empty object if the order has
+   *   no billing context)
+   */
+  async getBillVariables(
+    orderId: string,
+    tenantId: string,
+  ): Promise<Record<string, unknown>> {
+    const order = await this.findById(orderId, tenantId);
+    const ctx = await this.buildBillContext(order, tenantId);
+    return ctx.variables ?? {};
   }
 
   /**
@@ -3484,24 +3702,63 @@ export class OrderService {
       }
     }
 
-    // Section scope + diagnostics-only flags collapse into one relation filter
-    // on the diagnostics section (so an order without a diagnostics row is
-    // excluded when any of these is set).
+    // Diagnostics-only flags (home visit / outsource) scope to the diagnostics
+    // relation. These are independent of the `section` scope below — an order can
+    // carry a diagnostics relation (home-visit/sample-source metadata) whether or
+    // not it also has lab items, so they stay a relation filter.
     const diagnosticsWhere: Prisma.OrderDiagnosticsWhereInput = {};
-    let hasDiagnosticsFilter = query.section === 'DIAGNOSTICS';
+    let hasDiagnosticsRelationFilter = false;
     if (query.isHomeVisit !== undefined) {
       diagnosticsWhere.isHomeVisit = query.isHomeVisit;
-      hasDiagnosticsFilter = true;
+      hasDiagnosticsRelationFilter = true;
     }
     if (query.isOutsource !== undefined) {
       diagnosticsWhere.sampleSource = query.isOutsource
         ? SampleSource.SUPPLIED
         : SampleSource.IN_HOUSE;
-      hasDiagnosticsFilter = true;
+      hasDiagnosticsRelationFilter = true;
     }
-    if (hasDiagnosticsFilter) where.diagnostics = { is: diagnosticsWhere };
+    if (hasDiagnosticsRelationFilter)
+      where.diagnostics = { is: diagnosticsWhere };
     if (query.section === 'OPD') where.opd = { is: {} };
-    if (query.section === 'RADIOLOGY') where.radiology = { is: {} };
+    if (query.section === 'DIAGNOSTICS') {
+      // A diagnostics (lab) order is one with at least one NON-radiology item: a
+      // lab test/panel, or a free-text `direct` entry. Matching on items — parallel
+      // to RADIOLOGY below — is authoritative: the `OrderDiagnostics` relation is
+      // created whenever the Diagnostics service is enabled on the form (even for a
+      // radiology order), so a radiology-only order can carry a diagnostics row and
+      // must NOT surface here. A mixed lab+radiology order has items of both kinds
+      // and so correctly appears in BOTH the DIAGNOSTICS and RADIOLOGY sections.
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchLabTestId: { not: null } },
+              { branchLabPanelId: { not: null } },
+              { direct: { not: null } },
+            ],
+          },
+        },
+      });
+    }
+    if (query.section === 'RADIOLOGY') {
+      // A radiology order is one with radiology ITEMS. The `OrderRadiology`
+      // metadata row is OPTIONAL (only created when a radiologist/department/
+      // technician is filled), so matching on the relation would miss plain
+      // radiology orders. Match on items so every radiology order appears.
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchRadiologyTestId: { not: null } },
+              { branchRadiologyPanelId: { not: null } },
+            ],
+          },
+        },
+      });
+    }
 
     // Item-relation filters (department / test / panel / sample status) are
     // pushed as separate AND clauses so several can co-exist without a single
@@ -3815,9 +4072,16 @@ export class OrderService {
       ),
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
-    const [counts, invoiceCodes] = await Promise.all([
+    const [
+      counts,
+      invoiceCodes,
+      radiologyStatusByOrder,
+      radiologyDepartmentsByOrder,
+    ] = await Promise.all([
       this.countItemsByOrder(tenantId, orderIds),
       this.invoicedOrderCodes(tenantId, orderIds),
+      this.radiologyStatusByOrder(tenantId, orderIds),
+      this.radiologyDepartmentsByOrder(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
@@ -3874,6 +4138,11 @@ export class OrderService {
       // The order this quote was converted into (most recent), if any — surfaces
       // the "View Order" link on a CONVERTED quotation row.
       const converted = r.convertedOrder[0] ?? null;
+      // The module sections this order spans, derived from its ITEMS (plus the OPD
+      // relation) — the authoritative classification the frontend uses to route a
+      // row into the Diagnostics / Radiology panels and to label its "Module"
+      // (e.g. "Combined" when it carries both lab and radiology items).
+      const sections = deriveOrderSections(r.items, r.opd != null);
       return {
         ...r,
         itemCount: count?.total ?? 0,
@@ -3906,9 +4175,121 @@ export class OrderService {
         // update/cancel guards).
         hasInvoice: invoiceCodes.has(r.id),
         invoiceCode: invoiceCodes.get(r.id) ?? null,
+        // Radiology "Order Status": the aggregated current stage of the order's
+        // RadiologyStudy rows (null for non-radiology orders). Drives the Radiology
+        // Order Console's Order Status column.
+        radiologyStatus: radiologyStatusByOrder.get(r.id) ?? null,
+        // Distinct department names across the order's radiology studies — drives
+        // the Radiology Order Console's Department column.
+        radiologyDepartments: radiologyDepartmentsByOrder.get(r.id) ?? [],
+        // Module sections this order spans (item-derived) — drives the frontend's
+        // Diagnostics/Radiology panel split and the Billing "Module" label.
+        sections,
       };
     });
     return { data, total, page, limit };
+  }
+
+  /**
+   * Aggregate each order's `RadiologyStudy` rows into one "current stage" for the
+   * Radiology Order Console's Order Status column. An order can have several
+   * studies (one per radiology item); the overall status is the LEAST-advanced
+   * active (non-cancelled) study — the stage the order as a whole is still at —
+   * or `CANCELLED` when every study is cancelled. Orders with no studies (i.e.
+   * non-radiology orders) are absent from the map.
+   * @param tenantId tenant scope
+   * @param orderIds the listed order ids
+   * @returns map of orderId → aggregated {@link RadiologyStudyStatus}
+   */
+  private async radiologyStatusByOrder(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, RadiologyStudyStatus>> {
+    const result = new Map<string, RadiologyStudyStatus>();
+    if (orderIds.length === 0) return result;
+    const studies = await this.prisma.radiologyStudy.findMany({
+      where: { tenantId, orderId: { in: orderIds }, deletedAt: null },
+      select: { orderId: true, status: true },
+    });
+    // Lifecycle rank: the lowest active rank is the order's current stage. HOLD
+    // ranks lowest so a held study surfaces for attention; CANCELLED is terminal.
+    const RANK: Record<RadiologyStudyStatus, number> = {
+      HOLD: 0,
+      NEW: 1,
+      SCHEDULED: 2,
+      ACQUIRED: 3,
+      REPORTED: 4,
+      VALIDATED: 5,
+      APPROVED: 6,
+      PUBLISHED: 7,
+      CANCELLED: 99,
+    };
+    const byOrder = new Map<string, RadiologyStudyStatus[]>();
+    for (const s of studies) {
+      const list = byOrder.get(s.orderId) ?? [];
+      list.push(s.status);
+      byOrder.set(s.orderId, list);
+    }
+    for (const [orderId, statuses] of byOrder) {
+      const active = statuses.filter(
+        (st) => st !== RadiologyStudyStatus.CANCELLED,
+      );
+      if (active.length === 0) {
+        result.set(orderId, RadiologyStudyStatus.CANCELLED);
+        continue;
+      }
+      const current = active.reduce((lowest, st) =>
+        RANK[st] < RANK[lowest] ? st : lowest,
+      );
+      result.set(orderId, current);
+    }
+    return result;
+  }
+
+  /**
+   * Resolve each order's distinct radiology department names from its
+   * `RadiologyStudy` rows (`departmentId` is a logical reference with no
+   * relation, so names are resolved in one batched Department lookup). Orders
+   * with no radiology studies are absent from the map.
+   * @param tenantId tenant scope
+   * @param orderIds the listed order ids
+   * @returns map of orderId → distinct department names
+   */
+  private async radiologyDepartmentsByOrder(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    if (orderIds.length === 0) return result;
+    const studies = await this.prisma.radiologyStudy.findMany({
+      where: { tenantId, orderId: { in: orderIds }, deletedAt: null },
+      select: { orderId: true, departmentId: true },
+    });
+    const deptIds = [
+      ...new Set(
+        studies
+          .map((s) => s.departmentId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (deptIds.length === 0) return result;
+    const depts = await this.prisma.department.findMany({
+      where: { id: { in: deptIds }, tenantId },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(depts.map((d) => [d.id, d.name]));
+    const byOrder = new Map<string, Set<string>>();
+    for (const s of studies) {
+      const name = s.departmentId ? nameById.get(s.departmentId) : null;
+      if (!name) continue;
+      const set = byOrder.get(s.orderId) ?? new Set<string>();
+      set.add(name);
+      byOrder.set(s.orderId, set);
+    }
+    for (const [orderId, names] of byOrder) {
+      result.set(orderId, [...names]);
+    }
+    return result;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -5719,6 +6100,7 @@ export class OrderService {
         externalOrderId: true,
         isBillGenerated: true,
         createdBy: true,
+        updateHistory: true,
         appointmentId: true,
         appointmentAt: true,
         appointment: { select: { status: true } },
@@ -6151,11 +6533,26 @@ export class OrderService {
             )
           : undefined;
 
+      // Append this edit to the order's Timeline history (1-based iteration),
+      // authoritative because it is written inside the update transaction.
+      const prevUpdateHistory = Array.isArray(existing?.updateHistory)
+        ? (existing.updateHistory as unknown[])
+        : [];
+      const nextUpdateHistory = [
+        ...prevUpdateHistory,
+        {
+          iteration: prevUpdateHistory.length + 1,
+          at: now.toISOString(),
+          by: personId ?? null,
+        },
+      ];
+
       await tx.order.update({
         where: { id },
         data: {
           status: dto.status,
           updatedBy: personId,
+          updateHistory: nextUpdateHistory as Prisma.InputJsonValue,
           appointmentId,
           externalOrderId: externalOrderIdUpdate,
           // Recompute only when the payment ledger is part of this patch;
@@ -6199,6 +6596,8 @@ export class OrderService {
           externalReferralId: dto.externalReferralId,
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       });
 
@@ -6230,7 +6629,11 @@ export class OrderService {
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
                 : (keepPrices.get(
-                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                    i.branchLabTestId ??
+                      i.branchLabPanelId ??
+                      i.branchRadiologyTestId ??
+                      i.branchRadiologyPanelId ??
+                      '',
                   ) ?? 0),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
@@ -6256,11 +6659,17 @@ export class OrderService {
                 orderId: id,
                 branchLabTestId: i.branchLabTestId ?? null,
                 branchLabPanelId: i.branchLabPanelId ?? null,
+                branchRadiologyTestId: i.branchRadiologyTestId ?? null,
+                branchRadiologyPanelId: i.branchRadiologyPanelId ?? null,
                 direct: i.direct ?? null,
                 unitPrice: i.direct
                   ? (i.unitPrice ?? 0)
                   : (addPrices.get(
-                      i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                      i.branchLabTestId ??
+                        i.branchLabPanelId ??
+                        i.branchRadiologyTestId ??
+                        i.branchRadiologyPanelId ??
+                        '',
                     ) ?? 0),
                 discount: i.discount ?? 0,
                 discountMode: i.discountMode ?? null,
@@ -6537,6 +6946,33 @@ export class OrderService {
             id,
           );
         }
+      }
+      // Radiology worklist handoff on a confirmed order (parallel to accession,
+      // skipping specimen collection). `generateStudiesForOrderInTx` is per-item
+      // idempotent, so it creates studies for newly-added radiology items and
+      // skips those already covered; removed radiology items are tombstoned.
+      if (
+        effectiveStatus === OrderStatus.ORDER ||
+        effectiveStatus === OrderStatus.APPOINTMENT
+      ) {
+        if (
+          dto.items !== undefined &&
+          itemDiff &&
+          itemDiff.removeIds.length > 0
+        ) {
+          await this.radiologyStudies.tombstoneStudiesForRemovedItemsInTx(
+            tx,
+            tenantId,
+            itemDiff.removeIds,
+          );
+        }
+        await this.radiologyStudies.generateStudiesForOrderInTx(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          id,
+        );
       }
       // Create the home-visit Collection Schedule record if this update confirms a
       // home-visit order (e.g. DRAFT → ORDER/APPOINTMENT). Idempotent + guarded, so

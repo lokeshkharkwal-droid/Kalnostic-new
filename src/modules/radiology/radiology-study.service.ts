@@ -19,6 +19,30 @@ import {
 } from './exceptions/radiology.exceptions';
 
 /**
+ * Worklist row shape: the study plus a lightweight slice of its parent order —
+ * the order code, booking/creation timestamps, and patient name — so the FE can
+ * render the order identity (code + date·time + patient) on each row, matching
+ * the `/accession/in-house` order cell, without a second fetch.
+ */
+export const RADIOLOGY_STUDY_LIST_INCLUDE = {
+  order: {
+    select: {
+      orderCode: true,
+      orderDate: true,
+      createdAt: true,
+      patient: {
+        select: { firstName: true, middleName: true, lastName: true },
+      },
+    },
+  },
+} satisfies Prisma.RadiologyStudyInclude;
+
+/** A radiology worklist row (study + order identity slice). */
+export type RadiologyStudyListRow = Prisma.RadiologyStudyGetPayload<{
+  include: typeof RADIOLOGY_STUDY_LIST_INCLUDE;
+}>;
+
+/**
  * Radiology processing service. Owns the radiology worklist (`RadiologyStudy`)
  * generated from radiology orders, and the study lifecycle state machine
  * (schedule → acquire → report → validate → approve → publish, with hold/cancel/
@@ -52,12 +76,17 @@ export class RadiologyStudyService {
     personId: string | null,
     orderId: string,
   ): Promise<void> {
-    const existing = await tx.radiologyStudy.count({
+    // Per-ITEM idempotency: a study is generated once per radiology order item.
+    // This lets the same routine serve both first-time creation and the update
+    // path (adding a radiology item to an existing order) without duplicating
+    // studies for items that already have one.
+    const existingStudies = await tx.radiologyStudy.findMany({
       where: { orderId, tenantId, deletedAt: null },
+      select: { orderItemId: true },
     });
-    if (existing > 0) {
-      return;
-    }
+    const coveredItemIds = new Set(
+      existingStudies.map((s) => s.orderItemId).filter((v): v is string => !!v),
+    );
     const items = await tx.orderItem.findMany({
       where: {
         orderId,
@@ -77,6 +106,10 @@ export class RadiologyStudyService {
       where: { orderId, tenantId, deletedAt: null },
     });
     for (const item of items) {
+      // Skip items that already have a study (idempotent across create + update).
+      if (coveredItemIds.has(item.id)) {
+        continue;
+      }
       const test = item.branchRadiologyTest;
       const panel = item.branchRadiologyPanel;
       // Bill-Only items are billed but never enter the radiology workflow.
@@ -125,6 +158,28 @@ export class RadiologyStudyService {
     }
   }
 
+  /**
+   * Tombstone (soft-delete) the studies whose order item was removed on an edit,
+   * so a radiology item dropped during an order update also leaves the worklist.
+   * Mirrors the accession sample-reconcile "tombstone removed items" behaviour.
+   * @param tx the order-update transaction client
+   * @param tenantId tenant scope
+   * @param orderItemIds the removed order-item ids
+   */
+  async tombstoneStudiesForRemovedItemsInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderItemIds: string[],
+  ): Promise<void> {
+    if (orderItemIds.length === 0) {
+      return;
+    }
+    await tx.radiologyStudy.updateMany({
+      where: { tenantId, orderItemId: { in: orderItemIds }, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   // ── Reads ─────────────────────────────────────────────────────────────────
 
   /**
@@ -136,7 +191,7 @@ export class RadiologyStudyService {
     branchId: string | null,
     query: ListRadiologyStudiesDto,
   ): Promise<{
-    data: RadiologyStudy[];
+    data: (RadiologyStudyListRow & { departmentName: string | null })[];
     total: number;
     page: number;
     limit: number;
@@ -147,7 +202,13 @@ export class RadiologyStudyService {
       tenantId,
       deletedAt: null,
       ...(branchId ? { branchId } : {}),
-      ...(query.status ? { status: query.status } : {}),
+      // `statuses` (multi) powers the collapsed New/In Progress/Published tabs and
+      // takes precedence over the single `status` when both are sent.
+      ...(query.statuses?.length
+        ? { status: { in: query.statuses } }
+        : query.status
+          ? { status: query.status }
+          : {}),
       ...(query.modality ? { modality: query.modality } : {}),
       ...(query.radiologistId ? { radiologistId: query.radiologistId } : {}),
       ...(query.orderId ? { orderId: query.orderId } : {}),
@@ -158,18 +219,54 @@ export class RadiologyStudyService {
         { studyNo: { contains: term, mode: 'insensitive' } },
         { radiologyTestName: { contains: term, mode: 'insensitive' } },
         { bodyPart: { contains: term, mode: 'insensitive' } },
+        // Let the free-text search also match the parent order's code, so a user
+        // can find a study by the Order ID now shown on the row.
+        { order: { orderCode: { contains: term, mode: 'insensitive' } } },
       ];
     }
     const [data, total] = await Promise.all([
       this.prisma.radiologyStudy.findMany({
         where,
+        include: RADIOLOGY_STUDY_LIST_INCLUDE,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
       this.prisma.radiologyStudy.count({ where }),
     ]);
-    return { data, total, page, limit };
+    // `departmentId` is a logical reference (no relation); resolve the display
+    // names in one batched lookup so the worklist / order-console show them.
+    const deptNames = await this.resolveDepartmentNames(
+      tenantId,
+      data.map((s) => s.departmentId),
+    );
+    const enriched = data.map((s) => ({
+      ...s,
+      departmentName: s.departmentId
+        ? (deptNames.get(s.departmentId) ?? null)
+        : null,
+    }));
+    return { data: enriched, total, page, limit };
+  }
+
+  /** Batched department id → name lookup for a tenant (logical refs, no relation). */
+  private async resolveDepartmentNames(
+    tenantId: string,
+    idsRaw: (string | null)[],
+  ): Promise<Map<string, string>> {
+    const ids = [...new Set(idsRaw.filter((x): x is string => Boolean(x)))];
+    const map = new Map<string, string>();
+    if (ids.length === 0) {
+      return map;
+    }
+    const rows = await this.prisma.department.findMany({
+      where: { id: { in: ids }, tenantId },
+      select: { id: true, name: true },
+    });
+    for (const r of rows) {
+      map.set(r.id, r.name);
+    }
+    return map;
   }
 
   /** Fetch one study (with its status history). */
@@ -237,13 +334,22 @@ export class RadiologyStudyService {
   async transition(
     id: string,
     tenantId: string,
+    branchId: string | null,
     personId: string | null,
     action: RadiologyAction,
     dto: ReportRadiologyStudyDto,
   ): Promise<RadiologyStudy> {
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Branch scope (CLAUDE.md §4.7): a branch-scoped caller (non-null active
+      // branch) may only act on studies in that branch; a tenant-level caller
+      // (`branchId === null`, e.g. business_admin) may act on any branch's study.
       const study = await tx.radiologyStudy.findFirst({
-        where: { id, tenantId, deletedAt: null },
+        where: {
+          id,
+          tenantId,
+          deletedAt: null,
+          ...(branchId ? { branchId } : {}),
+        },
       });
       if (!study) {
         throw new RadiologyStudyNotFoundException(id);
@@ -283,6 +389,7 @@ export class RadiologyStudyService {
   async bulkTransition(
     ids: string[],
     tenantId: string,
+    branchId: string | null,
     personId: string | null,
     action: RadiologyAction,
     dto: ReportRadiologyStudyDto,
@@ -290,7 +397,7 @@ export class RadiologyStudyService {
     const result: BulkRadiologyResult = { succeeded: [], failed: [] };
     for (const id of ids) {
       try {
-        await this.transition(id, tenantId, personId, action, dto);
+        await this.transition(id, tenantId, branchId, personId, action, dto);
         result.succeeded.push(id);
       } catch (e) {
         result.failed.push({
@@ -320,6 +427,16 @@ export class RadiologyStudyService {
     const extra: Prisma.RadiologyStudyUncheckedUpdateInput = {};
 
     if (action === 'retrieve') {
+      // `retrieve` is the undo for a HELD study only — reverting it to the status
+      // it was in before being put on hold. It must never resurrect a terminal
+      // CANCELLED study or un-publish an APPROVED/PUBLISHED one.
+      if (study.status !== RadiologyStudyStatus.HOLD) {
+        throw new InvalidRadiologyStudyTransitionException(
+          study.id,
+          action,
+          study.status,
+        );
+      }
       const toStatus = study.previousStatus ?? RadiologyStudyStatus.NEW;
       return { toStatus, extra };
     }

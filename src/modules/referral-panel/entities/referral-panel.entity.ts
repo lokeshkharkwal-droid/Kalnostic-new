@@ -30,6 +30,8 @@ export type BonusSlab = {
 export type ReferralPanelEntity = ReferralPanel & {
   branchLabTestListId?: string | null;
   branchLabPanelListId?: string | null;
+  branchRadiologyTestListId?: string | null;
+  branchRadiologyPanelListId?: string | null;
 };
 
 /**
@@ -42,6 +44,8 @@ export type ReferralPanelEntity = ReferralPanel & {
 export type ReferralPanelListItem = ReferralPanel & {
   labTestList: LabListRef | null;
   labPanelList: LabListRef | null;
+  radiologyTestList: LabListRef | null;
+  radiologyPanelList: LabListRef | null;
   /**
    * `true` when at least one active-workflow order references this panel, so the
    * client disables its Delete action (it may still be deactivated). Resolved in

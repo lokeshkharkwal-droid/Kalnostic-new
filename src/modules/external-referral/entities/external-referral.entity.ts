@@ -32,6 +32,8 @@ export type BonusSlab = {
 export type ExternalReferralDetail = ExternalReferral & {
   branchLabTestListId?: string | null;
   branchLabPanelListId?: string | null;
+  branchRadiologyTestListId?: string | null;
+  branchRadiologyPanelListId?: string | null;
 };
 
 /**
@@ -67,6 +69,8 @@ export type ExternalReferralListRow = Prisma.ExternalReferralGetPayload<{
 export type ExternalReferralListItem = ExternalReferralListRow & {
   labTestList: LabListRef | null;
   labPanelList: LabListRef | null;
+  radiologyTestList: LabListRef | null;
+  radiologyPanelList: LabListRef | null;
   /**
    * `true` when at least one active-workflow order references this referral, so
    * the client disables its Delete action (it may still be deactivated). Resolved

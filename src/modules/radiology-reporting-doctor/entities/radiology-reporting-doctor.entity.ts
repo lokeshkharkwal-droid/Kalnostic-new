@@ -1,4 +1,9 @@
-import { DoctorStatus, Prisma, Salutation } from '@prisma/client';
+import {
+  DoctorStatus,
+  Prisma,
+  RadiologyReportingDoctorType,
+  Salutation,
+} from '@prisma/client';
 
 /**
  * Domain/response shape for a radiology reporting doctor (the Prisma model is the
@@ -69,6 +74,7 @@ export interface RadiologyReportingDoctorListItem {
   id: string;
   name: string;
   salutation: Salutation | null;
+  doctorType: RadiologyReportingDoctorType;
   registrationNo: string;
   department: ClassificationRef | null;
   specialization: string | null;

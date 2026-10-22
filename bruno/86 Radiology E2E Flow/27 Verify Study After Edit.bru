@@ -1,0 +1,50 @@
+meta {
+  name: 27 Verify Study After Edit
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies?orderId={{orderId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  orderId: {{orderId}}
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.length && data[0].id) bru.setVar("studyIdAfterEdit", data[0].id);
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("exactly one active study remains (first tombstoned, second generated)", function () {
+    expect(res.getBody().data.length).to.equal(1);
+  });
+  test("the study is for the newly-added radiology test (ref persisted on update)", function () {
+    expect(res.getBody().data[0].branchRadiologyTestId).to.equal(bru.getVar("branchRadiologyTestId2"));
+  });
+  test("the newly-added item's study was generated as NEW", function () {
+    expect(res.getBody().data[0].status).to.equal("NEW");
+  });
+}
+
+docs {
+  Order-edit coverage (5/5) — proves the update path now behaves correctly:
+  - exactly one active study (the removed first item's study was tombstoned),
+  - that study's `branchRadiologyTestId` is the SECOND test — so the radiology
+    ref was persisted when the item was added on edit (bug #1 fixed),
+  - and its status is `NEW` — so a study was actually generated on the update
+    path (bug #2 fixed).
+}

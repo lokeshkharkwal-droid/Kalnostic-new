@@ -64,6 +64,8 @@ export type ReferralDoctorDetail = Omit<
   experiences: ReferralDoctorExperienceView[];
   branchLabTestListId?: string | null;
   branchLabPanelListId?: string | null;
+  branchRadiologyTestListId?: string | null;
+  branchRadiologyPanelListId?: string | null;
 };
 
 /** A reference to a linked department/category/sub-category (id + name). */
@@ -119,6 +121,10 @@ export interface ReferralDoctorListItem {
   labTestList: ClassificationRef | null;
   /** Active branch's assigned Lab Panel List, bulk-resolved (never per-row). */
   labPanelList: ClassificationRef | null;
+  /** Active branch's assigned Radiology Test List, bulk-resolved (never per-row). */
+  radiologyTestList: ClassificationRef | null;
+  /** Active branch's assigned Radiology Panel List, bulk-resolved (never per-row). */
+  radiologyPanelList: ClassificationRef | null;
   /**
    * `true` when at least one active-workflow order references this doctor, so the
    * client disables its Delete action (it may still be deactivated). Resolved in

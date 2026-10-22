@@ -4,6 +4,7 @@ import {
   PaymentStatus,
   Prisma,
   QuotationStatus,
+  RadiologyStudyStatus,
   RefundStatus,
 } from '@prisma/client';
 import { roundToTwoDecimalPlaces } from '../../../common/utils';
@@ -272,21 +273,30 @@ export function orderItemNames(
     direct: string | null;
     branchLabTest: { testName: string; isBillOnlyTest?: boolean } | null;
     branchLabPanel: { panelName: string; isBillOnlyTest?: boolean } | null;
+    branchRadiologyTest?: { testName: string; isBillOnlyTest?: boolean } | null;
+    branchRadiologyPanel?: {
+      panelName: string;
+      isBillOnlyTest?: boolean;
+    } | null;
   }[],
 ): string[] {
   return (
     items
-      // Bill-only tests/panels are billed but never enter the lab workflow, so they
-      // don't belong in the Order Console's workflow item column.
+      // Bill-only tests/panels are billed but never enter the lab/radiology
+      // workflow, so they don't belong in the Order Console's workflow item column.
       .filter(
         (it) =>
           !it.branchLabTest?.isBillOnlyTest &&
-          !it.branchLabPanel?.isBillOnlyTest,
+          !it.branchLabPanel?.isBillOnlyTest &&
+          !it.branchRadiologyTest?.isBillOnlyTest &&
+          !it.branchRadiologyPanel?.isBillOnlyTest,
       )
       .map(
         (it) =>
           it.branchLabPanel?.panelName ??
           it.branchLabTest?.testName ??
+          it.branchRadiologyPanel?.panelName ??
+          it.branchRadiologyTest?.testName ??
           it.direct ??
           '—',
       )
@@ -383,6 +393,39 @@ export const ORDER_INCLUDE = {
           listPrice: true,
           isBillOnlyTest: true,
           // Panel discount flag (inverse of the FE `isAllowDiscounts` option).
+          isDisableDiscount: true,
+          tatMinValue: true,
+          tatMinUnit: true,
+          tatMaxValue: true,
+          tatMaxUnit: true,
+        },
+      },
+      // Radiology item refs (parallel to the lab refs) — names + pricing/discount
+      // flags so the create-order EDIT form can re-hydrate radiology test/panel
+      // lines (label, Original Price, discount-allowed) exactly like lab lines.
+      branchRadiologyTest: {
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          priceMsrp: true,
+          listPrice: true,
+          isBillOnlyTest: true,
+          isAllowDiscounts: true,
+          tatMinValue: true,
+          tatMinUnit: true,
+          tatMaxValue: true,
+          tatMaxUnit: true,
+        },
+      },
+      branchRadiologyPanel: {
+        select: {
+          id: true,
+          panelName: true,
+          panelCode: true,
+          priceMsrp: true,
+          listPrice: true,
+          isBillOnlyTest: true,
           isDisableDiscount: true,
           tatMinValue: true,
           tatMinUnit: true,
@@ -495,7 +538,50 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   netAmount: number;
   /** Money actually collected across the active payment ledger (Σ paidAmount). */
   paidAmount: number;
+  /**
+   * The module sections this order spans (item-derived; see {@link OrderListRow}).
+   * Mirrored on the detail response so the Billing detail view / Order Overview
+   * label the module identically to the list.
+   */
+  sections: OrderSection[];
 };
+
+/**
+ * Derive the module sections an order spans from its items (+ an OPD relation):
+ * `DIAGNOSTICS` for any lab test/panel or free-text item, `RADIOLOGY` for any
+ * radiology test/panel item, `OPD` when an OPD relation is present. Shared by the
+ * list (`findAll`) and detail (`findById`) so both classify an order identically.
+ */
+export function deriveOrderSections(
+  items: Array<{
+    branchLabTestId?: string | null;
+    branchLabPanelId?: string | null;
+    branchLabTest?: unknown;
+    branchLabPanel?: unknown;
+    direct?: string | null;
+    branchRadiologyTestId?: string | null;
+    branchRadiologyPanelId?: string | null;
+  }>,
+  hasOpd: boolean,
+): OrderSection[] {
+  const hasRadiology = items.some(
+    (it) =>
+      it.branchRadiologyTestId != null || it.branchRadiologyPanelId != null,
+  );
+  const hasDiagnostics = items.some(
+    (it) =>
+      it.branchLabTestId != null ||
+      it.branchLabPanelId != null ||
+      it.branchLabTest != null ||
+      it.branchLabPanel != null ||
+      it.direct != null,
+  );
+  const sections: OrderSection[] = [];
+  if (hasDiagnostics) sections.push('DIAGNOSTICS');
+  if (hasRadiology) sections.push('RADIOLOGY');
+  if (hasOpd) sections.push('OPD');
+  return sections;
+}
 
 /**
  * Aggregated Billing/Collection metrics (whole rupees) for the Finance → Reports
@@ -605,6 +691,27 @@ export const ORDER_LIST_INCLUDE = {
         },
       },
       branchLabPanel: {
+        select: {
+          id: true,
+          panelName: true,
+          panelCode: true,
+          isBillOnlyTest: true,
+        },
+      },
+      // Radiology item refs (radiology orders) — resolved names for the Radiology
+      // Order Console's "Radiology Items" column. Ids let the FE tell a radiology
+      // order apart; a lab order leaves these null.
+      branchRadiologyTestId: true,
+      branchRadiologyPanelId: true,
+      branchRadiologyTest: {
+        select: {
+          id: true,
+          testName: true,
+          testCode: true,
+          isBillOnlyTest: true,
+        },
+      },
+      branchRadiologyPanel: {
         select: {
           id: true,
           panelName: true,
@@ -888,4 +995,29 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   hasInvoice: boolean;
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
+  /**
+   * Radiology "Order Status": the aggregated current stage of the order's
+   * `RadiologyStudy` rows (the least-advanced active study, or CANCELLED when all
+   * are cancelled). Null for non-radiology orders (no studies). Drives the
+   * Radiology Order Console's Order Status column.
+   */
+  radiologyStatus: RadiologyStudyStatus | null;
+  /**
+   * The distinct department names of the order's radiology studies (resolved
+   * from each test's `departmentId`). Empty for non-radiology orders. Drives the
+   * Radiology Order Console's Department column.
+   */
+  radiologyDepartments: string[];
+  /**
+   * The module sections this order spans, derived from its items (and the OPD
+   * relation): `DIAGNOSTICS` when it has any lab test/panel or free-text item,
+   * `RADIOLOGY` when it has any radiology test/panel item, `OPD` when it has an OPD
+   * relation. A mixed lab+radiology order carries both. The frontend uses this to
+   * route a row into the Diagnostics vs Radiology panels and to label the Billing
+   * "Module" column (showing "Combined" when more than one section is present).
+   */
+  sections: OrderSection[];
 };
+
+/** A module section an order can belong to, derived from its items/relations. */
+export type OrderSection = 'DIAGNOSTICS' | 'RADIOLOGY' | 'OPD';

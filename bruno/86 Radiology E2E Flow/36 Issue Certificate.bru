@@ -1,0 +1,54 @@
+meta {
+  name: 36 Issue Certificate
+  type: http
+  seq: 36
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/certificates
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "certificateId": "{{radiologyCertificateId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("issuedCertificateId", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured issuedCertificateId", function () {
+    expect(bru.getVar("issuedCertificateId")).to.be.a("string").and.not.equal("");
+  });
+  test("snapshots template name + links the study", function () {
+    expect(res.getBody().data.certificateName).to.be.a("string").and.not.equal("");
+    expect(res.getBody().data.studyId).to.equal(bru.getVar("studyIdAfterEdit"));
+  });
+  test("content was resolved (no raw placeholder left)", function () {
+    expect(res.getBody().data.content).to.not.include("{patient_name}");
+  });
+}
+
+docs {
+  Issue (save) the certificate against the study — EzHealthTrack
+  `saveCertificate` → `rad_certificate_history`. With no `content` in the body the
+  server renders it fresh from the template; the FE sends the doctor's edited HTML.
+  Stores a `RadiologyCertificateIssued` row linked to study / order / patient, with
+  `issued_by` = the caller. Not RBAC-gated (issued during the encounter).
+}

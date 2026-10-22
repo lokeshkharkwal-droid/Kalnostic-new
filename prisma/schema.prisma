@@ -849,32 +849,32 @@ model Tenant {
   configuration TenantConfiguration? // site URLs / branding / limits / theme
   setting       TenantSetting? // referral / payment / commission / wallet rules
 
-  isActive               Boolean               @default(true) @map("is_active")
-  mrnCounter             Int                   @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
-  mrnPrefix              String?               @map("mrn_prefix")
-  branchCounter          Int                   @default(0) @map("branch_counter") // per-tenant sequential branch code
-  staffCounter           Int                   @default(0) @map("staff_counter") // per-tenant sequential staff user code (USR-00001)
-  departmentCounter      Int                   @default(0) @map("department_counter") // per-tenant sequential department code
-  categoryCounter        Int                   @default(0) @map("category_counter") // per-tenant sequential category code
-  subCategoryCounter     Int                   @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
-  outsourceCenterCounter Int                   @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
+  isActive                        Boolean               @default(true) @map("is_active")
+  mrnCounter                      Int                   @default(0) @map("mrn_counter") // per-tenant sequential patient MRN
+  mrnPrefix                       String?               @map("mrn_prefix")
+  branchCounter                   Int                   @default(0) @map("branch_counter") // per-tenant sequential branch code
+  staffCounter                    Int                   @default(0) @map("staff_counter") // per-tenant sequential staff user code (USR-00001)
+  departmentCounter               Int                   @default(0) @map("department_counter") // per-tenant sequential department code
+  categoryCounter                 Int                   @default(0) @map("category_counter") // per-tenant sequential category code
+  subCategoryCounter              Int                   @default(0) @map("sub_category_counter") // per-tenant sequential sub-category code
+  outsourceCenterCounter          Int                   @default(0) @map("outsource_center_counter") // per-tenant sequential outsource-center code
   // Accession "Group Settings" — tenant-wide, business-admin-only. Defaults to
   // DEPARTMENT_SAMPLE_NAME so every existing tenant's behavior is unchanged the
   // moment this column exists (that mode already matches today's hardcoded
   // physical-sample grouping — see AccessionGroupingMode's doc comment).
-  groupingMode           AccessionGroupingMode @default(DEPARTMENT_SAMPLE_NAME) @map("grouping_mode")
-  referralPanelCounter   Int                   @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
-  orderCounter           Int                   @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
-  appointmentCounter     Int                   @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
-  diagnosticBillCounter  Int                   @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
-  accessionCounter       Int                   @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
-  radiologyStudyCounter  Int                   @default(0) @map("radiology_study_counter") // per-tenant sequential radiology study number (RAD-00001)
-  radiologyOutsourceCenterCounter Int          @default(0) @map("radiology_outsource_center_counter") // per-tenant sequential radiology outsource-center code (ROC-00001)
-  leadCounter            Int                   @default(0) @map("lead_counter") // per-tenant sequential sales lead code (LD-YYYY-00001)
-  tripCounter            Int                   @default(0) @map("trip_counter") // per-tenant sequential sales trip code (TRP-00001)
-  followUpCounter        Int                   @default(0) @map("follow_up_counter") // per-tenant sequential sales follow-up code (FU-00001)
-  createdBy              String?               @map("created_by") // SiteAdmin user id (creator)
-  updatedBy              String?               @map("updated_by") // SiteAdmin user id (last editor)
+  groupingMode                    AccessionGroupingMode @default(DEPARTMENT_SAMPLE_NAME) @map("grouping_mode")
+  referralPanelCounter            Int                   @default(0) @map("referral_panel_counter") // per-tenant sequential referral-panel code
+  orderCounter                    Int                   @default(0) @map("order_counter") // per-tenant sequential order code (ORD-00001)
+  appointmentCounter              Int                   @default(0) @map("appointment_counter") // per-tenant sequential appointment code (APT-00001)
+  diagnosticBillCounter           Int                   @default(0) @map("diagnostic_bill_counter") // per-tenant sequential diagnostic bill id (DIG-001)
+  accessionCounter                Int                   @default(0) @map("accession_counter") // per-tenant sequential accession number (ACC-00001)
+  radiologyStudyCounter           Int                   @default(0) @map("radiology_study_counter") // per-tenant sequential radiology study number (RAD-00001)
+  radiologyOutsourceCenterCounter Int                   @default(0) @map("radiology_outsource_center_counter") // per-tenant sequential radiology outsource-center code (ROC-00001)
+  leadCounter                     Int                   @default(0) @map("lead_counter") // per-tenant sequential sales lead code (LD-YYYY-00001)
+  tripCounter                     Int                   @default(0) @map("trip_counter") // per-tenant sequential sales trip code (TRP-00001)
+  followUpCounter                 Int                   @default(0) @map("follow_up_counter") // per-tenant sequential sales follow-up code (FU-00001)
+  createdBy                       String?               @map("created_by") // SiteAdmin user id (creator)
+  updatedBy                       String?               @map("updated_by") // SiteAdmin user id (last editor)
 
   /// Source BUSINESS_ID from the legacy EzHealthTrack MySQL database, kept for
   /// idempotent data migration + traceability. Null for natively-created tenants.
@@ -888,13 +888,13 @@ model Tenant {
   /// When this tenant was registered as a client on the external Exchange server
   /// (POST /clients). NULL = not yet registered — this is the idempotency guard
   /// for the SiteAdmin register-exchange flow.
-  exchangeRegisteredAt DateTime? @map("exchange_registered_at")
+  exchangeRegisteredAt     DateTime? @map("exchange_registered_at")
   /// Client id returned by the Exchange on successful registration
   /// (`data.original.id`). NULL until registered.
-  exchangeClientId String? @map("exchange_client_id")
+  exchangeClientId         String?   @map("exchange_client_id")
   /// Raw `data.original` payload from the Exchange registration response, kept
   /// for traceability. NULL until registered.
-  exchangeRegistrationMeta Json? @map("exchange_registration_meta")
+  exchangeRegistrationMeta Json?     @map("exchange_registration_meta")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2991,7 +2991,7 @@ model LabTestReferenceRange {
   // same pattern as equipmentId/branchId elsewhere in this codebase). NULL
   // means this range is not scoped to any analyzer ("Default") — the sole
   // signal for that state; there is no separate type/flag field.
-  labAdapterId String? @map("lab_adapter_id")
+  labAdapterId String?         @map("lab_adapter_id")
   gender       ReferenceGender @default(ALL)
   // One default per (parameter, labAdapterId, method, unit, gender, age-band) group —
   // each method has its own Default. Validated in the backend
@@ -3073,8 +3073,8 @@ model OverallResultTemplate {
   tenantId String @map("tenant_id")
 
   name      String
-  groupName String                     @map("group_name")
-  content   String                     @db.Text
+  groupName String                      @map("group_name")
+  content   String                      @db.Text
   status    OverallResultTemplateStatus @default(ACTIVE)
 
   createdBy String? @map("created_by")
@@ -3592,6 +3592,9 @@ model ReferralListAssignment {
   branchLabTestListId  String? @map("branch_lab_test_list_id")
   branchLabPanelListId String? @map("branch_lab_panel_list_id")
 
+  branchRadiologyTestListId  String? @map("branch_radiology_test_list_id")
+  branchRadiologyPanelListId String? @map("branch_radiology_panel_list_id")
+
   createdBy String?   @map("created_by")
   updatedBy String?   @map("updated_by")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -3765,11 +3768,11 @@ model EquipmentLabTest {
 /// Carries a system-generated unique `token`. `name` is unique per tenant among
 /// active rows (partial unique index in prisma/rls.sql). RLS policy in prisma/rls.sql.
 model LabAdapter {
-  id          String  @id @default(uuid())
-  tenantId    String  @map("tenant_id")
-  name        String  @map("name")
-  token       String  @unique @map("token")
-  equipmentId String  @map("equipment_id") // logical ref → global SITE_ADMIN Equipment
+  id          String        @id @default(uuid())
+  tenantId    String        @map("tenant_id")
+  name        String        @map("name")
+  token       String        @unique @map("token")
+  equipmentId String        @map("equipment_id") // logical ref → global SITE_ADMIN Equipment
   // ONLINE = live LIS/EMI submission works (see AdapterStatus's own doc
   // comment); REPORT_ONLY = the lab still reports through this adapter
   // manually, but it's not wired for live instrument submission; INACTIVE =
@@ -4180,11 +4183,11 @@ model ReferralPanel {
   tds                    Int?                  @map("tds")
 
   // ── Payment & incentive ──
-  paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
-  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
-  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
-  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+  paymentCycle               PaymentCycle @default(NA) @map("payment_cycle")
+  paymentMode                PaymentMode  @default(BANK_TRANSFER) @map("payment_mode")
+  monthlyTargetAmount        Int          @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean      @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json         @default("[]") @map("bonus_slabs")
 
   // ── Attachment & remarks ──
   fileName String? @map("file_name")
@@ -4192,7 +4195,7 @@ model ReferralPanel {
   remarks  String?
 
   /// Orders billed to this referral (B2B) panel.
-  orders Order[]
+  orders       Order[]
   /// The dedicated B2B login profile(s) scoped to this panel (1:1 in practice).
   userProfiles UserBranchProfile[]
 
@@ -4273,10 +4276,10 @@ model Doctor {
   signatorySubCategoryIds Json?   @map("signatory_sub_category_ids")
 
   // Banking
-  accountHolderName String?           @map("account_holder_name")
-  bankName          String?           @map("bank_name")
-  accountNumber     String?           @map("account_number")
-  ifscCode          String?           @map("ifsc_code")
+  accountHolderName String?     @map("account_holder_name")
+  bankName          String?     @map("bank_name")
+  accountNumber     String?     @map("account_number")
+  ifscCode          String?     @map("ifsc_code")
   paymentMode       PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
 
   // Charges
@@ -4835,11 +4838,11 @@ model ReferralDoctor {
 
   // Payment & incentive (bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
-  paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
-  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
-  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
-  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+  paymentCycle               PaymentCycle @default(NA) @map("payment_cycle")
+  paymentMode                PaymentMode  @default(BANK_TRANSFER) @map("payment_mode")
+  monthlyTargetAmount        Int          @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean      @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json         @default("[]") @map("bonus_slabs")
 
   // Attachment & remarks (file stored as name + URL; upload handled elsewhere)
   fileName String? @map("file_name")
@@ -4976,11 +4979,11 @@ model ExternalReferral {
 
   // Payment & incentive (bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
-  paymentCycle               PaymentCycle        @default(NA) @map("payment_cycle")
-  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
-  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
-  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
-  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+  paymentCycle               PaymentCycle @default(NA) @map("payment_cycle")
+  paymentMode                PaymentMode  @default(BANK_TRANSFER) @map("payment_mode")
+  monthlyTargetAmount        Int          @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean      @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json         @default("[]") @map("bonus_slabs")
 
   // Attachment & remarks (file stored as name + URL; upload handled elsewhere)
   fileName String? @map("file_name")
@@ -5053,13 +5056,13 @@ model InternalReferral {
 
   // Payroll & payment (unique to internal referrals; bonus slabs as JSON of
   // { monthlyBusinessFrom, monthlyBusinessTo, bonusPct }).
-  isIncludedInPayroll        Boolean             @default(false) @map("is_included_in_payroll")
-  paymentCycle               PaymentCycle        @default(MONTHLY) @map("payment_cycle")
-  paymentMode                PaymentMode @default(BANK_TRANSFER) @map("payment_mode")
-  commissionMode             CommissionMode      @default(INCLUDED_IN_SALARY) @map("commission_mode")
-  monthlyTargetAmount        Int                 @default(0) @map("monthly_target_amount")
-  isIncentiveBonusApplicable Boolean             @default(false) @map("is_incentive_bonus_applicable")
-  bonusSlabs                 Json                @default("[]") @map("bonus_slabs")
+  isIncludedInPayroll        Boolean        @default(false) @map("is_included_in_payroll")
+  paymentCycle               PaymentCycle   @default(MONTHLY) @map("payment_cycle")
+  paymentMode                PaymentMode    @default(BANK_TRANSFER) @map("payment_mode")
+  commissionMode             CommissionMode @default(INCLUDED_IN_SALARY) @map("commission_mode")
+  monthlyTargetAmount        Int            @default(0) @map("monthly_target_amount")
+  isIncentiveBonusApplicable Boolean        @default(false) @map("is_incentive_bonus_applicable")
+  bonusSlabs                 Json           @default("[]") @map("bonus_slabs")
 
   // Attachment & remarks (file stored as name + URL; upload handled elsewhere)
   fileName String? @map("file_name")
@@ -6579,6 +6582,12 @@ model Order {
   // Shape mirrors the FE `useOrderMeta` billing fields (see BillingDetailsDto).
   billingDetails Json? @map("billing_details")
 
+  // Append-only edit history for the order Timeline: one entry per successful
+  // `update()`, as `{ iteration, at, by }` (1-based iteration, ISO instant, actor
+  // Person id). Written inside the update transaction so the count/iterations are
+  // authoritative. `null`/absent on orders never edited since this shipped.
+  updateHistory Json? @map("update_history")
+
   // Derived from the payment ledger (recomputed on every payment write). Stored
   // so the orders/appointments lists can filter + paginate by payment status
   // server-side (a summed comparison Prisma can't express in a `where`).
@@ -6653,6 +6662,11 @@ model Order {
   branchLabTestListId  String? @map("branch_lab_test_list_id")
   branchLabPanelListId String? @map("branch_lab_panel_list_id")
 
+  // Radiology pricing lists resolved for this order (parallel to the lab lists
+  // above). Logical refs — the chosen list drives radiology item prices.
+  branchRadiologyTestListId  String? @map("branch_radiology_test_list_id")
+  branchRadiologyPanelListId String? @map("branch_radiology_panel_list_id")
+
   // Sections & children
   items       OrderItem[]
   diagnostics OrderDiagnostics?
@@ -6691,6 +6705,10 @@ model Order {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
+  // distinct in Postgres). Does NOT constrain against sample barcodes, so an order
+  // and a sample may legitimately share the same number.
+  @@unique([branchId, orderIdBarcode])
   @@index([tenantId])
   @@index([branchId])
   @@index([patientId])
@@ -6706,10 +6724,6 @@ model Order {
   @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
-  // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
-  // distinct in Postgres). Does NOT constrain against sample barcodes, so an order
-  // and a sample may legitimately share the same number.
-  @@unique([branchId, orderIdBarcode])
   @@index([deletedAt])
   @@map("orders")
 }
@@ -7038,8 +7052,8 @@ model SettlementPayment {
   amount        Int
   payoutMode    PaymentMode @map("payout_mode")
   reference     String
-  attachmentUrl String?              @map("attachment_url")
-  paymentDate   DateTime             @default(now()) @map("payment_date")
+  attachmentUrl String?     @map("attachment_url")
+  paymentDate   DateTime    @default(now()) @map("payment_date")
   notes         String?
 
   createdBy String?   @map("created_by")
@@ -7109,8 +7123,8 @@ model OrderItem {
   // Radiology catalogue refs (parallel to the lab test/panel refs above). When a
   // radiology test/panel is ordered, exactly one of these is set instead of the
   // lab refs. Drives RadiologyStudy generation (OrderService → RadiologyStudyService).
-  branchRadiologyTestId  String?              @map("branch_radiology_test_id")
-  branchRadiologyTest    BranchRadiologyTest? @relation(fields: [branchRadiologyTestId], references: [id])
+  branchRadiologyTestId  String?               @map("branch_radiology_test_id")
+  branchRadiologyTest    BranchRadiologyTest?  @relation(fields: [branchRadiologyTestId], references: [id])
   branchRadiologyPanelId String?               @map("branch_radiology_panel_id")
   branchRadiologyPanel   BranchRadiologyPanel? @relation(fields: [branchRadiologyPanelId], references: [id])
 
@@ -8045,33 +8059,33 @@ model PaymentDetails {
   orderId String @map("order_id")
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  totalAmount            Decimal     @default(0) @map("total_amount") @db.Decimal(12, 2)
-  orderDiscount          Decimal     @default(0) @map("order_discount") @db.Decimal(12, 2)
+  totalAmount            Decimal       @default(0) @map("total_amount") @db.Decimal(12, 2)
+  orderDiscount          Decimal       @default(0) @map("order_discount") @db.Decimal(12, 2)
   /// The order-level discount's ORIGINAL input — how it was entered
   /// (`PERCENT`/`AMOUNT`) and the raw number the user typed — kept alongside the
   /// computed `orderDiscount` amount so a percentage discount can be recomputed
   /// against a new item total when the order is edited (add/remove tests). Mirrors
   /// `OrderItem.discountMode`/`discountValue`.
-  orderDiscountMode  DiscountMode? @map("order_discount_mode")
-  orderDiscountValue Float?        @map("order_discount_value")
+  orderDiscountMode      DiscountMode? @map("order_discount_mode")
+  orderDiscountValue     Float?        @map("order_discount_value")
   /// Total discount applied to the order = every per-line item discount PLUS the
   /// order-level `orderDiscount` above, in rupees (up to 2 decimal places). A
   /// denormalized runtime rollup (`totalAmount - netAmount`) stored for bill
   /// display/reporting; the item-level (`OrderItem.discount`) and order-level
   /// (`orderDiscount`) discounts remain their own separate columns.
-  netDiscount            Decimal     @default(0) @map("net_discount") @db.Decimal(12, 2)
-  visitingCharges        Decimal     @default(0) @map("visiting_charges") @db.Decimal(12, 2)
-  netAmount              Decimal     @default(0) @map("net_amount") @db.Decimal(12, 2)
-  deductFromWallet       Decimal     @default(0) @map("deduct_from_wallet") @db.Decimal(12, 2)
-  deductFromPoints       Decimal     @default(0) @map("deduct_from_points") @db.Decimal(12, 2)
-  hasClearedPreviousDues Boolean     @default(false) @map("has_cleared_previous_dues")
-  tdsDeduction           Decimal     @default(0) @map("tds_deduction") @db.Decimal(12, 2)
-  payableAmount          Decimal     @default(0) @map("payable_amount") @db.Decimal(12, 2)
-  paidAmount             Decimal     @default(0) @map("paid_amount") @db.Decimal(12, 2)
-  remainingBalance       Decimal     @default(0) @map("remaining_balance") @db.Decimal(12, 2)
-  paymentMode            PaymentMode @default(CASH) @map("payment_mode")
-  paymentDate            DateTime?   @map("payment_date")
-  reference              String?     @map("reference")
+  netDiscount            Decimal       @default(0) @map("net_discount") @db.Decimal(12, 2)
+  visitingCharges        Decimal       @default(0) @map("visiting_charges") @db.Decimal(12, 2)
+  netAmount              Decimal       @default(0) @map("net_amount") @db.Decimal(12, 2)
+  deductFromWallet       Decimal       @default(0) @map("deduct_from_wallet") @db.Decimal(12, 2)
+  deductFromPoints       Decimal       @default(0) @map("deduct_from_points") @db.Decimal(12, 2)
+  hasClearedPreviousDues Boolean       @default(false) @map("has_cleared_previous_dues")
+  tdsDeduction           Decimal       @default(0) @map("tds_deduction") @db.Decimal(12, 2)
+  payableAmount          Decimal       @default(0) @map("payable_amount") @db.Decimal(12, 2)
+  paidAmount             Decimal       @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  remainingBalance       Decimal       @default(0) @map("remaining_balance") @db.Decimal(12, 2)
+  paymentMode            PaymentMode   @default(CASH) @map("payment_mode")
+  paymentDate            DateTime?     @map("payment_date")
+  reference              String?       @map("reference")
   notes                  String?
 
   /// The staff `Person` who collected/recorded this payment (logical ref, no
@@ -9539,11 +9553,11 @@ model RadiologyPanel {
 /// A test included in a radiology panel. `radiologyTestId` is a logical ref to an
 /// active RadiologyTest in the same tenant (validated in RadiologyPanelService).
 model RadiologyPanelTest {
-  id              String  @id @default(uuid())
-  tenantId        String? @map("tenant_id")
-  branchId        String? @map("branch_id")
-  radiologyPanelId String @map("radiology_panel_id")
-  radiologyTestId  String @map("radiology_test_id")
+  id               String  @id @default(uuid())
+  tenantId         String? @map("tenant_id")
+  branchId         String? @map("branch_id")
+  radiologyPanelId String  @map("radiology_panel_id")
+  radiologyTestId  String  @map("radiology_test_id")
 
   sortOrder       Int     @default(0) @map("sort_order")
   isRemovable     Boolean @default(true) @map("is_removable")
@@ -9967,11 +9981,11 @@ model RadiologyStudy {
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   // The ordered item + resolved catalogue test/panel (logical refs).
-  orderItemId         String? @map("order_item_id")
+  orderItemId            String? @map("order_item_id")
   branchRadiologyTestId  String? @map("branch_radiology_test_id")
   branchRadiologyPanelId String? @map("branch_radiology_panel_id")
-  radiologyTestId     String? @map("radiology_test_id")
-  departmentId        String? @map("department_id")
+  radiologyTestId        String? @map("radiology_test_id")
+  departmentId           String? @map("department_id")
 
   // Snapshot of the catalogue test (stable even if the catalogue is re-priced/edited).
   radiologyTestName String?            @map("radiology_test_name")
@@ -9982,8 +9996,8 @@ model RadiologyStudy {
   studyNo String @map("study_no")
 
   // People (logical refs — Person for radiologist/technician; reporting doctor master).
-  radiologistId   String? @map("radiologist_id")
-  technicianId    String? @map("technician_id")
+  radiologistId     String? @map("radiologist_id")
+  technicianId      String? @map("technician_id")
   reportingDoctorId String? @map("reporting_doctor_id")
 
   status         RadiologyStudyStatus  @default(NEW)
@@ -10070,8 +10084,8 @@ model RadiologySetting {
   config Json @default("{}")
 
   // ── Radiology (TAT / threshold toggles) ──
-  Radiology_WarningThresholdMinutes  Int @default(60) @map("radiology_warning_threshold_minutes")
-  Radiology_CriticalThresholdMinutes Int @default(30) @map("radiology_critical_threshold_minutes")
+  Radiology_WarningThresholdMinutes  Int     @default(60) @map("radiology_warning_threshold_minutes")
+  Radiology_CriticalThresholdMinutes Int     @default(30) @map("radiology_critical_threshold_minutes")
   Radiology_AutoPublishOnApprove     Boolean @default(false) @map("radiology_auto_publish_on_approve")
   Radiology_RequireValidation        Boolean @default(true) @map("radiology_require_validation")
 
@@ -10083,4 +10097,81 @@ model RadiologySetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("radiology_settings")
+}
+
+/// A radiology certificate / medical-note template authored under Master Data
+/// (tenant-scoped + branch-level). Ported from EzHealthTrack
+/// `rad_medical_certificate` (certificate/radiologyCertificateCreate): a named,
+/// grouped rich-text document. Managed by business-admin (Tenant MD, branchId
+/// NULL) and branch-admin (Branch MD, per-branch) via `/master-data/:id/
+/// radiology-certificates`. NOT a SiteAdmin template — there is deliberately no
+/// import/sync/clone path (per product decision). `name` is unique per master
+/// data among active rows (partial unique index in prisma/rls.sql).
+model RadiologyCertificate {
+  id           String  @id @default(uuid())
+  tenantId     String  @map("tenant_id")
+  branchId     String? @map("branch_id")
+  masterDataId String? @map("master_data_id")
+
+  /// The certificate name (`cert_name`).
+  name      String
+  /// The certificate group/category label (`group_name`).
+  groupName String  @map("group_name")
+  /// The rich-text (HTML) certificate body (`content`).
+  content   String? @db.Text
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([masterDataId])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("radiology_certificates")
+}
+
+/// An ISSUED radiology certificate — the second tier ported from EzHealthTrack's
+/// `rad_certificate_history` (`RadiologyCertificateHistory`). A doctor picks a
+/// `RadiologyCertificate` template during a study, its `{placeholder}`s are filled
+/// from the patient/study context, the final HTML is (optionally) edited, then
+/// SAVED here and attached to the patient's study. All refs are LOGICAL (no Prisma
+/// relations), matching the flat radiology model style.
+model RadiologyCertificateIssued {
+  id       String  @id @default(uuid())
+  tenantId String  @map("tenant_id")
+  branchId String? @map("branch_id")
+
+  /// The template this was issued from (`cert_id`) + snapshots of its labels.
+  certificateId   String? @map("certificate_id")
+  certificateName String  @map("certificate_name")
+  groupName       String? @map("group_name")
+
+  /// Anchors: the radiology study, its order, and the patient it was issued TO
+  /// (`issued_to`). The person who issued it (`issued_by`).
+  studyId   String  @map("study_id")
+  orderId   String? @map("order_id")
+  patientId String  @map("patient_id")
+  issuedBy  String? @map("issued_by")
+
+  /// The final, resolved certificate HTML snapshot (`cert_content`).
+  content String @db.Text
+
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([studyId])
+  @@index([patientId])
+  @@index([deletedAt])
+  @@map("radiology_certificates_issued")
 }

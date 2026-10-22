@@ -320,6 +320,8 @@ export class InternalReferralService {
         {
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       );
     }
@@ -394,6 +396,8 @@ export class InternalReferralService {
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+      radiologyTestList: assignments.get(r.id)?.radiologyTestList ?? null,
+      radiologyPanelList: assignments.get(r.id)?.radiologyPanelList ?? null,
       hasActiveOrder: activeIds.has(r.id),
     }));
     return { data, total, page, limit };
@@ -525,7 +529,9 @@ export class InternalReferralService {
     if (
       branchId &&
       (dto.branchLabTestListId !== undefined ||
-        dto.branchLabPanelListId !== undefined)
+        dto.branchLabPanelListId !== undefined ||
+        dto.branchRadiologyTestListId !== undefined ||
+        dto.branchRadiologyPanelListId !== undefined)
     ) {
       await this.listAssignmentService.upsert(
         tenantId,
@@ -536,6 +542,8 @@ export class InternalReferralService {
         {
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       );
     }
@@ -817,6 +825,9 @@ export class InternalReferralService {
       ...referral,
       branchLabTestListId: assignment?.branchLabTestListId ?? null,
       branchLabPanelListId: assignment?.branchLabPanelListId ?? null,
+      branchRadiologyTestListId: assignment?.branchRadiologyTestListId ?? null,
+      branchRadiologyPanelListId:
+        assignment?.branchRadiologyPanelListId ?? null,
     };
   }
 

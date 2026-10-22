@@ -1,0 +1,41 @@
+meta {
+  name: 26 Edit Order Swap Radiology Item
+  type: http
+  seq: 26
+}
+
+patch {
+  url: {{baseUrl}}/orders/{{orderId}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "items": [
+      { "branchRadiologyTestId": "{{branchRadiologyTestId2}}" }
+    ]
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Order-edit coverage (4/5) — the regression test. Replace the order's items with
+  the SECOND radiology test. The update path must (a) persist the new radiology
+  item's `branchRadiologyTestId` (was silently dropped), (b) generate a
+  RadiologyStudy for the newly-added item (was never generated on update), and
+  (c) tombstone the removed first item's study. Step 27 verifies all three.
+}

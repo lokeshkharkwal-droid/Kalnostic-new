@@ -10,8 +10,13 @@ import {
   ResolvedLists,
 } from './entities/referral-list.entity';
 
-/** The branch's default (Walk-in) pricing list ids. */
-type DefaultListIds = { testListId: string | null; panelListId: string | null };
+/** The branch's default (Walk-in) pricing list ids (lab + radiology). */
+type DefaultListIds = {
+  testListId: string | null;
+  panelListId: string | null;
+  radiologyTestListId: string | null;
+  radiologyPanelListId: string | null;
+};
 
 /**
  * Referral (type, id) steps checked AFTER the B2B panel and PT category, in
@@ -43,14 +48,15 @@ export class ReferralListAssignmentService {
 
   /**
    * Create or update the active branch's list assignment for a referral. Passing
-   * both list ids as null/undefined clears the assignment (soft-deletes it) so the
-   * referral falls back to the default Walk-in lists.
+   * all four list ids as null/undefined clears the assignment (soft-deletes it) so
+   * the referral falls back to the default Walk-in lists. Carries both the Lab
+   * Test / Lab Panel lists and the Radiology Test / Radiology Panel lists.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
    * @param actorId person id recorded as created/updated-by (or null)
    * @param referralType which referral kind
    * @param referralId the referral row id
-   * @param selection the chosen list ids (either may be null)
+   * @param selection the chosen list ids (any may be null)
    */
   async upsert(
     tenantId: string,
@@ -62,6 +68,13 @@ export class ReferralListAssignmentService {
   ): Promise<void> {
     const testListId = selection.branchLabTestListId ?? null;
     const panelListId = selection.branchLabPanelListId ?? null;
+    const radiologyTestListId = selection.branchRadiologyTestListId ?? null;
+    const radiologyPanelListId = selection.branchRadiologyPanelListId ?? null;
+    const isEmpty =
+      testListId === null &&
+      panelListId === null &&
+      radiologyTestListId === null &&
+      radiologyPanelListId === null;
     const existing = await this.prisma.referralListAssignment.findFirst({
       where: { tenantId, branchId, referralType, referralId },
     });
@@ -72,14 +85,15 @@ export class ReferralListAssignmentService {
         data: {
           branchLabTestListId: testListId,
           branchLabPanelListId: panelListId,
-          deletedAt:
-            testListId === null && panelListId === null ? new Date() : null,
+          branchRadiologyTestListId: radiologyTestListId,
+          branchRadiologyPanelListId: radiologyPanelListId,
+          deletedAt: isEmpty ? new Date() : null,
           updatedBy: actorId,
         },
       });
       return;
     }
-    if (testListId === null && panelListId === null) {
+    if (isEmpty) {
       return;
     }
     await this.prisma.referralListAssignment.create({
@@ -90,6 +104,8 @@ export class ReferralListAssignmentService {
         referralId,
         branchLabTestListId: testListId,
         branchLabPanelListId: panelListId,
+        branchRadiologyTestListId: radiologyTestListId,
+        branchRadiologyPanelListId: radiologyPanelListId,
         createdBy: actorId,
         updatedBy: actorId,
       },
@@ -145,37 +161,61 @@ export class ReferralListAssignmentService {
       return new Map();
     }
 
-    const testListIds = [
-      ...new Set(
-        assignments
-          .map((a) => a.branchLabTestListId)
-          .filter((v): v is string => !!v),
-      ),
+    const uniqueIds = (
+      pick: (a: ReferralListAssignment) => string | null,
+    ): string[] => [
+      ...new Set(assignments.map(pick).filter((v): v is string => !!v)),
     ];
-    const panelListIds = [
-      ...new Set(
-        assignments
-          .map((a) => a.branchLabPanelListId)
-          .filter((v): v is string => !!v),
-      ),
-    ];
+    const testListIds = uniqueIds((a) => a.branchLabTestListId);
+    const panelListIds = uniqueIds((a) => a.branchLabPanelListId);
+    const radiologyTestListIds = uniqueIds((a) => a.branchRadiologyTestListId);
+    const radiologyPanelListIds = uniqueIds(
+      (a) => a.branchRadiologyPanelListId,
+    );
 
-    const [testLists, panelLists] = await Promise.all([
-      testListIds.length
-        ? this.prisma.branchLabTestList.findMany({
-            where: { id: { in: testListIds }, tenantId, deletedAt: null },
-            select: { id: true, name: true },
-          })
-        : Promise.resolve([]),
-      panelListIds.length
-        ? this.prisma.branchLabPanelList.findMany({
-            where: { id: { in: panelListIds }, tenantId, deletedAt: null },
-            select: { id: true, name: true },
-          })
-        : Promise.resolve([]),
-    ]);
+    const [testLists, panelLists, radiologyTestLists, radiologyPanelLists] =
+      await Promise.all([
+        testListIds.length
+          ? this.prisma.branchLabTestList.findMany({
+              where: { id: { in: testListIds }, tenantId, deletedAt: null },
+              select: { id: true, name: true },
+            })
+          : Promise.resolve([]),
+        panelListIds.length
+          ? this.prisma.branchLabPanelList.findMany({
+              where: { id: { in: panelListIds }, tenantId, deletedAt: null },
+              select: { id: true, name: true },
+            })
+          : Promise.resolve([]),
+        radiologyTestListIds.length
+          ? this.prisma.branchRadiologyTestList.findMany({
+              where: {
+                id: { in: radiologyTestListIds },
+                tenantId,
+                deletedAt: null,
+              },
+              select: { id: true, name: true },
+            })
+          : Promise.resolve([]),
+        radiologyPanelListIds.length
+          ? this.prisma.branchRadiologyPanelList.findMany({
+              where: {
+                id: { in: radiologyPanelListIds },
+                tenantId,
+                deletedAt: null,
+              },
+              select: { id: true, name: true },
+            })
+          : Promise.resolve([]),
+      ]);
     const testNameById = new Map(testLists.map((l) => [l.id, l.name]));
     const panelNameById = new Map(panelLists.map((l) => [l.id, l.name]));
+    const radiologyTestNameById = new Map(
+      radiologyTestLists.map((l) => [l.id, l.name]),
+    );
+    const radiologyPanelNameById = new Map(
+      radiologyPanelLists.map((l) => [l.id, l.name]),
+    );
 
     const toRef = (
       id: string | null,
@@ -187,6 +227,14 @@ export class ReferralListAssignmentService {
       result.set(a.referralId, {
         labTestList: toRef(a.branchLabTestListId, testNameById),
         labPanelList: toRef(a.branchLabPanelListId, panelNameById),
+        radiologyTestList: toRef(
+          a.branchRadiologyTestListId,
+          radiologyTestNameById,
+        ),
+        radiologyPanelList: toRef(
+          a.branchRadiologyPanelListId,
+          radiologyPanelNameById,
+        ),
       });
     }
     return result;
@@ -239,6 +287,9 @@ export class ReferralListAssignmentService {
             listIds.branchLabTestListId ?? defaults.testListId,
           branchLabPanelListId:
             listIds.branchLabPanelListId ?? defaults.panelListId,
+          // PT category maps lab items only; radiology falls back to defaults.
+          branchRadiologyTestListId: defaults.radiologyTestListId,
+          branchRadiologyPanelListId: defaults.radiologyPanelListId,
           source: 'PT_CATEGORY',
         };
       }
@@ -261,6 +312,8 @@ export class ReferralListAssignmentService {
     return {
       branchLabTestListId: defaults.testListId,
       branchLabPanelListId: defaults.panelListId,
+      branchRadiologyTestListId: defaults.radiologyTestListId,
+      branchRadiologyPanelListId: defaults.radiologyPanelListId,
       source: 'DEFAULT',
     };
   }
@@ -288,13 +341,21 @@ export class ReferralListAssignmentService {
     );
     if (
       assignment &&
-      (assignment.branchLabTestListId || assignment.branchLabPanelListId)
+      (assignment.branchLabTestListId ||
+        assignment.branchLabPanelListId ||
+        assignment.branchRadiologyTestListId ||
+        assignment.branchRadiologyPanelListId)
     ) {
       return {
         branchLabTestListId:
           assignment.branchLabTestListId ?? defaults.testListId,
         branchLabPanelListId:
           assignment.branchLabPanelListId ?? defaults.panelListId,
+        branchRadiologyTestListId:
+          assignment.branchRadiologyTestListId ?? defaults.radiologyTestListId,
+        branchRadiologyPanelListId:
+          assignment.branchRadiologyPanelListId ??
+          defaults.radiologyPanelListId,
         source: type,
       };
     }
@@ -306,19 +367,30 @@ export class ReferralListAssignmentService {
     tenantId: string,
     branchId: string,
   ): Promise<DefaultListIds> {
-    const [testList, panelList] = await Promise.all([
-      this.prisma.branchLabTestList.findFirst({
-        where: { tenantId, branchId, isDefault: true, deletedAt: null },
-        select: { id: true },
-      }),
-      this.prisma.branchLabPanelList.findFirst({
-        where: { tenantId, branchId, isDefault: true, deletedAt: null },
-        select: { id: true },
-      }),
-    ]);
+    const [testList, panelList, radiologyTestList, radiologyPanelList] =
+      await Promise.all([
+        this.prisma.branchLabTestList.findFirst({
+          where: { tenantId, branchId, isDefault: true, deletedAt: null },
+          select: { id: true },
+        }),
+        this.prisma.branchLabPanelList.findFirst({
+          where: { tenantId, branchId, isDefault: true, deletedAt: null },
+          select: { id: true },
+        }),
+        this.prisma.branchRadiologyTestList.findFirst({
+          where: { tenantId, branchId, isDefault: true, deletedAt: null },
+          select: { id: true },
+        }),
+        this.prisma.branchRadiologyPanelList.findFirst({
+          where: { tenantId, branchId, isDefault: true, deletedAt: null },
+          select: { id: true },
+        }),
+      ]);
     return {
       testListId: testList?.id ?? null,
       panelListId: panelList?.id ?? null,
+      radiologyTestListId: radiologyTestList?.id ?? null,
+      radiologyPanelListId: radiologyPanelList?.id ?? null,
     };
   }
 }

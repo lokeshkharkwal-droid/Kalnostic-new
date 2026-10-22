@@ -84,7 +84,10 @@ docs {
   `items` (with test/panel names), and the `diagnostics` / `opd` / `radiology`
   sections with their display refs — plus the linked `appointment` (`{ id, status }`,
   for orders saved as APPOINTMENT), so the order-console and appointments lists render
-  every column without a second fetch. Defaults branch scope to the caller's active
+  every column without a second fetch. Radiology orders also carry `radiologyStatus`
+  (aggregated study stage) and `radiologyDepartments` (distinct department names
+  across the order's studies) — the Radiology Order Console's Order Status +
+  Department columns. Defaults branch scope to the caller's active
   branch; an explicit `branchId` overrides it. Pagination info lands in `meta`.
 
   ## Search

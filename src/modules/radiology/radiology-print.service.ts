@@ -1,11 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OrderService } from '../order/order.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
 import { PdfTemplateConfigService } from '../pdf-report-template/pdf-template-config.service';
 import {
   NoRadiologyReportTemplateException,
   RadiologyStudyNotFoundException,
 } from './exceptions/radiology.exceptions';
+import {
+  isoDate,
+  narrativeBodyHtml,
+  patientVariables,
+  reportingDoctorVariables,
+  type PatientTagSource,
+  type ReportingDoctorTagSource,
+} from './radiology-report-tags.util';
 
 /** The config slot / template type a radiology report renders through. */
 const RADIOLOGY_REPORT_SLOT = 'radiology_report';
@@ -16,6 +25,12 @@ const RADIOLOGY_REPORT_SLOT = 'radiology_report';
  * template) and builds the merge variables from the study + its order/patient,
  * then delegates to the shared `PdfReportTemplateService.generatePdf` engine —
  * mirroring the lab-report print path for the flat radiology model.
+ *
+ * The tag set mirrors the lab report: patient + reporting-doctor (incl. the
+ * uploaded signature image) + full billing figures (reused from
+ * `OrderService.getBillVariables`) + a `certificate_body` tag that embeds the
+ * study's issued certificate HTML in full (the report's single source of truth),
+ * falling back to a findings/impression narrative block when none is issued.
  */
 @Injectable()
 export class RadiologyPrintService {
@@ -23,16 +38,24 @@ export class RadiologyPrintService {
     private readonly prisma: PrismaService,
     private readonly pdfTemplates: PdfReportTemplateService,
     private readonly pdfConfig: PdfTemplateConfigService,
+    // forwardRef: OrderModule ↔ RadiologyModule form a cycle (order → radiology
+    // study handoff, radiology → OrderService for billing tags).
+    @Inject(forwardRef(() => OrderService))
+    private readonly orderService: OrderService,
   ) {}
 
   /**
-   * Generate the PDF for one radiology study.
+   * Generate the PDF for one radiology study. `pickedTemplateId` is the template
+   * chosen in the FE print picker (the "Print Report" flow); when omitted (the
+   * picker's "Skip Selection") the template is resolved centrally (study override
+   * → Configuration default → first active `radiology_report`).
    * @throws RadiologyStudyNotFoundException / NoRadiologyReportTemplateException
    */
   async generateStudyPdf(
     id: string,
     tenantId: string,
     branchId: string | null,
+    pickedTemplateId?: string,
   ): Promise<Buffer> {
     const study = await this.prisma.radiologyStudy.findFirst({
       where: { id, tenantId, deletedAt: null },
@@ -47,23 +70,41 @@ export class RadiologyPrintService {
     const patient = order?.patientId
       ? await this.prisma.patient.findFirst({
           where: { id: order.patientId, tenantId, deletedAt: null },
-          select: {
-            salutation: true,
-            firstName: true,
-            lastName: true,
-            gender: true,
-            dateOfBirth: true,
-          },
+          select: PATIENT_SELECT,
+        })
+      : null;
+    const doctor = study.reportingDoctorId
+      ? await this.prisma.radiologyReportingDoctor.findFirst({
+          where: { id: study.reportingDoctorId, tenantId, deletedAt: null },
+          select: REPORTING_DOCTOR_SELECT,
         })
       : null;
 
     const templateId = await this.resolveTemplateId(
-      study.reportTemplateId,
+      pickedTemplateId ?? study.reportTemplateId,
       tenantId,
       study.branchId ?? branchId,
     );
 
-    const variables = this.buildVariables(study, order, patient);
+    // The embedded certificate body — the latest issued certificate's HTML (the
+    // report's single source of truth), else a narrative fallback.
+    const certificateBody = await this.resolveCertificateBody(tenantId, study);
+
+    // Billing figures — reuse the order bill context so radiology money tags
+    // agree with the Billings screen. Non-fatal: a study without a resolvable
+    // bill still prints with empty billing tags.
+    const billing = study.orderId
+      ? await this.safeBillVariables(study.orderId, tenantId)
+      : {};
+
+    const variables = this.buildVariables(
+      study,
+      order,
+      patient,
+      doctor,
+      certificateBody,
+      billing,
+    );
     return this.pdfTemplates.generatePdf(templateId, tenantId, { variables });
   }
 
@@ -111,6 +152,43 @@ export class RadiologyPrintService {
     throw new NoRadiologyReportTemplateException();
   }
 
+  /**
+   * The study's embedded report body: the newest issued certificate's edited
+   * HTML (the single source of truth), else a Findings/Impression/Recommendation
+   * narrative block.
+   */
+  private async resolveCertificateBody(
+    tenantId: string,
+    study: {
+      id: string;
+      findings: string | null;
+      impression: string | null;
+      recommendation: string | null;
+    },
+  ): Promise<string> {
+    const latest = await this.prisma.radiologyCertificateIssued.findFirst({
+      where: { tenantId, studyId: study.id, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { content: true },
+    });
+    if (latest?.content && latest.content.trim()) {
+      return latest.content;
+    }
+    return narrativeBodyHtml(study);
+  }
+
+  /** Billing variables, swallowing any resolution error (empty on failure). */
+  private async safeBillVariables(
+    orderId: string,
+    tenantId: string,
+  ): Promise<Record<string, unknown>> {
+    try {
+      return await this.orderService.getBillVariables(orderId, tenantId);
+    } catch {
+      return {};
+    }
+  }
+
   /** The `{placeholder}` merge variables for a radiology report template. */
   private buildVariables(
     study: {
@@ -126,34 +204,15 @@ export class RadiologyPrintService {
       reportedAt: Date | null;
     },
     order: { orderCode: string; orderDate: Date | null } | null,
-    patient: {
-      salutation: string | null;
-      firstName: string;
-      lastName: string | null;
-      gender: string | null;
-      dateOfBirth: Date | null;
-    } | null,
-  ): Record<string, string> {
-    const patientName = patient
-      ? [patient.salutation, patient.firstName, patient.lastName]
-          .filter((p): p is string => Boolean(p))
-          .join(' ')
-      : '';
-    const fmt = (d: Date | null | undefined): string =>
-      d ? new Date(d).toISOString().slice(0, 10) : '';
-    const age = patient?.dateOfBirth
-      ? String(
-          Math.max(
-            0,
-            Math.floor(
-              (Date.now() - new Date(patient.dateOfBirth).getTime()) /
-                (365.25 * 24 * 3600 * 1000),
-            ),
-          ),
-        )
-      : '';
-
+    patient: PatientTagSource | null,
+    doctor: ReportingDoctorTagSource | null,
+    certificateBody: string,
+    billing: Record<string, unknown>,
+  ): Record<string, unknown> {
     return {
+      // Billing figures first so the explicit study/patient/doctor tags below
+      // win on any key overlap (e.g. order_code / order_date_time).
+      ...billing,
       study_no: study.studyNo,
       test_name: study.radiologyTestName ?? '',
       modality: study.modality ?? '',
@@ -163,11 +222,40 @@ export class RadiologyPrintService {
       impression: study.impression ?? '',
       recommendation: study.recommendation ?? '',
       order_code: order?.orderCode ?? '',
-      order_date: fmt(order?.orderDate),
-      report_date: fmt(study.publishedAt ?? study.reportedAt),
-      patient_name: patientName,
-      patient_age: age,
-      patient_gender: patient?.gender ?? '',
+      order_date: isoDate(order?.orderDate),
+      report_date: isoDate(study.publishedAt ?? study.reportedAt),
+      ...patientVariables(patient),
+      ...reportingDoctorVariables(doctor),
+      // The whole issued certificate HTML, injected verbatim (registered as a
+      // RICH_TEXT key in template-render.service.ts so it is NOT escaped).
+      certificate_body: certificateBody,
     };
   }
 }
+
+/** Patient columns the report tags need. */
+const PATIENT_SELECT = {
+  salutation: true,
+  firstName: true,
+  middleName: true,
+  lastName: true,
+  gender: true,
+  bloodGroup: true,
+  dateOfBirth: true,
+  age: true,
+  mobile: true,
+  addressLine1: true,
+  umId: true,
+} as const;
+
+/** Reporting-doctor columns the report tags need. */
+const REPORTING_DOCTOR_SELECT = {
+  doctorType: true,
+  salutation: true,
+  firstName: true,
+  lastName: true,
+  gender: true,
+  registrationNo: true,
+  signatoryDesignation: true,
+  signatureImagePath: true,
+} as const;

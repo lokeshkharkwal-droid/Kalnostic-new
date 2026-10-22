@@ -117,6 +117,15 @@ export class UpdateInternalReferralDto {
   @IsUUID()
   branchLabPanelListId?: string;
 
+  // ── Radiology lists (per-branch Radiology Test / Radiology Panel List) ──
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyTestListId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyPanelListId?: string;
+
   // ── Commission & TDS (cross-field rules enforced in the service) ──
   @IsBoolean()
   @IsOptional()

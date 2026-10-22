@@ -1,0 +1,46 @@
+meta {
+  name: 35 Preview Certificate
+  type: http
+  seq: 35
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/certificates/preview
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "certificateId": "{{radiologyCertificateId}}"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("placeholders were resolved (no raw {patient_name} left)", function () {
+    expect(res.getBody().data.content).to.be.a("string");
+    expect(res.getBody().data.content).to.not.include("{patient_name}");
+  });
+  test("echoes the template name", function () {
+    expect(res.getBody().data.certificateName).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Render a radiology certificate TEMPLATE against the study WITHOUT saving — the
+  server fills the `{placeholder}` tokens (`{patient_name}`, `{age}`, `{gender}`,
+  `{diagnosis}`, `{study_no}`, `{modality}`, `{body_part}`, `{date}`, `{signature}`
+  …) from the study / order / patient / reporting-doctor context, mirroring
+  EzHealthTrack `RadMedicalNote::getCert`. The doctor reviews/edits before issuing.
+}

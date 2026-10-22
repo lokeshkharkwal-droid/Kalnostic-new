@@ -5,20 +5,39 @@ import { ReferralListAssignmentService } from './referral-list-assignment.servic
  * Which price lists an order/quote draws from. Priority, first one with a list
  * wins: Referral Panel -> Patient (PT) Category -> Referred-by doctor -> Internal
  * -> External -> the branch's default Walk-in lists. Create Order and the Quotation
- * form both use this one lookup.
+ * form both use this one lookup. Each referral carries both the Lab lists and the
+ * Radiology lists; radiology falls back to the Walk-in radiology lists.
  */
 const TENANT = 't1';
 const BRANCH = 'b1';
-const WALK = { test: 'walk-test', panel: 'walk-panel' };
+const WALK = {
+  test: 'walk-test',
+  panel: 'walk-panel',
+  rtest: 'walk-rtest',
+  rpanel: 'walk-rpanel',
+};
 
-type Lists = { test?: string | null; panel?: string | null };
+type Lists = {
+  test?: string | null;
+  panel?: string | null;
+  rtest?: string | null;
+  rpanel?: string | null;
+};
+
+/** Default radiology lists tacked onto a lab-only expectation. */
+const RAD_DEFAULTS = {
+  branchRadiologyTestListId: WALK.rtest,
+  branchRadiologyPanelListId: WALK.rpanel,
+};
 
 function build(opts: {
   assignments?: Partial<Record<ReferralType, Lists>>;
   categories?: Record<string, Lists | null>;
   defaults?: { test: string | null; panel: string | null };
 }) {
-  const defaults = opts.defaults ?? WALK;
+  const defaults = opts.defaults
+    ? { ...opts.defaults, rtest: null, rpanel: null }
+    : WALK;
   const prisma = {
     referralListAssignment: {
       findFirst: jest.fn(
@@ -29,6 +48,8 @@ function build(opts: {
               ? {
                   branchLabTestListId: a.test ?? null,
                   branchLabPanelListId: a.panel ?? null,
+                  branchRadiologyTestListId: a.rtest ?? null,
+                  branchRadiologyPanelListId: a.rpanel ?? null,
                 }
               : null,
           );
@@ -44,6 +65,16 @@ function build(opts: {
       findFirst: jest
         .fn()
         .mockResolvedValue(defaults.panel ? { id: defaults.panel } : null),
+    },
+    branchRadiologyTestList: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(defaults.rtest ? { id: defaults.rtest } : null),
+    },
+    branchRadiologyPanelList: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(defaults.rpanel ? { id: defaults.rpanel } : null),
     },
   };
   const ptCategoryService = {
@@ -92,6 +123,7 @@ describe('ReferralListAssignmentService.resolve - priority', () => {
     ).resolves.toEqual({
       branchLabTestListId: 'panel-test',
       branchLabPanelListId: 'panel-panel',
+      ...RAD_DEFAULTS,
       source: 'PANEL',
     });
   });
@@ -102,6 +134,7 @@ describe('ReferralListAssignmentService.resolve - priority', () => {
     await expect(service.resolve(TENANT, BRANCH, rest)).resolves.toEqual({
       branchLabTestListId: 'cat-test',
       branchLabPanelListId: 'cat-panel',
+      ...RAD_DEFAULTS,
       source: 'PT_CATEGORY',
     });
   });
@@ -144,12 +177,65 @@ describe('ReferralListAssignmentService.resolve - priority', () => {
   });
 });
 
+describe('ReferralListAssignmentService.resolve - radiology lists', () => {
+  it('a referral carrying only radiology lists resolves them and takes the Walk-in lab lists', async () => {
+    const { service } = build({
+      assignments: { PANEL: { rtest: 'panel-rtest', rpanel: 'panel-rpanel' } },
+    });
+    await expect(
+      service.resolve(TENANT, BRANCH, { referralPanelId: 'panel-1' }),
+    ).resolves.toEqual({
+      branchLabTestListId: WALK.test,
+      branchLabPanelListId: WALK.panel,
+      branchRadiologyTestListId: 'panel-rtest',
+      branchRadiologyPanelListId: 'panel-rpanel',
+      source: 'PANEL',
+    });
+  });
+
+  it('a referral with both lab and radiology lists resolves all four', async () => {
+    const { service } = build({
+      assignments: {
+        DOCTOR: {
+          test: 'doc-test',
+          panel: 'doc-panel',
+          rtest: 'doc-rtest',
+          rpanel: 'doc-rpanel',
+        },
+      },
+    });
+    await expect(
+      service.resolve(TENANT, BRANCH, { referredByDoctorId: 'doc-1' }),
+    ).resolves.toEqual({
+      branchLabTestListId: 'doc-test',
+      branchLabPanelListId: 'doc-panel',
+      branchRadiologyTestListId: 'doc-rtest',
+      branchRadiologyPanelListId: 'doc-rpanel',
+      source: 'DOCTOR',
+    });
+  });
+
+  it('a radiology-only assignment counts as a match (not an empty assignment)', async () => {
+    const { service } = build({
+      assignments: { DOCTOR: { rtest: 'doc-rtest' } },
+    });
+    await expect(
+      service.resolve(TENANT, BRANCH, { referredByDoctorId: 'doc-1' }),
+    ).resolves.toMatchObject({
+      source: 'DOCTOR',
+      branchRadiologyTestListId: 'doc-rtest',
+      branchRadiologyPanelListId: WALK.rpanel,
+    });
+  });
+});
+
 describe('ReferralListAssignmentService.resolve - falling through to the next choice', () => {
   it('nothing selected resolves to the Walk-in lists', async () => {
     const { service } = build({});
     await expect(service.resolve(TENANT, BRANCH, {})).resolves.toEqual({
       branchLabTestListId: WALK.test,
       branchLabPanelListId: WALK.panel,
+      ...RAD_DEFAULTS,
       source: 'DEFAULT',
     });
   });
@@ -197,10 +283,10 @@ describe('ReferralListAssignmentService.resolve - falling through to the next ch
     });
   });
 
-  it('an assignment with both lists empty counts as no assignment', async () => {
+  it('an assignment with all lists empty counts as no assignment', async () => {
     const { service } = build({
       assignments: {
-        DOCTOR: { test: null, panel: null },
+        DOCTOR: { test: null, panel: null, rtest: null, rpanel: null },
         INTERNAL: { test: 'int-test' },
       },
     });
@@ -245,6 +331,7 @@ describe('ReferralListAssignmentService.resolve - a list that is only half set',
     ).resolves.toEqual({
       branchLabTestListId: 'panel-test',
       branchLabPanelListId: WALK.panel,
+      ...RAD_DEFAULTS,
       source: 'PANEL',
     });
   });
@@ -258,6 +345,7 @@ describe('ReferralListAssignmentService.resolve - a list that is only half set',
     ).resolves.toEqual({
       branchLabTestListId: WALK.test,
       branchLabPanelListId: 'panel-panel',
+      ...RAD_DEFAULTS,
       source: 'PANEL',
     });
   });
@@ -271,6 +359,7 @@ describe('ReferralListAssignmentService.resolve - a list that is only half set',
     ).resolves.toEqual({
       branchLabTestListId: 'cat-test',
       branchLabPanelListId: WALK.panel,
+      ...RAD_DEFAULTS,
       source: 'PT_CATEGORY',
     });
   });
@@ -285,11 +374,15 @@ describe('ReferralListAssignmentService.resolve - a list that is only half set',
     ).resolves.toEqual({
       branchLabTestListId: 'doc-test',
       branchLabPanelListId: null,
+      branchRadiologyTestListId: null,
+      branchRadiologyPanelListId: null,
       source: 'DOCTOR',
     });
     await expect(service.resolve(TENANT, BRANCH, {})).resolves.toEqual({
       branchLabTestListId: null,
       branchLabPanelListId: null,
+      branchRadiologyTestListId: null,
+      branchRadiologyPanelListId: null,
       source: 'DEFAULT',
     });
   });

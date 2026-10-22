@@ -1,0 +1,35 @@
+meta {
+  name: 38 Print Issued Certificate
+  type: http
+  seq: 38
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/certificates/{{issuedCertificateId}}/print
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a PDF", function () {
+    expect(res.getHeader("content-type")).to.include("application/pdf");
+  });
+}
+
+docs {
+  Render the issued certificate's saved HTML to a PDF via the shared Puppeteer
+  `PdfService` (EzHealthTrack `printCertificate`). The FE opens this in a new tab.
+
+  Guard: a certificate can only be printed once the study's report is filled
+  (`reportedAt` set). Printing (this endpoint) or rendering the unsaved draft
+  (`POST …/certificates/render`) for a study with no report yet is rejected with
+  409 `RADIOLOGY_REPORT_NOT_FILLED`. Here the study is REPORTED/PUBLISHED by this
+  point in the flow, so it succeeds.
+}

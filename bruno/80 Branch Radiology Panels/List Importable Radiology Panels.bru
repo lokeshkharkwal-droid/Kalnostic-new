@@ -1,0 +1,41 @@
+meta {
+  name: List Importable Radiology Panels
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/branch-radiology-panels/importable?page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 20
+  ~search: Chest Screen
+  ~department: Radiology
+  ~category: CT
+  ~excludeListId: {{branchRadiologyPanelListId}}
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Import picker source for the branch-admin Radiology Panel List "Add Panels to
+  List" dialog ("Available to Add" panel): the active branch's **Radiology Master
+  Data** panels, paginated. Business JWT; tenant + active branch from the token.
+
+  Optional `search` (case-insensitive on panelName/panelCode), classification
+  filters `department` / `category` (matched by name), and `excludeListId` — when
+  given, panels already present in that pricing list (matched via
+  `BranchRadiologyPanel.sourceRadiologyPanelId`) are dropped server-side, so the
+  "Available to Add" vs "Already in this list" split needs no client-side dedup.
+
+  Rows: `{ id, panelName, panelCode }` (a radiology panel has no modality of its
+  own — it groups tests). Shares its `where` with "Import Branch Radiology Panels By
+  Filter" so the picker and a "select all" import resolve the identical set. 400
+  `ACTIVE_BRANCH_REQUIRED` if the JWT has no active branch.
+}

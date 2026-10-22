@@ -181,6 +181,16 @@ const REFERRAL_PANEL_IMPORT_COLUMNS: readonly ImportColumnSpec[] = [
     aliases: ['Lab Panel List ID', 'Lab Panel List'],
   },
   {
+    field: 'branchRadiologyTestListId',
+    kind: 'string',
+    aliases: ['Radiology Test List ID', 'Radiology Test List'],
+  },
+  {
+    field: 'branchRadiologyPanelListId',
+    kind: 'string',
+    aliases: ['Radiology Panel List ID', 'Radiology Panel List'],
+  },
+  {
     field: 'isCommissionApplicable',
     kind: 'bool',
     aliases: ['Commission Applicable'],
@@ -525,6 +535,8 @@ export class ReferralPanelService {
         {
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       );
     }
@@ -921,6 +933,9 @@ export class ReferralPanelService {
       ...panel,
       branchLabTestListId: assignment?.branchLabTestListId ?? null,
       branchLabPanelListId: assignment?.branchLabPanelListId ?? null,
+      branchRadiologyTestListId: assignment?.branchRadiologyTestListId ?? null,
+      branchRadiologyPanelListId:
+        assignment?.branchRadiologyPanelListId ?? null,
     };
   }
 
@@ -988,6 +1003,8 @@ export class ReferralPanelService {
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
+      radiologyTestList: assignments.get(r.id)?.radiologyTestList ?? null,
+      radiologyPanelList: assignments.get(r.id)?.radiologyPanelList ?? null,
       hasActiveOrder: activeIds.has(r.id),
     }));
     return { data, total, page, limit };
@@ -1088,7 +1105,9 @@ export class ReferralPanelService {
     if (
       branchId &&
       (dto.branchLabTestListId !== undefined ||
-        dto.branchLabPanelListId !== undefined)
+        dto.branchLabPanelListId !== undefined ||
+        dto.branchRadiologyTestListId !== undefined ||
+        dto.branchRadiologyPanelListId !== undefined)
     ) {
       await this.listAssignmentService.upsert(
         tenantId,
@@ -1099,6 +1118,8 @@ export class ReferralPanelService {
         {
           branchLabTestListId: dto.branchLabTestListId,
           branchLabPanelListId: dto.branchLabPanelListId,
+          branchRadiologyTestListId: dto.branchRadiologyTestListId,
+          branchRadiologyPanelListId: dto.branchRadiologyPanelListId,
         },
       );
     }

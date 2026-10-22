@@ -1,0 +1,36 @@
+meta {
+  name: 24 Import Second Test Into Branch
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/branch-radiology-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "radiologyTestIds": ["{{radiologyTestId2}}"]
+  }
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+}
+
+docs {
+  Order-edit coverage (2/5) — import the second radiology test into the active
+  branch's catalogue, so it is orderable.
+}

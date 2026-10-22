@@ -1,0 +1,44 @@
+meta {
+  name: 39 Render Certificate No Save
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/certificates/render
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "certificateId": "{{radiologyCertificateId}}",
+    "content": "<h2>Radiology Certificate</h2><p>Impression: no acute abnormality.</p>"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a PDF", function () {
+    expect(res.getHeader("content-type")).to.include("application/pdf");
+  });
+}
+
+docs {
+  Render the CURRENT edited certificate HTML to a PDF WITHOUT saving — the report
+  modal's "Print Certificate" action. The certificate is the single source of
+  truth: `content` is the doctor's already-rendered, visually-edited document and
+  is printed verbatim (no placeholder re-resolution). The optional `certificateId`
+  only titles the PDF. No `RadiologyCertificateIssued` row is written (unlike 36
+  Issue + 38 Print Issued).
+}

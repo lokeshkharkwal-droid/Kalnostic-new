@@ -1,0 +1,42 @@
+meta {
+  name: Print All Radiology Reports
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/print-all
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "studyIds": ["{{radiologyStudyId}}"],
+    "templateId": "{{radiologyAllReportTemplateId}}"
+  }
+}
+
+docs {
+  Combined radiology report — the worklist's multi-select "Print Report". Renders
+  the chosen `radiology_all_report` template once over every study in `studyIds`
+  (any orders/patients), each study's report body combined into ONE PDF (each body
+  can be page-broken by the template). `templateId` is optional: omit it to let the
+  backend resolve the template centrally (Configuration default -> first active
+  `radiology_all_report`). Streams `application/pdf`. Business JWT; tenant + active
+  branch from the token.
+
+  Each study's body is its latest issued certificate HTML (fallback:
+  findings/impression narrative). Per-study tags: `$report->body_html`,
+  `$report->patient->full_name`, `$report->order_code`, `$report->net_amount`,
+  `$report->reporting_doctor->full_name` / `->signature`, plus top-level
+  `header_fields` from the first study's order.
+}

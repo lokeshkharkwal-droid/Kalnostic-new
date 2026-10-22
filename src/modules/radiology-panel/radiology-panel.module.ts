@@ -5,6 +5,7 @@ import { RadiologyTestModule } from '../radiology-test/radiology-test.module';
 import { RadiologyPanelController } from './radiology-panel.controller';
 import { RadiologyPanelOptionsController } from './radiology-panel-options.controller';
 import { SiteAdminRadiologyPanelController } from './siteadmin-radiology-panel.controller';
+import { RadiologyMasterDataSyncController } from './radiology-master-data-sync.controller';
 import { RadiologyPanelService } from './radiology-panel.service';
 
 /**
@@ -22,6 +23,7 @@ import { RadiologyPanelService } from './radiology-panel.service';
     RadiologyPanelController,
     RadiologyPanelOptionsController,
     SiteAdminRadiologyPanelController,
+    RadiologyMasterDataSyncController,
   ],
   providers: [RadiologyPanelService],
   exports: [RadiologyPanelService],

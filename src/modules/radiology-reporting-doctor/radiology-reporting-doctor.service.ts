@@ -517,6 +517,7 @@ export class RadiologyReportingDoctorService {
       id: row.id,
       name: [row.firstName, row.lastName].filter(Boolean).join(' '),
       salutation: row.salutation,
+      doctorType: row.doctorType,
       registrationNo: row.registrationNo,
       department: row.departmentId
         ? (deptMap.get(row.departmentId) ?? null)

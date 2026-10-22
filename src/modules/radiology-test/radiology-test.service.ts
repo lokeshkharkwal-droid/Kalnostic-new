@@ -221,7 +221,9 @@ export class RadiologyTestService {
     masterDataId: string,
     tenantId: string,
     query: ListRadiologyTestsDto = {},
-  ): Promise<PaginatedResult<RadiologyTest>> {
+  ): Promise<
+    PaginatedResult<RadiologyTest & { departmentName: string | null }>
+  > {
     await this.masterDataService.findById(masterDataId, tenantId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -235,7 +237,19 @@ export class RadiologyTestService {
       }),
       this.prisma.radiologyTest.count({ where }),
     ]);
-    return { data, total, page, limit };
+    // `departmentId` is a logical reference (no relation), so resolve the display
+    // name in one batched lookup — the form pre-selects the department on edit and
+    // the list shows its name.
+    const deptNames = await this.resolveNames(
+      'department',
+      tenantId,
+      data.map((t) => t.departmentId),
+    );
+    const enriched = data.map((t) => ({
+      ...t,
+      departmentName: this.nameOf(deptNames, t.departmentId),
+    }));
+    return { data: enriched, total, page, limit };
   }
 
   /**
@@ -609,6 +623,123 @@ export class RadiologyTestService {
       }
       return { copied, skipped };
     });
+  }
+
+  /**
+   * Sync (update-or-create-or-delete) all active radiology tests from a Tenant
+   * Master Data into a Branch Master Data, keyed on `sourceMasterRadiologyTestId`
+   * (falling back to `testCode` to adopt a legacy branch row and avoid a unique
+   * collision). A matched branch test has its scalars fully overwritten from the
+   * tenant test (version bumped); an unmatched tenant test is cloned. A branch
+   * test whose tenant source has been soft-deleted (no longer among the active
+   * `sourceTests`) is itself soft-deleted — UNLESS its
+   * `sourceMasterRadiologyTestId` is NULL (hand-created/never synced), which is
+   * always left untouched. The radiology model is FLAT (no samples/params), so —
+   * unlike `LabTestService.syncTestsIntoBranch` — there are no child tables to
+   * rebuild; the branch radiology test LISTS (`BranchRadiologyTest`) keep their
+   * own Master-Data re-sync, so this method only touches Branch Master Data rows.
+   * Returns a `tenantTestId → branchTestId` map (so panels can remap membership)
+   * plus counts. Runs inside the caller's transaction.
+   * @param tx caller's transaction client (already in `withTenant`)
+   * @param params tenant + branch scope and both master-data ids
+   */
+  async syncTestsIntoBranch(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      branchId: string;
+      tenantMasterDataId: string;
+      branchMasterDataId: string;
+      actorId: string | null;
+    },
+  ): Promise<{
+    testIdMap: Map<string, string>;
+    created: number;
+    updated: number;
+    deleted: number;
+  }> {
+    const {
+      tenantId,
+      branchId,
+      tenantMasterDataId,
+      branchMasterDataId,
+      actorId,
+    } = params;
+    const sourceTests = await tx.radiologyTest.findMany({
+      where: { masterDataId: tenantMasterDataId, tenantId, deletedAt: null },
+    });
+    const branchTests = await tx.radiologyTest.findMany({
+      where: { masterDataId: branchMasterDataId, tenantId, deletedAt: null },
+    });
+    const bySource = new Map<string, RadiologyTest>();
+    const byCode = new Map<string, RadiologyTest>();
+    for (const t of branchTests) {
+      if (t.sourceMasterRadiologyTestId)
+        bySource.set(t.sourceMasterRadiologyTestId, t);
+      byCode.set(t.testCode, t);
+    }
+    const sourceIds = new Set(sourceTests.map((t) => t.id));
+
+    const testIdMap = new Map<string, string>();
+    let created = 0;
+    let updated = 0;
+    for (const src of sourceTests) {
+      const target = bySource.get(src.id) ?? byCode.get(src.testCode);
+      if (target) {
+        const history = this.readVersionHistory(target.versionHistory);
+        const today = new Date().toISOString().slice(0, 10);
+        const open = history.find((e) => e.effectiveTo === null);
+        if (open) open.effectiveTo = this.previousDay(today);
+        const nextVersion =
+          history.reduce((max, e) => Math.max(max, e.version), 0) + 1;
+        history.push({
+          version: nextVersion,
+          effectiveFrom: today,
+          effectiveTo: null,
+          modifiedBy: actorId,
+          approvedBy: null,
+        });
+        // Full overwrite: tenant test scalars win; identity/scope preserved.
+        await tx.radiologyTest.update({
+          where: { id: target.id },
+          data: {
+            ...this.stripMeta(src),
+            sourceMasterRadiologyTestId: src.id,
+            versionHistory: history as unknown as Prisma.InputJsonValue,
+          },
+        });
+        testIdMap.set(src.id, target.id);
+        updated += 1;
+      } else {
+        const cloned = await this.clonePersistTest(tx, src, {
+          tenantId,
+          branchId,
+          masterDataId: branchMasterDataId,
+          source: DataSource.TENANT,
+          actorId,
+          sourceMasterRadiologyTestId: src.id,
+        });
+        testIdMap.set(src.id, cloned.id);
+        created += 1;
+      }
+    }
+
+    const orphans = branchTests.filter(
+      (t) =>
+        t.sourceMasterRadiologyTestId !== null &&
+        !sourceIds.has(t.sourceMasterRadiologyTestId),
+    );
+    const now = new Date();
+    let deleted = 0;
+    for (const orphan of orphans) {
+      await tx.radiologyTest.update({
+        where: { id: orphan.id },
+        data: { deletedAt: now },
+      });
+      deleted += 1;
+    }
+
+    return { testIdMap, created, updated, deleted };
   }
 
   // ── SITE_ADMIN templates ──────────────────────────────────────────────────
@@ -1111,6 +1242,8 @@ export class RadiologyTestService {
       masterDataId: string | null;
       source: DataSource;
       actorId: string | null;
+      /** Set on a Tenant→Branch MD sync to link the branch copy to its source. */
+      sourceMasterRadiologyTestId?: string | null;
     },
   ): Promise<RadiologyTest> {
     const { tenantId, branchId, masterDataId, source, actorId } = target;
@@ -1123,6 +1256,7 @@ export class RadiologyTestService {
         masterDataId,
         source,
         clonedFromId,
+        sourceMasterRadiologyTestId: target.sourceMasterRadiologyTestId ?? null,
         versionHistory: [
           this.seedVersion(actorId),
         ] as unknown as Prisma.InputJsonValue,

@@ -39,9 +39,13 @@ export const RADIOLOGY_TRANSITIONS: Readonly<
     [RadiologyStudyStatus.SCHEDULED]: RadiologyStudyStatus.ACQUIRED,
     [RadiologyStudyStatus.HOLD]: RadiologyStudyStatus.ACQUIRED,
   },
-  // Fill/edit the narrative report. Allowed from ACQUIRED and while REPORTED
-  // (so findings can be revised before validation/approval).
+  // Fill/edit the narrative report. The worklist's report-centric flow lets a
+  // study be reported straight from NEW/SCHEDULED (Acquire/Hold are no longer
+  // surfaced in the UI), and while already REPORTED so findings can be revised
+  // before publishing. ACQUIRED stays valid for any older acquire-first rows.
   report: {
+    [RadiologyStudyStatus.NEW]: RadiologyStudyStatus.REPORTED,
+    [RadiologyStudyStatus.SCHEDULED]: RadiologyStudyStatus.REPORTED,
     [RadiologyStudyStatus.ACQUIRED]: RadiologyStudyStatus.REPORTED,
     [RadiologyStudyStatus.REPORTED]: RadiologyStudyStatus.REPORTED,
   },
@@ -53,7 +57,11 @@ export const RADIOLOGY_TRANSITIONS: Readonly<
     [RadiologyStudyStatus.REPORTED]: RadiologyStudyStatus.APPROVED,
     [RadiologyStudyStatus.VALIDATED]: RadiologyStudyStatus.APPROVED,
   },
+  // Publish — directly from REPORTED (the simplified Report → Publish flow), or
+  // from VALIDATED/APPROVED when those intermediate steps were used.
   publish: {
+    [RadiologyStudyStatus.REPORTED]: RadiologyStudyStatus.PUBLISHED,
+    [RadiologyStudyStatus.VALIDATED]: RadiologyStudyStatus.PUBLISHED,
     [RadiologyStudyStatus.APPROVED]: RadiologyStudyStatus.PUBLISHED,
   },
   hold: {

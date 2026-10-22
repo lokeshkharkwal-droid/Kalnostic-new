@@ -74,6 +74,7 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
         label: 'Lab Order Multiple Label Print Template',
       },
       { key: 'radiology_report', label: 'Radiology Report' },
+      { key: 'radiology_all_report', label: 'Radiology All Reports' },
       {
         key: 'radiology_report_certificate',
         label: 'Radiology Certificate Print Template',

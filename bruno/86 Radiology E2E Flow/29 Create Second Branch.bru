@@ -1,0 +1,61 @@
+meta {
+  name: 29 Create Second Branch
+  type: http
+  seq: 29
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "Radiology Flow Center TWO {{radRunId}}",
+    "branchType": "DIAGNOSTIC",
+    "shortName": "RAD2",
+    "status": "ACTIVE",
+    "addressLine": "9 Other Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411002",
+    "phone": "+919822009191",
+    "email": "radflow2.{{radRunId}}@acme.test",
+    "openingTime": "00:00",
+    "closingTime": "23:59",
+    "dailyCapacity": 50,
+    "operationalDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "branch_admin", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().success && res.getBody().data;
+  if (data && data.id) bru.setVar("branchId2", data.id);
+}
+
+tests {
+  test("201 Created", function () {
+    expect(res.getStatus()).to.equal(201);
+  });
+  test("captured branchId2", function () {
+    expect(bru.getVar("branchId2")).to.be.a("string").and.not.equal("");
+  });
+}
+
+docs {
+  Bug #3 setup (1/3) — a SECOND branch, so we can prove a user scoped to it cannot
+  drive the FIRST branch's study through its lifecycle (branch isolation).
+}

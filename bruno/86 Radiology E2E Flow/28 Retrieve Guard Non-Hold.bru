@@ -1,0 +1,39 @@
+meta {
+  name: 28 Retrieve Guard Non-Hold
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/retrieve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("retrieve is rejected from a non-HOLD status (409)", function () {
+    expect(res.getStatus()).to.equal(409);
+  });
+  test("error is an invalid-transition conflict", function () {
+    expect(res.getBody().error.code).to.equal("INVALID_RADIOLOGY_STUDY_TRANSITION");
+  });
+}
+
+docs {
+  Bug #4 guard — `retrieve` is the undo for a HELD study only. The study from step
+  27 is `NEW`, so retrieve must be rejected with 409 (it must never be able to
+  resurrect a CANCELLED study or un-publish an APPROVED/PUBLISHED one). Before the
+  fix, retrieve reverted to `previousStatus` from ANY status.
+}

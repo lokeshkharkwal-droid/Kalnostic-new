@@ -22,6 +22,7 @@ import { ImportBranchRadiologyPanelsByFilterDto } from './dto/import-branch-radi
 import { SyncBranchRadiologyPanelsDto } from './dto/sync-branch-radiology-panels.dto';
 import { ListBranchRadiologyPanelsQueryDto } from './dto/list-branch-radiology-panels-query.dto';
 import { ListBranchRadiologyPanelsForBranchQueryDto } from './dto/list-branch-radiology-panels-for-branch-query.dto';
+import { ListImportableRadiologyPanelsQueryDto } from './dto/list-importable-radiology-panels-query.dto';
 import { UpdateBranchRadiologyPanelDto } from './dto/update-branch-radiology-panel.dto';
 import { SetBranchRadiologyPanelActiveDto } from './dto/set-branch-radiology-panel-active.dto';
 import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/branch-lab-test.exceptions';
@@ -185,6 +186,24 @@ export class BranchRadiologyPanelController {
     await this.branchService.findById(query.branchId, tenantId);
     const { branchId, ...rest } = query;
     return this.service.findAll(tenantId, branchId, rest);
+  }
+
+  /**
+   * Import picker source: the active branch's Master Data radiology panels
+   * ("Available to Add"), paginated + searchable, with `excludeListId` dropping
+   * panels already in that list. Declared before `:id` so it isn't matched as one.
+   */
+  @Get('importable')
+  getImportable(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListImportableRadiologyPanelsQueryDto,
+  ) {
+    return this.service.getImportable(
+      tenantId,
+      this.requireBranch(profile),
+      query,
+    );
   }
 
   /** Fetch one branch radiology panel composed with its member tests. */

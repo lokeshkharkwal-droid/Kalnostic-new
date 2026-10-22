@@ -174,6 +174,15 @@ export class CreateReferralDoctorDto {
   @IsUUID()
   branchLabPanelListId?: string;
 
+  // ── Radiology lists (per-branch Radiology Test / Radiology Panel List) ──
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyTestListId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyPanelListId?: string;
+
   // ── Commission & TDS ──
   @IsBoolean()
   @IsOptional()

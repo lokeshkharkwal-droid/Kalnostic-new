@@ -95,6 +95,9 @@ body:json {
       "radiologyTechnicianId": "{{radiologyTechnicianPersonId}}",
       "appointmentAt": "2026-07-10T11:00:00.000Z"
     },
+    "radiologyPrescriptionAttachments": [
+      { "url": "https://files.example.com/rad-rx-1.pdf", "name": "radiology-prescription.pdf" }
+    ],
     "payments": [
       {
         "totalAmount": 3000,
@@ -323,6 +326,13 @@ docs {
     → Department, `radiologistCategoryId` → Category (422
     `ORDER_CATEGORY_NOT_FOUND`) and `radiologyTechnicianId` → a `Person` (the
     radiology technician is now a Person; 422 `ORDER_PERSON_NOT_FOUND`).
+  - `radiologyPrescriptionAttachments[]` (order-level, NOT on the `radiology`
+    section) — files uploaded in the Radiology section, same `{ url, name }` shape
+    as diagnostics, persisted as the patient's `PatientDocument`s (category
+    DOCUMENT) so they appear in the patient's Documents panel. Kept at the order
+    level because the `radiology` section requires a radiologist, but a
+    prescription can be attached to a radiology order with only items and no
+    radiologist selected.
   
   ## payments[]
 

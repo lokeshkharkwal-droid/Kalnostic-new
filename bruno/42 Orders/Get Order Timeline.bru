@@ -1,0 +1,66 @@
+meta {
+  name: Get Order Timeline
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/timeline
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("has creation + totals + chronological events", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("createdAt");
+    expect(d).to.have.property("updateCount");
+    expect(d).to.have.property("reportFillCount");
+    expect(d).to.have.property("approveCount");
+    expect(d).to.have.property("publishCount");
+    expect(d).to.have.property("noteCount");
+    expect(d.events).to.be.an("array");
+    // The first event is always the order's creation.
+    expect(d.events[0].type).to.equal("CREATED");
+  });
+}
+
+docs {
+  The order's Timeline — the complete chronological history used by the radiology
+  worklist "Timeline" action. Returns:
+  `{ orderId, createdAt, createdByName, updateCount, reportFillCount, approveCount, publishCount, noteCount, events[] }`.
+
+  Each `events[]` entry is `{ type, at, actorName, iteration?, body?, studyNo? }`,
+  sorted by `at` ascending:
+  - `type: "CREATED"` — the order's creation (always first).
+  - `type: "UPDATED"` — one per recorded order update (from `Order.updateHistory`,
+    appended inside each `PATCH /orders/:id` transaction). `iteration` is the
+    1-based edit number; `updateCount` is the total.
+  - `type: "REPORT_FILLED"` — one per radiology report-fill, from each `report`
+    `RadiologyStudyStatusHistory` row of the order's studies (every occurrence,
+    including re-reports). `studyNo` is the RAD id; `reportFillCount` is the total.
+  - `type: "REPORT_APPROVED"` — one per radiology report submit/approve, from each
+    `approve` `RadiologyStudyStatusHistory` row (the worklist "Submit" action).
+    `actorName` is who submitted it, `at` when it was approved; `studyNo` is the
+    RAD id; `approveCount` is the total.
+  - `type: "REPORT_PUBLISHED"` — one per radiology report-publish, from each
+    `publish` `RadiologyStudyStatusHistory` row (every occurrence). `studyNo` is
+    the RAD id; `publishCount` is the total.
+  - `type: "NOTE"`  — one per ORDER-level note (category `ORDER`); `body` is the
+    note text. Sample/Tech notes are intentionally excluded.
+
+  Only real persisted data is used (creation timestamp, the update-history array,
+  the radiology status history, and OrderNote rows) — nothing is fabricated, and
+  each entry is recorded only after its operation succeeded. `actorName` resolves
+  the actor's `Person` name, falling back to the raw id.
+
+  404 `ORDER_NOT_FOUND` if the order is missing, soft-deleted, or owned by another
+  tenant.
+}

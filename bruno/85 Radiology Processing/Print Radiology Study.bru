@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/print
+  url: {{baseUrl}}/radiology/studies/{{radiologyStudyId}}/print?templateId={{radiologyReportTemplateId}}
   body: none
   auth: bearer
+}
+
+params:query {
+  ~templateId: {{radiologyReportTemplateId}}
 }
 
 auth:bearer {
@@ -20,9 +24,11 @@ vars:pre-request {
 
 docs {
   Render the study's report to a PDF (binary stream, `application/pdf` — the JSON
-  envelope is bypassed). Business JWT. Resolves the template as: study
-  `reportTemplateId` → the Configuration default for the `radiology_report` slot →
-  the first active `radiology_report` template; 422 `NO_RADIOLOGY_REPORT_TEMPLATE`
+  envelope is bypassed). Business JWT. The optional `templateId` query param is the
+  FE print picker's chosen `radiology_report` template (the worklist / order-console
+  "Print Report" flow); omit it (the picker's "Skip Selection") to resolve centrally:
+  study `reportTemplateId` → the Configuration default for the `radiology_report`
+  slot → the first active `radiology_report` template; 422 `NO_RADIOLOGY_REPORT_TEMPLATE`
   if none exists. Merge variables are built from the study + its order/patient
   ({study_no}, {test_name}, {modality}, {body_part}, {findings}, {impression},
   {recommendation}, {order_code}, {patient_name}, {patient_age}, {patient_gender}, …).

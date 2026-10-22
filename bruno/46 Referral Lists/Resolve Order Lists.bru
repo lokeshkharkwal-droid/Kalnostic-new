@@ -33,9 +33,17 @@ docs {
     `externalReferralId` — resolve via the branch's `ReferralListAssignment`.
   - `ptCategoryId` — priority slot 2: resolves to the PT category's mapped Lab
     Test / Lab Panel's own pricing lists (ignored if the category is inactive or
-    its mappings have no list).
+    its mappings have no list). PT category maps lab items only, so the radiology
+    lists fall back to the branch defaults in that case.
 
-  Returns `{ branchLabTestListId, branchLabPanelListId, source }` where `source`
-  is the matched referral type, `PT_CATEGORY`, or `DEFAULT`. List ids are null
-  only when the branch has never imported (no default list yet).
+  Returns `{ branchLabTestListId, branchLabPanelListId, branchRadiologyTestListId,
+  branchRadiologyPanelListId, source }` where `source` is the matched referral
+  type, `PT_CATEGORY`, or `DEFAULT`. Each referral maps BOTH a Lab Test / Lab
+  Panel List AND a Radiology Test / Radiology Panel List; any unset list falls
+  back to the branch's corresponding default Walk-in list. List ids are null only
+  when the branch has never imported that catalogue (no default list yet).
+
+  The Create-Order form feeds the radiology list ids to the branch radiology
+  test/panel option pickers (`?listId=…`) so radiology items show the referral's
+  prices, exactly like lab tests/panels.
 }

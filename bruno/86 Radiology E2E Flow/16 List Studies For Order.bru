@@ -38,6 +38,15 @@ tests {
   test("captured studyId", function () {
     expect(bru.getVar("studyId")).to.be.a("string").and.not.equal("");
   });
+  test("each row carries the parent order identity slice", function () {
+    const row = res.getBody().data[0];
+    expect(row.order).to.be.an("object");
+    expect(row.order.orderCode).to.be.a("string").and.not.equal("");
+    // order.orderDate / order.createdAt + order.patient drive the worklist's
+    // Order cell (code + date·time + patient), mirroring /accession/in-house.
+    expect(row.order).to.have.property("createdAt");
+    expect(row.order).to.have.property("patient");
+  });
 }
 
 docs {
@@ -45,4 +54,11 @@ docs {
   generated `studyId`. Proves the order -> study handoff: exactly one
   `RadiologyStudy` exists for the order, born `NEW`, and (unlike a diagnostic order)
   there is no accession sample.
+
+  The list rows now include a lightweight `order` slice ({ orderCode, orderDate,
+  createdAt, patient }) so the worklist can render the Order identity cell. The
+  endpoint also accepts a multi-status filter, e.g.
+  `?statuses=SCHEDULED,ACQUIRED,REPORTED,VALIDATED,APPROVED,HOLD` — used by the
+  worklist's collapsed New / In Progress / Published tabs (In Progress spans all
+  the intermediate statuses). `statuses` takes precedence over the single `status`.
 }

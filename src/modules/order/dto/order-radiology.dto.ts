@@ -5,6 +5,9 @@ import { IsDateString, IsOptional, IsUUID } from 'class-validator';
  * the Radiologist master table; `radiologistDepartmentId` → Department,
  * `radiologistCategoryId` → Category and `radiologyTechnicianId` → Person (the
  * radiology technician is a Person) are optional. All validated in `OrderService`.
+ * (Radiology prescription files ride on the order-level
+ * `radiologyPrescriptionAttachments` — see `CreateOrderDto` — not this section,
+ * so a prescription can be attached without selecting a radiologist.)
  */
 export class OrderRadiologyDto {
   @IsUUID()

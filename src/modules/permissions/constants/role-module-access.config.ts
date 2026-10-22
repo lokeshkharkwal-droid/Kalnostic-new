@@ -75,7 +75,7 @@ export const ROLE_BASELINE_MODULES: Record<ProfileKey, string[]> = {
   logistics_executive: ['inventory', 'accession'],
   opd_assistant: [],
   radiologist: ['radiology'],
-  radiology_assistant: [],
+  radiology_assistant: ['radiology'],
   nursing_staff: [],
   nursing_incharge: [],
   // B2B Referral Panel login — the three modules whose screens the panel may see.
@@ -100,6 +100,7 @@ function allAccessModules(): string[] {
     'operation',
     'registration',
     'lab_operations',
+    'radiology',
   ];
 }
 

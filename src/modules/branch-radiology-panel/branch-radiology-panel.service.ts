@@ -202,6 +202,57 @@ export class BranchRadiologyPanelService {
   }
 
   /**
+   * Import source for the picker's "Available to Add" panel: the active branch's
+   * Master Data radiology panels, paginated + searchable, with `excludeListId`
+   * dropping panels already in that pricing list. Shares {@link buildImportableWhere}
+   * with the "select all" filter-import so both match the identical set. Rows are a
+   * light shape (`{id, panelName, panelCode}`) — a radiology panel has no modality.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param params pagination + search + classification filters + excludeListId
+   * @throws MasterDataNotMappedToBranchException if the branch has no master data
+   */
+  async getImportable(
+    tenantId: string,
+    branchId: string,
+    params: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      department?: string;
+      category?: string;
+      excludeListId?: string;
+    },
+  ): Promise<
+    PaginatedResult<{ id: string; panelName: string; panelCode: string }>
+  > {
+    const masterData = await this.masterDataService.findByBranch(
+      branchId,
+      tenantId,
+    );
+    const page = params.page ?? 1;
+    const limit = params.limit ?? 20;
+    const where = await this.buildImportableWhere(
+      masterData.id,
+      tenantId,
+      params.search,
+      { department: params.department, category: params.category },
+      params.excludeListId,
+    );
+    const [rows, total] = await Promise.all([
+      this.prisma.radiologyPanel.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { panelName: 'asc' },
+        select: { id: true, panelName: true, panelCode: true },
+      }),
+      this.prisma.radiologyPanel.count({ where }),
+    ]);
+    return { data: rows, total, page, limit };
+  }
+
+  /**
    * Build the `where` for the importable Master Data radiology panels — matching
    * the import-picker's "Available to Add" listing. Excludes sources already
    * copied into the target list (by `sourceRadiologyPanelId`). RadiologyPanel's

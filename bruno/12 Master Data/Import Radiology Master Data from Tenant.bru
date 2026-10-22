@@ -1,0 +1,43 @@
+meta {
+  name: Import Radiology Master Data from Tenant
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-radiology-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The branch-admin "Import Master Data" action on the **Radiology** Master Data
+  page: sync the tenant's **Tenant Master Data → the active branch's Branch Master
+  Data**, radiology tests + panels (full overwrite). The radiology twin of
+  `Import Master Data from Tenant`. Requires a branch-scoped token
+  (`active_branch_id` from the JWT) — 400 otherwise.
+
+  Update-or-create-or-delete keyed on provenance (`sourceMasterRadiologyTestId` /
+  `sourceMasterRadiologyPanelId`, falling back to test/panel code): existing branch
+  rows are fully overwritten from the tenant catalogue, missing ones are created,
+  branch rows whose tenant source was removed are soft-deleted (unless hand-created
+  / never synced). Panel membership is remapped to the branch radiology test copies.
+  Runs as one transaction. Returns
+  `{ tests: { created, updated, deleted }, panels: { created, updated, deleted } }`.
+
+  The radiology model is FLAT (no samples/result-params), so — unlike the lab
+  import — there are no child tables to rebuild. The branch radiology test/panel
+  LISTS keep their own "Import / Sync Branch Radiology Tests" (`/branch-radiology-
+  tests`), which is what Create Order reads; this endpoint only touches Branch
+  Master Data.
+
+  **Authorization:** reuses the lab Master-Data import permissions — requires ANY
+  of `branch_admin:master_data__import_master_lab_tests` or
+  `branch_admin:master_data__import_master_lab_panels` (no radiology-specific keys
+  exist; business routes don't yet enforce route-level RBAC). `branch_admin` holds
+  both by baseline; `business_admin`/`administrator` bypass.
+}

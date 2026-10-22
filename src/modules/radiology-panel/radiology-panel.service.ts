@@ -585,6 +585,165 @@ export class RadiologyPanelService {
     });
   }
 
+  /**
+   * The Tenant→Branch radiology master-data sync ("Import Master Data" on the
+   * branch-admin Radiology Master Data page). Syncs the tenant's Tenant Master
+   * Data radiology tests + panels into the caller's active Branch Master Data
+   * (full overwrite). Mirrors `LabPanelService.syncTenantToBranch`: tests are
+   * synced first (producing a `tenantTestId → branchTestId` map), then panels are
+   * synced with their membership remapped through that map. Both run in one
+   * widened-timeout transaction so the whole sync is atomic.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId active branch (from JWT)
+   * @param actorId person id recorded on cloned rows' seed version (or null)
+   */
+  async syncTenantToBranch(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+  ): Promise<{
+    tests: { created: number; updated: number; deleted: number };
+    panels: { created: number; updated: number; deleted: number };
+  }> {
+    const tenantMd =
+      await this.masterDataService.getOrCreateTenantMasterData(tenantId);
+    const branchMd = await this.masterDataService.getOrCreateBranchMasterData(
+      tenantId,
+      branchId,
+    );
+    return this.prisma.withTenant(
+      tenantId,
+      async (tx) => {
+        const t = await this.radiologyTestService.syncTestsIntoBranch(tx, {
+          tenantId,
+          branchId,
+          tenantMasterDataId: tenantMd.id,
+          branchMasterDataId: branchMd.id,
+          actorId,
+        });
+        const p = await this.syncPanelsIntoBranch(
+          tx,
+          {
+            tenantId,
+            branchId,
+            tenantMasterDataId: tenantMd.id,
+            branchMasterDataId: branchMd.id,
+          },
+          t.testIdMap,
+        );
+        return {
+          tests: { created: t.created, updated: t.updated, deleted: t.deleted },
+          panels: p,
+        };
+      },
+      // Match the lab sync's widened bound: a per-panel loop (overwrite +
+      // membership rebuild) over a full catalogue can run past Prisma's default
+      // 5s transaction timeout; tests + panels must stay in one tx (panels need
+      // the complete in-memory testIdMap).
+      { timeout: 300_000, maxWait: 15_000 },
+    );
+  }
+
+  /**
+   * Sync (update-or-create-or-delete) all active panels from a Tenant Master Data
+   * into a Branch Master Data, keyed on `sourceMasterRadiologyPanelId` (falling
+   * back to `panelCode`). A matched branch panel is fully overwritten and its
+   * membership rebuilt; an unmatched one is created. Panel membership
+   * `radiologyTestId`s are remapped through `testIdMap` (built by the test sync)
+   * to the branch test copies; members with no mapping are dropped. A branch
+   * panel whose tenant source has been soft-deleted is itself soft-deleted
+   * (cascading its membership) — UNLESS its `sourceMasterRadiologyPanelId` is
+   * NULL (hand-created/never synced), which is always left untouched. Runs inside
+   * the caller's tx.
+   */
+  private async syncPanelsIntoBranch(
+    tx: Prisma.TransactionClient,
+    params: {
+      tenantId: string;
+      branchId: string;
+      tenantMasterDataId: string;
+      branchMasterDataId: string;
+    },
+    testIdMap: Map<string, string>,
+  ): Promise<{ created: number; updated: number; deleted: number }> {
+    const { tenantId, branchId, tenantMasterDataId, branchMasterDataId } =
+      params;
+    const sourcePanels = await tx.radiologyPanel.findMany({
+      where: { masterDataId: tenantMasterDataId, tenantId, deletedAt: null },
+    });
+    const branchPanels = await tx.radiologyPanel.findMany({
+      where: { masterDataId: branchMasterDataId, tenantId, deletedAt: null },
+    });
+    const bySource = new Map<string, RadiologyPanel>();
+    const byCode = new Map<string, RadiologyPanel>();
+    for (const p of branchPanels) {
+      if (p.sourceMasterRadiologyPanelId)
+        bySource.set(p.sourceMasterRadiologyPanelId, p);
+      byCode.set(p.panelCode, p);
+    }
+    const sourcePanelIds = new Set(sourcePanels.map((p) => p.id));
+
+    let created = 0;
+    let updated = 0;
+    for (const src of sourcePanels) {
+      const members = await tx.radiologyPanelTest.findMany({
+        where: { radiologyPanelId: src.id, tenantId, deletedAt: null },
+        orderBy: { sortOrder: 'asc' },
+      });
+      const target = bySource.get(src.id) ?? byCode.get(src.panelCode);
+      let panelId: string;
+      if (target) {
+        await tx.radiologyPanel.update({
+          where: { id: target.id },
+          data: {
+            ...this.stripMeta(src),
+            sourceMasterRadiologyPanelId: src.id,
+          },
+        });
+        await tx.radiologyPanelTest.deleteMany({
+          where: { radiologyPanelId: target.id, tenantId },
+        });
+        panelId = target.id;
+        updated += 1;
+      } else {
+        const panel = await tx.radiologyPanel.create({
+          data: {
+            ...this.stripMeta(src),
+            tenantId,
+            branchId,
+            masterDataId: branchMasterDataId,
+            source: DataSource.TENANT,
+            sourceMasterRadiologyPanelId: src.id,
+          } as Prisma.RadiologyPanelUncheckedCreateInput,
+        });
+        panelId = panel.id;
+        created += 1;
+      }
+      await this.createRemappedMembers(
+        tx,
+        tenantId,
+        branchId,
+        panelId,
+        members,
+        async (m) => testIdMap.get(m.radiologyTestId),
+      );
+    }
+
+    const now = new Date();
+    let deleted = 0;
+    const orphans = branchPanels.filter(
+      (p) =>
+        p.sourceMasterRadiologyPanelId !== null &&
+        !sourcePanelIds.has(p.sourceMasterRadiologyPanelId),
+    );
+    for (const orphan of orphans) {
+      await this.cascadeDeletePanel(tx, orphan.id, tenantId, now);
+      deleted += 1;
+    }
+
+    return { created, updated, deleted };
+  }
+
   // ── Site Admin global templates ─────────────────────────────────────────────────
 
   /**

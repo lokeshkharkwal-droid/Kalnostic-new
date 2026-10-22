@@ -21,7 +21,10 @@ import {
 } from 'class-validator';
 import { OrderItemDto } from './order-item.dto';
 import { BillingDetailsDto } from './billing-details.dto';
-import { OrderDiagnosticsDto } from './order-diagnostics.dto';
+import {
+  OrderDiagnosticsDto,
+  OrderPrescriptionAttachmentDto,
+} from './order-diagnostics.dto';
 import { OrderOpdDto } from './order-opd.dto';
 import { OrderRadiologyDto } from './order-radiology.dto';
 import { OrderPaymentDto } from './order-payment.dto';
@@ -161,6 +164,19 @@ export class CreateOrderDto {
   @IsUUID()
   branchLabPanelListId?: string;
 
+  /**
+   * Radiology pricing lists resolved for this order (parallel to the lab lists
+   * above). The items' `branchRadiologyTestId`/`branchRadiologyPanelId` belong to
+   * these lists; item unit prices are snapshotted from their `listPrice`.
+   */
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyTestListId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  branchRadiologyPanelListId?: string;
+
   /** Selected catalogue entries (branch lab tests / panels / direct entries). */
   @IsOptional()
   @IsArray()
@@ -185,6 +201,20 @@ export class CreateOrderDto {
   @ValidateNested()
   @Type(() => OrderRadiologyDto)
   radiology?: OrderRadiologyDto;
+
+  /**
+   * Prescription files uploaded in the Radiology section, persisted as the
+   * patient's `PatientDocument`s (category DOCUMENT) — same mechanism as the
+   * diagnostics prescriptions. Kept at the order level (NOT on the `radiology`
+   * section) because the radiology section requires a radiologist, but a
+   * prescription can be attached to a radiology order that has only items and no
+   * radiologist selected.
+   */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderPrescriptionAttachmentDto)
+  radiologyPrescriptionAttachments?: OrderPrescriptionAttachmentDto[];
 
   /** Payment ledger entries (optional). */
   @IsOptional()

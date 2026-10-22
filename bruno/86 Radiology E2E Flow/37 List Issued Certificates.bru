@@ -1,0 +1,32 @@
+meta {
+  name: 37 List Issued Certificates
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/radiology/studies/{{studyIdAfterEdit}}/certificates
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("history contains the issued certificate", function () {
+    const data = res.getBody().data;
+    expect(data).to.be.an("array");
+    const ids = data.map((c) => c.id);
+    expect(ids).to.include(bru.getVar("issuedCertificateId"));
+  });
+}
+
+docs {
+  The study's issued-certificate history (newest first) — the list the radiology
+  worklist Certificates dialog renders with Print / Delete.
+}

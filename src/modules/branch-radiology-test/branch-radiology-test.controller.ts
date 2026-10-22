@@ -22,6 +22,7 @@ import { ImportBranchRadiologyTestsByFilterDto } from './dto/import-branch-radio
 import { SyncBranchRadiologyTestsDto } from './dto/sync-branch-radiology-tests.dto';
 import { ListBranchRadiologyTestsQueryDto } from './dto/list-branch-radiology-tests-query.dto';
 import { ListBranchRadiologyTestsForBranchQueryDto } from './dto/list-branch-radiology-tests-for-branch-query.dto';
+import { ListImportableRadiologyTestsQueryDto } from './dto/list-importable-radiology-tests-query.dto';
 import { UpdateBranchRadiologyTestDto } from './dto/update-branch-radiology-test.dto';
 import { SetBranchRadiologyTestActiveDto } from './dto/set-branch-radiology-test-active.dto';
 import { ActiveBranchRequiredException } from '../branch-lab-test/exceptions/branch-lab-test.exceptions';
@@ -184,6 +185,24 @@ export class BranchRadiologyTestController {
     await this.branchService.findById(query.branchId, tenantId);
     const { branchId, ...rest } = query;
     return this.service.findAll(tenantId, branchId, rest);
+  }
+
+  /**
+   * Import picker source: the active branch's Master Data radiology tests
+   * ("Available to Add"), paginated + searchable, with `excludeListId` dropping
+   * tests already in that list. Declared before `:id` so it isn't matched as one.
+   */
+  @Get('importable')
+  getImportable(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListImportableRadiologyTestsQueryDto,
+  ) {
+    return this.service.getImportable(
+      tenantId,
+      this.requireBranch(profile),
+      query,
+    );
   }
 
   /** Fetch one branch radiology test. */

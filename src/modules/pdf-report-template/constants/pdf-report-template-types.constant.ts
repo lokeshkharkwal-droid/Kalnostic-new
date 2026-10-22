@@ -44,6 +44,7 @@ export const PDF_REPORT_TEMPLATE_TYPES = [
   'order_label_print',
   'multiple_order_label_print',
   'radiology_report',
+  'radiology_all_report',
   'radiology_report_certificate',
   'patient_lab_all_report',
   // ── OPD / Clinic ──
@@ -116,6 +117,7 @@ export const PDF_REPORT_TEMPLATE_TYPE_LABELS: Record<
   order_label_print: 'Lab Order Label',
   multiple_order_label_print: 'Lab Order Multiple Labels',
   radiology_report: 'Radiology Report',
+  radiology_all_report: 'Radiology All Reports',
   radiology_report_certificate: 'Radiology Certificate',
   patient_lab_all_report: 'Patient Lab All Reports',
   // OPD / Clinic
