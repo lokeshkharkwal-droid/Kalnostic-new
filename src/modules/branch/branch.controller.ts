@@ -99,12 +99,12 @@ export class BranchController {
    * `limit`) for a paginated envelope.
    */
   @Get('options')
-  findOptions(
+  async findOptions(
     @CurrentTenant() tenantId: string,
     @CurrentUser('active_branch_id') activeBranchId: string | null,
     @Query() query: BranchOptionsQueryDto,
   ) {
-    return this.branchService.findOptionsForTenant(tenantId, {
+    const options = await this.branchService.findOptionsForTenant(tenantId, {
       branchType: query.branchType,
       excludeBranchType: query.excludeBranchType,
       search: query.search,
@@ -115,6 +115,20 @@ export class BranchController {
       page: query.page,
       limit: query.limit,
     });
+    // With `forSampleIds`, each option also says whether that branch offers the tubes' tests.
+    const sampleIds = query.forSampleIds;
+    if (!sampleIds || sampleIds.length === 0) return options;
+    if (Array.isArray(options)) {
+      return this.branchService.withOfferStatus(tenantId, options, sampleIds);
+    }
+    return {
+      ...options,
+      data: await this.branchService.withOfferStatus(
+        tenantId,
+        options.data,
+        sampleIds,
+      ),
+    };
   }
 
   /**

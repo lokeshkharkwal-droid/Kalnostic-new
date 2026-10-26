@@ -10,6 +10,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccessionSettingsService } from './accession-settings.service';
 import { SAMPLE_NOT_ITEM_REMOVED } from './utils/item-removed.util';
+import { HIDDEN_FROM_RECEIVER_WHERE } from './utils/receiver-visibility.util';
 import { SYSTEM_TRANSFER_CLOSE_REASONS } from './constants/transfer-close-reasons.constant';
 import {
   TatStatus,
@@ -451,6 +452,9 @@ export class AccessionDashboardService {
           ...LIVE_ORDER_TRANSFERS,
           kind: TransferKind.INTERNAL,
           ...destinationWhere,
+          // What the receiving branch cannot see yet (In-Transit, no logistics type)
+          // is not counted as received from the other branch.
+          NOT: HIDDEN_FROM_RECEIVER_WHERE,
           originBranchId: { not: null },
           ...(createdAt && { createdAt }),
         },

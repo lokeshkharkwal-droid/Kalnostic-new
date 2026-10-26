@@ -977,7 +977,6 @@ describe('OrderSampleService — Return of a transferred copy', () => {
   type Priv = {
     returnCopyToOrigin: jest.Mock;
     transitionIds: jest.Mock;
-    notifySamplesRepeated: jest.Mock;
     findById: jest.Mock;
   };
   function setup(copies: Array<{ id: string; status: string }>) {
@@ -1013,7 +1012,6 @@ describe('OrderSampleService — Return of a transferred copy', () => {
     priv.transitionIds = jest
       .fn()
       .mockResolvedValue({ succeeded: [{ id: 'plain-result' }], skipped: [] });
-    priv.notifySamplesRepeated = jest.fn().mockResolvedValue(undefined);
     priv.findById = jest.fn((id: string) => Promise.resolve({ id }));
     return { service, transferUpdate, priv };
   }
@@ -1030,8 +1028,31 @@ describe('OrderSampleService — Return of a transferred copy', () => {
     expect(firstCallArg(transferUpdate)).toMatchObject({
       data: { transferStatus: 'REPEAT' },
     });
-    expect(priv.notifySamplesRepeated).toHaveBeenCalledWith('t1', ['origin1']);
+    // the sender's original (still Sent) is reported in the copy's place; the
+    // referring panel is told only when the SENDER then acts (Repeat / Error)
     expect(out).toEqual({ succeeded: [{ id: 'origin1' }], skipped: [] });
+  });
+
+  it('repeat: a Sent sample is never handled as a copy (a branch that passed its copy on can confirm the Repeat the next branch asked for)', async () => {
+    const { service, priv } = setup([]);
+    (priv as unknown as { emitSampleFlagged: jest.Mock }).emitSampleFlagged =
+      jest.fn();
+    await service.repeat(['s1'], 't1', 'p1', { repeatReason: 'clotted' });
+    const prisma = (service as unknown as { prisma: { withTenant: jest.Mock } })
+      .prisma;
+    const txArg = prisma.withTenant.mock.calls[0] as [
+      string,
+      (t: unknown) => unknown,
+    ];
+    const probe = { orderSample: { findMany: jest.fn() } };
+    await txArg[1](probe);
+    expect(firstCallArg(probe.orderSample.findMany)).toMatchObject({
+      where: {
+        sourceTransferId: { not: null },
+        status: { not: 'SENT_INTERNAL' },
+      },
+    });
+    expect(priv.transitionIds).toHaveBeenCalledTimes(1);
   });
 
   it('a normal sample (not a copy) keeps the ordinary Return', async () => {

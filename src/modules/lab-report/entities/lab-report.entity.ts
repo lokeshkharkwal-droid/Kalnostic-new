@@ -45,6 +45,8 @@ export const LAB_REPORT_DETAIL_INCLUDE = {
       branchLabPanel: true,
     },
   },
+  // the entry the holding branch works with, when it is not the order line's own
+  performingEntry: true,
 } satisfies Prisma.LabReportInclude;
 
 /** A report with its result values, notes, attachments, and order context. */
@@ -196,6 +198,8 @@ export const LAB_REPORT_LIST_INCLUDE = {
       branchLabPanel: true,
     },
   },
+  // the entry the holding branch works with, when it is not the order line's own
+  performingEntry: true,
 } satisfies Prisma.LabReportInclude;
 
 export type LabReportListRow = Prisma.LabReportGetPayload<{
@@ -373,6 +377,15 @@ export interface LabReportWorklistRow {
    * listed because the caller's branch sent it, or its sample is sent out and
    * waiting for the receiver (view and print only). */
   accessMode?: 'full' | 'view';
+  /** Set when the holder branch's own sample is Sent and the receiving branch has
+   * already sent the report back (its transfer is closed as REPEAT / REJECTED): the
+   * report is reset and waiting for the sender to decide (Repeat / Error / Retrieve).
+   * Set by `attachReturnedByReceiver`; null otherwise. The screen words the
+   * view-only tag from it ("Returned by receiving branch") instead of "Sent". */
+  returnedByReceiver?: {
+    kind: 'REPEAT' | 'REJECTED';
+    reason: string | null;
+  } | null;
 
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
@@ -503,8 +516,12 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     branchId: row.branchId,
     branch: null,
 
-    departmentId:
-      branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null,
+    // The department of the setup the HOLDING branch works the test with: its own
+    // entry once the report was sent to it (even when that entry has no department),
+    // otherwise the order line's.
+    departmentId: row.performingEntry
+      ? row.performingEntry.departmentId
+      : (branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null),
     department: null,
 
     labTestId: row.labTestId,
@@ -601,6 +618,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     sampleBarcodes: [],
     sampleBranchIds: [],
     displayBranch: null,
+    returnedByReceiver: null,
     tat: null,
 
     multiStepProcessType: null,

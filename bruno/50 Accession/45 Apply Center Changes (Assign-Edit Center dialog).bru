@@ -1,0 +1,109 @@
+meta {
+  name: 45 Apply Center Changes (Assign-Edit Center dialog)
+  type: http
+  seq: 45
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/apply-center-changes
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "changes": [
+      { "transferId": "{{transferId}}", "destinationBranchId": "{{branchId}}", "expectedDestinationBranchId": "{{currentBranchId}}" }
+    ],
+    "retrieveSampleIds": [],
+    "sendDate": "2026-10-23",
+    "sendTime": "10:00",
+    "logisticsType": "Courier",
+    "logisticsPerson": "Amit Driver",
+    "notes": "Re-addressed from the Edit Center dialog"
+  }
+}
+
+tests {
+  test("applied (or refused as a whole)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  The Assign Center / Edit Center dialog's **Confirm** for INTERNAL transfers, as ONE
+  all-or-nothing request. Returns `{ changed, retrieved }`.
+
+  Body:
+  - `changes[]` - `{ transferId, destinationBranchId }` per ticked tube: each tube carries its
+    OWN center, so one request can send different tubes to different branches. A tube whose
+    center is unchanged is left out unless the logistics were edited.
+  - `retrieveSampleIds[]` - the un-ticked tubes. Each is Retrieved exactly like
+    `POST order-samples/:id/retrieve` (back to Accepted, the open INTERNAL transfer is
+    soft-deleted - see that request for the audit entries).
+  - the shared logistics fields (`sendDate`, `sendTime`, `sampleForm`, `logisticsType`,
+    `logisticsPerson`, `notes`, `attachmentUrl`) apply to every changed tube.
+  A request with neither `changes` nor `retrieveSampleIds` is refused 422 (nothing to change);
+  a tube cannot be both retrieved and re-addressed in the same request; at most 200 entries.
+
+  **All or nothing.** Every change is checked first, then everything is written in one
+  transaction (conditional updates, tubes locked in a fixed order, so it is safe against the
+  receiving branch pressing Receive at the same moment). If any tube cannot be done, NOTHING
+  is changed and the answer is 422 `CENTER_CHANGES_REFUSED` whose message names the tube
+  ("Nothing was changed. Tube ACC-...: ...") and whose details carry `accessionNo` and
+  `reasonCode` (the error code the single-tube call would have given).
+
+  **Which tubes can be changed.** Only a tube whose INTERNAL transfer is still In-Transit or
+  Picked Up. Once the receiving branch has Received / Accepted it, or has sent it back
+  (Repeated / Rejected), the tube is refused (the dialog shows it locked).
+
+  🔒 **RBAC (checked per tube in the service; admin roles bypass):** a tube with no center yet
+  needs an *Assign* center permission, a tube that already has one needs an *Update* center
+  permission (the same groups as `POST transfers/:id/assign-center`); any `retrieveSampleIds`
+  needs the Retrieve permission (`accession:in_house_order__retrieve_the_action`).
+
+  Logistics: the receiving branch sees an In-Transit transfer only after a logistics type is
+  set (see `32 Transfer - Assign Center`), so Edit Center is also how a logistics type is added later.
+
+  **Re-addressing a transfer the first branch already Picked Up.** Changing the destination of
+  an INTERNAL transfer to a DIFFERENT branch while it is Picked Up starts it over: it goes back
+  to IN_TRANSIT and the old pick-up (`pickedUpBy` / `pickedUpAt`) is cleared, because the new
+  branch has not picked it up (it must Pick Up before it can Receive; the old branch can do
+  nothing with it). Every change of destination (also a first assignment) is recorded in the same
+  transaction: a row on the sender sample's history (action `assign-center`, "Center changed from
+  X to Y while <stage>", plus "it had been picked up, so it starts over at In-Transit" when reset)
+  and Audit-log entries (module ACCESSION, `metadata.side`): `sender` under the sending branch
+  always; `old-receiver` under the old destination when it had been able to see the transfer (it
+  now loses it); `new-receiver` under the new destination once it can see it (an In-Transit
+  transfer needs a logistics type first). Saving the same destination again (a logistics-only
+  edit) is not a re-address and writes none of this.
+
+  **Stale dialog guard.** Each `changes[]` item may carry `expectedDestinationBranchId`: the
+  destination the dialog was showing for that tube (`null` = no center yet). When it is given and
+  the tube's destination is no longer that (someone else re-addressed it after the dialog opened),
+  the whole request is refused 422 `CENTER_CHANGES_REFUSED` ("Nothing was changed. Tube ACC-...:
+  The center of this tube was changed by someone else after this dialog was opened. Close the
+  dialog and open it again ...", reasonCode `TRANSFER_CENTER_CHANGED`) and nothing is written. It
+  is checked when the request is prepared and again in the write itself (the write is conditional
+  on that destination), so a change landing in between is caught too. Omitted = no check (older
+  callers). A tube that was Received in the meantime is still reported as not editable.
+
+  **The destination must OFFER every test on the tube (Phase 1).** A tube can only go to a branch that has an
+  ACTIVE Lab Test List entry for each of its tests. The match goes through the tenant test both branches copied
+  (the sender's Branch Master Data test -> `sourceMasterLabTestId` -> the destination's Branch Master Data test
+  with the same tenant test -> an active, not deleted list entry); any of the destination's lists counts. A test
+  with no tenant link (hand-created at the branch) cannot be matched and counts as NOT offered. A free-text tube
+  test (no catalogue test) is skipped. Otherwise: 422 `DESTINATION_LACKS_TEST`, "<Branch> does not offer: <tests>.
+  Choose another branch." (at most five test names, then "and N more"); nothing is changed.
+  Checked when the destination CHANGES (first centre or Edit Center), not on a logistics-only save that keeps the
+  destination it already had. `apply-center-changes` refuses the whole batch naming the tube
+  (`CENTER_CHANGES_REFUSED`, "Nothing was changed. Tube ACC-...: <Branch> does not offer: ...").
+}

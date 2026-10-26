@@ -65,6 +65,8 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
       create: jest.fn().mockResolvedValue({}),
     },
     sampleTransfer: {
+      // "did the receiving branch send it back?" probe of Retrieve: it did not
+      findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },

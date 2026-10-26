@@ -76,12 +76,45 @@ function build(canReturn: boolean, copyStatus = 'ACCEPTED', cancelled = false) {
   });
   (service as unknown as { transitionInTx: unknown }).transitionInTx =
     transition;
-  return { service, tx, labReportService, calls, transition };
+  // Back on the SENDER's own copy of the test: after the clear-down and the move, never before.
+  const pointAtSender = jest.fn(() => {
+    calls.push('point');
+    return Promise.resolve();
+  });
+  (
+    service as unknown as { pointReportsAtBranchSetup: unknown }
+  ).pointReportsAtBranchSetup = pointAtSender;
+  // The sender's original is NOT moved any more (it stays Sent); only its trail
+  // entry is written.
+  const record = jest.fn(() => {
+    calls.push('record');
+    return Promise.resolve();
+  });
+  (
+    service as unknown as { recordReturnedByReceiverInTx: unknown }
+  ).recordReturnedByReceiverInTx = record;
+  return {
+    service,
+    tx,
+    labReportService,
+    calls,
+    transition,
+    record,
+    pointAtSender,
+  };
 }
 
 describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () => {
-  it('locks, checks, resets, then moves the reports and repeats the original', async () => {
-    const { service, tx, labReportService, calls, transition } = build(true);
+  it('locks, checks, resets, then moves the reports and records the return on the original, which stays Sent', async () => {
+    const {
+      service,
+      tx,
+      labReportService,
+      calls,
+      transition,
+      record,
+      pointAtSender,
+    } = build(true);
     const originId = await service.returnCopyToOrigin(
       tx as never,
       't1',
@@ -90,7 +123,16 @@ describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () 
       'wrong sample',
     );
     expect(originId).toBe('orig1');
-    expect(calls).toEqual(['lock', 'check', 'reset', 'move', 'transition']);
+    expect(calls).toEqual([
+      'lock',
+      'check',
+      'reset',
+      'move',
+      'point',
+      'record',
+    ]);
+    // the report is pointed at the SENDER's copy of the test (the branch it moved to)
+    expect(pointAtSender).toHaveBeenCalledWith(tx, 't1', 'A', ['r1', 'r2']);
     expect(labReportService.resetReportsForReturn).toHaveBeenCalledWith(
       tx,
       't1',
@@ -103,7 +145,16 @@ describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () 
       ['r1', 'r2'],
       'A',
     );
-    expect(transition).toHaveBeenCalledTimes(1);
+    // the sender's original is not moved to Repeat: it reads "Sent – Repeated"
+    // until the sender decides
+    expect(transition).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith(
+      tx,
+      't1',
+      'u1',
+      'orig1',
+      'wrong sample',
+    );
   });
 
   it('a validated result blocks it, before anything is changed', async () => {
@@ -200,13 +251,27 @@ describe('OrderSampleService.returnCopyToOrigin - Repeat below Result Done', () 
       'x',
       'reject',
     );
-    expect(calls).toEqual(['lock', 'check', 'reset', 'move', 'transition']);
+    expect(calls).toEqual([
+      'lock',
+      'check',
+      'reset',
+      'move',
+      'point',
+      'record',
+    ]);
   });
 
   it('a copy that was passed on and then retrieved back (ACCEPTED again) can be returned as usual', async () => {
     const { service, tx, calls } = build(true, 'ACCEPTED');
     await service.returnCopyToOrigin(tx as never, 't1', 'u1', 'copy1', 'x');
-    expect(calls).toEqual(['lock', 'check', 'reset', 'move', 'transition']);
+    expect(calls).toEqual([
+      'lock',
+      'check',
+      'reset',
+      'move',
+      'point',
+      'record',
+    ]);
   });
 
   it('no longer asks whether the report is untouched', async () => {

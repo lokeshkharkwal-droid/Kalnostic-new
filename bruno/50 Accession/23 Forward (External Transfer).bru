@@ -43,4 +43,14 @@ docs {
   `externalPartnerName` must contain at least one visible character: an empty,
   spaces-only or invisible-characters-only name is refused with 400
   `VALIDATION_ERROR` (the screen already requires a name).
+
+  **Report must be untouched.** Like a Send to another branch, Forward is refused (422
+  `SAMPLE_SEND_BLOCKED`) when a report the sample serves has already been worked on: past
+  Pending, or holding result values, notes, attachments, overall results or a lock. The
+  message says why: "The report for this test has already been worked on (results, notes
+  or attachments exist, or it is past Pending), so the sample cannot be forwarded to a partner lab." A group
+  call with `skipInvalid: true` skips that sample with the same reason (code and sentence
+  under `skipped`) and sends the others; without it the whole call is refused, even with
+  `force`. The check is made at hand-over only: once out, the sending branch can keep
+  working the report.
 }

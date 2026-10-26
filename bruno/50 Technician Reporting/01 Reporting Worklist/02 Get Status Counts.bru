@@ -20,4 +20,10 @@ docs {
 
   Returns `{ all, pending, partialPending, saved, validationPending,
   resultDone, approved, published, errorReported, resultRejected }`.
+
+  **Department visibility is per branch (Phase 2).** A report is visible when the department of the entry the viewing
+  branch works the test with is unassigned or one of the caller's departments: for a report the branch HOLDS that is
+  its own entry once the report was sent to it (`performingBranchLabTestId`), otherwise the order line's; for a report
+  the branch only SENT (the sender view) it is the order line's entry. The row's `departmentId` is the department of
+  the holding branch's entry.
 }

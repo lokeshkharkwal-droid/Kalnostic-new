@@ -54,4 +54,20 @@ docs {
   > To outsource *with* a center, set `{{outsourceCenterId}}` from the Outsource
   > Centers folder first; otherwise drop that body field to test the assign-later
   > flow.
+
+  **Report must be untouched.** Like a Send to another branch, Outsource is refused (422
+  `SAMPLE_SEND_BLOCKED`) when a report the sample serves has already been worked on: past
+  Pending, or holding result values, notes, attachments, overall results or a lock. The
+  message says why: "The report for this test has already been worked on (results, notes
+  or attachments exist, or it is past Pending), so the sample cannot be outsourced." A group
+  call with `skipInvalid: true` skips that sample with the same reason (code and sentence
+  under `skipped`) and sends the others; without it the whole call is refused, even with
+  `force`. The check is made at hand-over only: once out, the sending branch can keep
+  working the report.
+
+  **Center and logistics before it moves.** Both `outsourceCenterId` and `logisticsType` stay optional
+  here (assign later with Assign Center), but until BOTH are set the transfer can not be Picked Up, and until the center
+  is set it can not be Received or Accepted (422 `TRANSFER_OUTSOURCE_NOT_ASSIGNED`). In the In-House Orders list the
+  sample reads "Outsourced – Not assigned" (or "Logistics needed" / "Center needed" when only one is missing) until then, then "Outsourced – In-Transit / Picked Up / Received / Accepted /
+  Repeated / Rejected" as the Outsource tab moves the transfer.
 }
