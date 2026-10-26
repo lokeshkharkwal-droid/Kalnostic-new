@@ -289,11 +289,19 @@ describe('renderLatte - reference_display keeps the lines typed in Master Data',
     );
   });
 
-  it('|noescape still prints the value raw', () => {
+  it('|noescape (what the production templates use) keeps the lines too, and leaves the text raw', () => {
+    const out = renderLatte(`{$row->reference_display|noescape}`, {
+      row: { reference_display: 'Adult\r\n  M: 13 - 17<br>\nF: 12 - 15\n\n' },
+    });
+    expect(out).toBe(PRE('Adult\n  M: 13 - 17<br>\nF: 12 - 15'));
+  });
+
+  it('|noescape on a single-line range, or on another variable, is unchanged', () => {
     expect(
-      renderLatte(`{$r->reference_display|noescape}`, {
-        r: { reference_display: 'a\nb' },
+      renderLatte(`{$row->reference_display|noescape}`, {
+        row: { reference_display: '<b>13 - 17</b>' },
       }),
-    ).toBe('a\nb');
+    ).toBe('<b>13 - 17</b>');
+    expect(renderLatte(`{$v|noescape}`, { v: 'a\nb' })).toBe('a\nb');
   });
 });
