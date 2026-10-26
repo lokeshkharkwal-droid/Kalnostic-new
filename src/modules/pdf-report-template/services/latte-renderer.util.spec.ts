@@ -251,3 +251,49 @@ describe('isLatteBody', () => {
     expect(isLatteBody(undefined)).toBe(false);
   });
 });
+
+describe('renderLatte - reference_display keeps the lines typed in Master Data', () => {
+  const PRE = (t: string) => `<span style="white-space:pre-wrap">${t}</span>`;
+
+  it('prints a multi-line reference range with its line breaks (pre-wrap), escaped', () => {
+    const out = renderLatte(`{$r->reference_display}`, {
+      r: { reference_display: 'Adult\nM: 13 - 17 <x>\nF: 12 - 15' },
+    });
+    expect(out).toBe(PRE('Adult\nM: 13 - 17 &lt;x&gt;\nF: 12 - 15'));
+  });
+
+  it('works inside a foreach row and with the array-key form', () => {
+    const rows = [{ reference_display: 'a\nb' }];
+    expect(
+      renderLatte(`{foreach $rows as $r}{$r['reference_display']}{/foreach}`, {
+        rows,
+      }),
+    ).toBe(PRE('a\nb'));
+  });
+
+  it('a single-line range is only escaped, exactly as before', () => {
+    expect(
+      renderLatte(`{$r->reference_display}`, {
+        r: { reference_display: '<5 & >2' },
+      }),
+    ).toBe('&lt;5 &amp; &gt;2');
+  });
+
+  it('other variables are untouched: their line breaks are not given a pre-wrap span', () => {
+    expect(renderLatte(`{$v}`, { v: 'a\nb' })).toBe('a\nb');
+  });
+
+  it('|nl2br escapes first, then turns each line break into <br />', () => {
+    expect(renderLatte(`{$v|nl2br}`, { v: 'a <b>\r\nc' })).toBe(
+      'a &lt;b&gt;<br />c',
+    );
+  });
+
+  it('|noescape still prints the value raw', () => {
+    expect(
+      renderLatte(`{$r->reference_display|noescape}`, {
+        r: { reference_display: 'a\nb' },
+      }),
+    ).toBe('a\nb');
+  });
+});
