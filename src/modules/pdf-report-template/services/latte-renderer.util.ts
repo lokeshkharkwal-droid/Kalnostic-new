@@ -61,6 +61,21 @@ import {
   toText,
 } from './pdf-document.util';
 
+/**
+ * Keeps the line breaks of a value that is printed WITHOUT escaping (`|noescape`): a value written over several lines
+ * is wrapped in a `white-space:pre-wrap` span, with blank lines at the start and end dropped. The text itself is left
+ * exactly as it is, so any HTML in it still works. A value with no line break is returned unchanged.
+ */
+function keepLinesRaw(value: string): string {
+  const text = value.replace(/\r\n?/g, '\n');
+  if (!text.includes('\n')) return value;
+  const trimmed = text
+    .replace(/^(?:[ \t]*\n)+/, '')
+    .replace(/(?:\n[ \t]*)+$/, '');
+  if (!trimmed.includes('\n')) return trimmed;
+  return `<span style="white-space:pre-wrap">${trimmed}</span>`;
+}
+
 /** An output expression that prints a reference range's Display text (`$r->reference_display`, `$row['reference_display']`). */
 const REFERENCE_DISPLAY_EXPR = /\breference_display\b/;
 
@@ -590,7 +605,11 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
           str = applyFilter(filter, str);
         }
       }
-      if (!escape) return str;
+      if (!escape) {
+        // `{$row->reference_display|noescape}` (what the production templates use) prints the value as typed, so a
+        // range typed over several lines would still be joined by HTML: keep its lines, leave the text itself raw.
+        return REFERENCE_DISPLAY_EXPR.test(n.expr) ? keepLinesRaw(str) : str;
+      }
       // `|nl2br`: escape first, then turn each typed line break into <br />.
       if (breakLines) return escapeHtml(str).replace(/\r\n|\r|\n/g, '<br />');
       // A reference range typed over several lines keeps its lines, as in the flat engine.
