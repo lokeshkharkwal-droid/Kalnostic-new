@@ -55,4 +55,21 @@ docs {
   scanned barcode; `admission_number` carries the order's `orderCode`. `ut_ids`
   lists the tests **in the scanned sample group** that are mapped to the adapter
   and still fillable (plus each test's result-parameter names).
+
+  **Mapping gate (branch + lab test).** The branch *currently processing* the
+  scanned order and its lab test must both be mapped to **this adapter**
+  (`LabAdapterBranch` / `LabAdapterTest`, configured on the Lab Adapters page). If
+  the adapter is authorised for none of the order's in-scope tests the request is
+  **rejected up-front** and no order is returned:
+  - processing branch not linked → `{ "s": "400", "m": "The requesting branch is
+    not registered with this lab adapter." }`
+  - branch linked but test not mapped → `{ "s": "400", "m": "The requested lab
+    test is not linked to this lab adapter." }`
+
+  The gate keys on the branch *currently processing* the test (rehomed on an
+  internal transfer), so an order created at a linked Branch A and transferred to
+  an unlinked Branch B is rejected — Branch A's mapping does not authorise Branch
+  B. A partially-mapped order (≥1 valid test) still succeeds and lists only the
+  mapped tests. (No sample for the barcode →
+  `{ "s": "400", "m": "Specimen id not found" }`.)
 }

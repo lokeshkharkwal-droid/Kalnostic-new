@@ -10,12 +10,22 @@ import { OrderSampleService } from './accession-sample.service';
 
 type FindManyArgs = { where: Record<string, unknown> };
 
-function build(transfers: Array<{ id: string; kind: TransferKind; clonedSampleId: string | null; rejectionReason: string | null }>) {
+function build(
+  transfers: Array<{
+    id: string;
+    kind: TransferKind;
+    clonedSampleId: string | null;
+    rejectionReason: string | null;
+  }>,
+) {
   const findMany = jest
     .fn<Promise<unknown[]>, [FindManyArgs]>()
     .mockResolvedValue(transfers);
   const update = jest
-    .fn<Promise<unknown>, [{ where: { id: string }; data: Record<string, unknown> }]>()
+    .fn<
+      Promise<unknown>,
+      [{ where: { id: string }; data: Record<string, unknown> }]
+    >()
     .mockResolvedValue({});
   const tx = { sampleTransfer: { findMany, update } };
   const service = new OrderSampleService(
@@ -32,9 +42,7 @@ function build(transfers: Array<{ id: string; kind: TransferKind; clonedSampleId
   const recall = (status: SampleStatus) =>
     (
       service as unknown as {
-        recallTransfersForSampleInTx: (
-          ...a: unknown[]
-        ) => Promise<void>;
+        recallTransfersForSampleInTx: (...a: unknown[]) => Promise<void>;
       }
     ).recallTransfersForSampleInTx(tx, 't1', 'p1', {
       id: 's1',
@@ -51,7 +59,9 @@ describe('recallTransfersForSampleInTx — only the hand-off the sample is out o
     [SampleStatus.OUTSOURCED, TransferKind.OUTSOURCE],
     [SampleStatus.SENT_INTERNAL, TransferKind.INTERNAL],
   ])('a %s sample recalls %s transfers only', async (status, kind) => {
-    const m = build([{ id: 'tr1', kind, clonedSampleId: null, rejectionReason: null }]);
+    const m = build([
+      { id: 'tr1', kind, clonedSampleId: null, rejectionReason: null },
+    ]);
     await m.recall(status);
     expect(m.findMany).toHaveBeenCalledTimes(1);
     expect(m.findMany.mock.calls[0]![0].where).toEqual({

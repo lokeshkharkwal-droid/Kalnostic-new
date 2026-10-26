@@ -146,7 +146,6 @@ interface SampleUnit {
   sampleFlow: boolean;
 }
 
-
 /** The scalar field writes + optional history reason an action applies. */
 interface ActionPatch {
   data: Prisma.OrderSampleUpdateInput;

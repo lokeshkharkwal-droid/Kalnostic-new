@@ -2841,7 +2841,15 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <code>ut_ids</code> lists the test's <strong>display name plus each of its result-parameter names</strong>
   (deduped) — the legacy <code>getFormattedOrder</code> shape the analyzers are calibrated against (sent back
   as <code>universal_test_id</code> on submit). No sample with that barcode →
-  <code>{ "s": "400", "m": "Specimen id not found" }</code>.</p>
+  <code>{ "s": "400", "m": "Specimen id not found" }</code>.
+  <strong>Mapping gate:</strong> the branch currently processing the scanned order and its lab test must both be
+  mapped to <strong>this adapter</strong> (<code>LabAdapterBranch</code> / <code>LabAdapterTest</code>). When the
+  adapter is authorised for none of the order's in-scope tests the request is rejected up-front (no order exposed):
+  the processing branch isn't linked → <code>{ "s": "400", "m": "The requesting branch is not registered with this
+  lab adapter." }</code>; the branch is linked but the test isn't mapped → <code>{ "s": "400", "m": "The requested
+  lab test is not linked to this lab adapter." }</code>. The check keys on the branch <em>currently processing</em>
+  the test (rehomed on an internal transfer), so an order created at a linked Branch&nbsp;A and transferred to an
+  unlinked Branch&nbsp;B is rejected — Branch&nbsp;A's mapping does not authorise Branch&nbsp;B.</p>
 </div>
 <div class="ep" id="emi-submit">
   <div><span class="m get">GET</span><span class="path">/emi/submitResult</span></div>
@@ -2862,6 +2870,14 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <code>s: "200"</code>): <code>"Order not found."</code>, <code>"Test already marked as complete"</code>,
   <code>"No test result submitted"</code>, <code>"no test match found for requested token"</code> (with per-report
   <code>fill_status</code> notes such as <code>"Not filled due to report status is not pending."</code>).
+  <strong>Mapping gate (same as <code>/emi/orders</code>):</strong> before anything is written, the branch processing
+  the order and its lab test must be mapped to <strong>this adapter</strong>. When the adapter is authorised for none
+  of the order's in-scope tests the submission is <strong>rejected</strong> and <strong>no records are created,
+  modified, or updated</strong> (not even the <code>AdapterResult</code> audit row): processing branch not linked →
+  <code>{ "s": "400", "m": "The requesting branch is not registered with this lab adapter." }</code>; branch linked
+  but test not mapped → <code>{ "s": "400", "m": "The requested lab test is not linked to this lab adapter." }</code>.
+  A transfer from a linked Branch&nbsp;A to an unlinked Branch&nbsp;B is rejected (Branch&nbsp;A's mapping does not
+  authorise Branch&nbsp;B). A partially-mapped order (≥1 valid test) still proceeds and fills only the mapped tests.
   <strong>Histogram images</strong> in <code>test_result_suplement[]</code> (WBC/RBC/PLT/Diff as base64 data-URIs)
   are, on a successful fill, uploaded to S3 and linked as <code>LabReportAttachment</code>s (<code>kind = image</code>)
   on the filled report(s) — shown in Technician Reporting; the raw array is also kept on the

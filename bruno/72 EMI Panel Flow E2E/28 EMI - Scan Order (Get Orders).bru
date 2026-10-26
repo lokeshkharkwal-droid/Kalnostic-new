@@ -62,4 +62,10 @@ docs {
   behaviour the fix restored: it expands the panel to its member tests (via each
   report's `memberBranchLabTestId`), resolves each member's parameters, and scopes
   them to the scanned sample group. Captures `emiUtIds`.
+
+  **Mapping gate:** the branch processing the order and its (member) lab tests must
+  be mapped to this adapter, or the request is rejected `400` with
+  `"The requesting branch is not registered with this lab adapter."` /
+  `"The requested lab test is not linked to this lab adapter."` — see
+  `71 EMI Machine Flow E2E / 26 EMI - Scan Order` for the full gate description.
 }

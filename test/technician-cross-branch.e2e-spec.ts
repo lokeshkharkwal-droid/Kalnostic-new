@@ -348,7 +348,7 @@ describe('Technician cross-branch worklist (e2e)', () => {
       updatedAt: _u,
       orderItem: _oi,
       ...clone
-    } = base as typeof base & { orderItem: unknown };
+    } = base;
     for (const l of LETTERS) {
       reportIds[l] = {};
       for (const status of STATUSES) {

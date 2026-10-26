@@ -122,4 +122,11 @@ docs {
   with **`source = ADAPTER`** and moved to **`SAVED`** → `test_status: "3 test
   updated"` with three `fill_status: "Report filled"` log lines (one per report —
   the count is of reports, not parameters). Captures `emiFilledCount`.
+
+  **Mapping gate:** before anything is written, the branch processing the order and
+  its (member) lab tests must be mapped to this adapter, or the submission is
+  rejected `400` (`"The requesting branch is not registered with this lab
+  adapter."` / `"The requested lab test is not linked to this lab adapter."`) and
+  **no records are written** — not even the `AdapterResult` audit row. See
+  `71 EMI Machine Flow E2E / 27 EMI - Submit Result` for the full gate description.
 }

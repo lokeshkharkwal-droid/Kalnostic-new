@@ -25,10 +25,22 @@ body:json {
   }
 }
 
+script:post-response {
+  // The sequential sample barcode is assigned at COLLECT (not order creation), so
+  // the NEW-status row in step 21 has none. Capture it here (status ACCEPTED, the
+  // barcode is present) — this is the specimen id the analyzer scans in 26/27.
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.barcode) bru.setVar("sampleBarcode", data.barcode);
+}
+
 docs {
   **Accept the sample — this is the step that makes the order machine-ready.**
   COLLECTED → ACCEPTED. Accepting **auto-creates the Technician `LabReport`
   (status PENDING)** for the order item — the exact row the analyzer fills in step
   27. Requires the `accession:in_house_order__accept_the_sample` permission granted
   to the operator in step 08.
+
+  Also (re)captures **`sampleBarcode`** from the accepted sample: the barcode is
+  assigned at **collect**, so step 21's `NEW` row had none — this is the reliable
+  capture point for the specimen id the EMI machine scans.
 }

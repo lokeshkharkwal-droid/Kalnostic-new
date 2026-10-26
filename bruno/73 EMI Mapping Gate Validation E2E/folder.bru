@@ -1,0 +1,80 @@
+meta {
+  name: 73 EMI Mapping Gate Validation E2E
+  seq: 73
+}
+
+script:pre-request {
+  // ---------------------------------------------------------------------------
+  // EMI Mapping Gate Validation E2E — proves the branch + lab-test mapping gates
+  // on the two LIS endpoints (/emi/orders, /emi/submitResult).
+  //
+  // ⚠️ RUN FOLDER "71 EMI Machine Flow E2E" FIRST (or Run Collection). This folder
+  // REUSES the runtime vars that flow captured — it does NOT re-bootstrap:
+  //   businessAdminToken, operatorToken, tenantId, branchId (the order's branch
+  //   "A"), branchLabTestId, equipmentId, masterDataId, orderCode, sampleBarcode,
+  //   flowAdapterToken (the VALID adapter mapped to branch A + the order's test),
+  //   tatRunId.
+  //
+  // Then it builds two *mis-mapped* adapters and scans the SAME order with them:
+  //   • an adapter mapped to a DIFFERENT branch (B)       → branch gate rejects
+  //   • an adapter mapped to a DIFFERENT lab test (on A)  → lab-test gate rejects
+  // and re-confirms the VALID adapter still works (positive control).
+  // ---------------------------------------------------------------------------
+
+  if (!bru.getVar("baseUrl"))    bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+  // EMI endpoints live at the ROOT (not under /api/v1) — host only.
+  if (!bru.getVar("emiBaseUrl")) bru.setVar("emiBaseUrl", "http://localhost:3000");
+
+  // Analyte the negative submits echo (same as folder 71). Values are irrelevant —
+  // the gate rejects before any value matching — but keep them defined so the body
+  // is valid JSON even if this folder is run before 71 set them.
+  if (!bru.getVar("emiParamCode"))   bru.setVar("emiParamCode", "HGB");
+  if (!bru.getVar("emiParamUnit"))   bru.setVar("emiParamUnit", "g/dL");
+  if (!bru.getVar("emiResultValue")) bru.setVar("emiResultValue", "13.5");
+
+  // Fail loudly if the prerequisite flow (71) hasn't been run in this session.
+  const need = ["businessAdminToken", "operatorToken", "branchId", "sampleBarcode", "flowAdapterToken", "equipmentId"];
+  const missing = need.filter((k) => !bru.getVar(k));
+  if (missing.length) {
+    console.warn("[73] Missing vars from folder 71 — run '71 EMI Machine Flow E2E' first. Missing: " + missing.join(", "));
+  }
+}
+
+docs {
+  # EMI Mapping Gate Validation E2E
+
+  Verifies the **branch** and **lab-test** mapping gates added to the LIS
+  endpoints: before `GET /emi/orders` exposes an order or `POST /emi/submitResult`
+  fills a result, the branch *currently processing* the scanned order **and** its
+  lab test must be mapped to **the authenticating adapter**
+  (`LabAdapterBranch` / `LabAdapterTest`, configured on the Lab Adapters page).
+  When the adapter is authorised for none of the order's in-scope tests, the
+  request is **rejected (`s:"400"`) with a clear message and NO records are written**
+  (not even the `AdapterResult` audit row).
+
+  ## How to run
+  1. **Run folder `71 EMI Machine Flow E2E` first** (or Run Collection) — it creates
+     the tenant/branch/order/sample, accepts it (creating the PENDING report), and
+     registers the VALID adapter (`flowAdapterToken`). This folder reuses its vars.
+  2. Then **Run Folder** on this folder, or click Next through 01 → 11.
+
+  ## What each case proves
+  - **Branch not registered (03/04).** A second adapter mapped only to a *different*
+    branch B scans the branch-A order → both endpoints reject with
+    **`"The requesting branch is not registered with this lab adapter."`** This is
+    the "Branch A's mapping does not authorise Branch B" rule: an adapter scoped to
+    B cannot process an order being handled at A (and, symmetrically, an order
+    transferred A→B cannot be processed by an A-only adapter — the gate keys on the
+    branch *currently processing* the test, `LabReport.branchId`).
+  - **Lab test not linked (09/10).** A third adapter mapped to branch A but to a
+    *different* lab test scans the order → both endpoints reject with
+    **`"The requested lab test is not linked to this lab adapter."`** (branch is
+    fine, the order's test just isn't one this adapter reports).
+  - **Valid adapter still works (11).** The original `flowAdapterToken` (branch A +
+    the order's test) still returns the order with a non-empty `ut_ids` — valid
+    requests are preserved.
+
+  > The negative `submitResult` calls are rejected *before* any write, so they do
+  > not change the report (already `SAVED` from folder 71 step 27) and write no
+  > `AdapterResult` row.
+}
