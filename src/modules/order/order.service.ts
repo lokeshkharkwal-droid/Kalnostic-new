@@ -4,6 +4,7 @@ import {
   AppointmentStatus,
   AppointmentType,
   BillStatus,
+  BranchStatus,
   DiscountMode,
   DoctorType,
   ExternalIdFormat,
@@ -84,6 +85,8 @@ import {
   ORDER_INCLUDE,
   ORDER_LIST_INCLUDE,
   OrderListRow,
+  BranchDueRow,
+  PatientDuesResult,
   OrderWithRelations,
   BILLING_ORDER_INCLUDE,
   BillingOrder,
@@ -227,6 +230,7 @@ import {
   QuotationAlreadyConvertedException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
+  BranchInactiveException,
   PreviousDuesNotClearedException,
   PreviousDuesOverpaymentException,
   FullPaymentRequiredException,
@@ -996,6 +1000,7 @@ export class OrderService {
             this.settlementPaymentMode(dto.payments),
             new Date(dto.orderDate),
             personId,
+            branchId,
           );
         }
         // Reserve the phlebotomist slot for a home-visit appointment (atomic
@@ -1238,19 +1243,25 @@ export class OrderService {
   /**
    * Sum a patient's outstanding previous dues — the positive
    * `netAmount − paidAmount` balance across their active, non-cancelled orders
-   * (`ORDER`/`APPOINTMENT`), **business-wide** (every branch in the tenant).
-   * Overpaid orders never offset others (each order is floored at 0). Tenant-wide
-   * (not branch-scoped) so the figure matches the patient's true total dues to the
-   * business — the Create Order "Clear Previous Dues" cap, the previous-dues gate,
-   * the overpayment guard, and the oldest-first settlement all share it.
+   * (`ORDER`/`APPOINTMENT`). Overpaid orders never offset others (each order is
+   * floored at 0).
+   *
+   * Scoping: pass `branchId` to total only the dues owed **at that branch** — this
+   * is what every *money* path uses (the Create Order "Clear Previous Dues" cap,
+   * the previous-dues gate, the overpayment guard, and the oldest-first
+   * settlement), because dues are collected and cleared branch-by-branch. Omit
+   * `branchId` for the **business-wide** figure (every branch in the tenant), used
+   * only for the informational cross-business total.
    * @param tenantId tenant scope (RLS also isolates to this tenant)
    * @param patientId the patient to total
    * @param excludeOrderId an order to exclude (e.g. the one being finalized)
+   * @param branchId when set, restrict to dues owed at this branch
    */
   private async getPatientOutstanding(
     tenantId: string,
     patientId: string,
     excludeOrderId?: string,
+    branchId?: string | null,
   ): Promise<number> {
     const orders = await this.prisma.order.findMany({
       where: {
@@ -1259,6 +1270,7 @@ export class OrderService {
         deletedAt: null,
         status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
         ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+        ...(branchId ? { branchId } : {}),
       },
       select: {
         payments: {
@@ -1277,21 +1289,129 @@ export class OrderService {
   }
 
   /**
-   * Public read for the Create Order screen: a patient's **business-wide**
-   * outstanding previous dues (all branches in the tenant), so the UI can display
-   * them and pre-validate the Previous-Dues rules before submitting.
+   * Public read for the Create Order screen: a patient's outstanding previous
+   * dues, resolved both **at the active branch** (the figure that drives the
+   * "Clear Previous Dues" cap and the previous-dues gate — dues are collected and
+   * cleared per branch) and **business-wide** (an informational total across all
+   * branches), plus a per-branch breakdown for the cross-branch dues modal.
+   *
+   * Cross-branch visibility is gated: when `includeAllBranches` is false (the
+   * caller lacks `View cross-branch results`), the business-wide total collapses
+   * to the active-branch figure and the breakdown contains only the active
+   * branch, so other branches' dues are never leaked.
    * @param tenantId tenant scope (from JWT)
    * @param patientId the patient to total
-   * @returns `{ outstanding }` in the same integer units as the payment ledger
+   * @param currentBranchId the caller's active branch (dues collectable here)
+   * @param includeAllBranches whether the caller may see other branches' dues
+   * @returns {@link PatientDuesResult} (amounts in the payment-ledger units)
    * @throws OrderPatientNotFoundException if the patient is not in the tenant
    */
   async getPatientDues(
     tenantId: string,
     patientId: string,
-  ): Promise<{ outstanding: number }> {
+    currentBranchId: string | null,
+    includeAllBranches: boolean,
+  ): Promise<PatientDuesResult> {
     await this.assertPatient(tenantId, patientId);
-    const outstanding = await this.getPatientOutstanding(tenantId, patientId);
-    return { outstanding };
+
+    // One pass over the patient's active, non-cancelled orders; group the
+    // per-order balance (floored at 0) by branch.
+    const orders = await this.prisma.order.findMany({
+      where: {
+        tenantId,
+        patientId,
+        deletedAt: null,
+        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+      },
+      select: {
+        branchId: true,
+        orderDate: true,
+        createdAt: true,
+        payments: {
+          where: { deletedAt: null },
+          select: { netAmount: true, paidAmount: true },
+        },
+      },
+    });
+
+    interface BranchAgg {
+      totalDue: number;
+      orderCount: number;
+      oldestDueOrderDate: Date | null;
+    }
+    const byBranch = new Map<string, BranchAgg>();
+    let businessWide = 0;
+    let currentBranchDue = 0;
+    for (const o of orders) {
+      const net = o.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paid = o.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
+      const due = Math.max(net - paid, 0);
+      if (due <= 0) continue;
+      businessWide += due;
+      if (o.branchId === currentBranchId) currentBranchDue += due;
+      // Null-branch dues (tenant-level, not collectable at any location) count
+      // toward the business-wide total but have no branch row in the breakdown.
+      if (!o.branchId) continue;
+      const anchor = o.orderDate ?? o.createdAt;
+      const agg = byBranch.get(o.branchId) ?? {
+        totalDue: 0,
+        orderCount: 0,
+        oldestDueOrderDate: null,
+      };
+      agg.totalDue += due;
+      agg.orderCount += 1;
+      if (!agg.oldestDueOrderDate || anchor < agg.oldestDueOrderDate) {
+        agg.oldestDueOrderDate = anchor;
+      }
+      byBranch.set(o.branchId, agg);
+    }
+
+    const outstanding = roundToTwoDecimalPlaces(currentBranchDue);
+    const businessWideOutstanding = roundToTwoDecimalPlaces(businessWide);
+
+    // Resolve the branches to display. Without the cross-branch permission, only
+    // the active branch is ever shown.
+    const branchIds = includeAllBranches
+      ? [...byBranch.keys()]
+      : [...byBranch.keys()].filter((id) => id === currentBranchId);
+    const branchMeta =
+      branchIds.length > 0
+        ? await this.prisma.branch.findMany({
+            where: { tenantId, id: { in: branchIds } },
+            select: { id: true, name: true, status: true, deletedAt: true },
+          })
+        : [];
+    const metaById = new Map(branchMeta.map((b) => [b.id, b]));
+
+    const branches: BranchDueRow[] = branchIds.map((id) => {
+      const agg = byBranch.get(id) as BranchAgg;
+      const meta = metaById.get(id);
+      const isActive =
+        meta != null && meta.status === BranchStatus.ACTIVE && !meta.deletedAt;
+      return {
+        branchId: id,
+        branchName: meta?.name ?? 'Unknown branch',
+        isActive,
+        isCurrentBranch: id === currentBranchId,
+        orderCount: agg.orderCount,
+        totalDue: roundToTwoDecimalPlaces(agg.totalDue),
+        oldestDueOrderDate: agg.oldestDueOrderDate,
+      };
+    });
+    // Active branch pinned to the top; the rest by descending due amount.
+    branches.sort((a, b) => {
+      if (a.isCurrentBranch !== b.isCurrentBranch)
+        return a.isCurrentBranch ? -1 : 1;
+      return b.totalDue - a.totalDue;
+    });
+
+    return {
+      outstanding,
+      businessWideOutstanding: includeAllBranches
+        ? businessWideOutstanding
+        : outstanding,
+      branches,
+    };
   }
 
   /**
@@ -1342,6 +1462,17 @@ export class OrderService {
     } = params;
     if (status !== OrderStatus.ORDER || !branchId) return;
 
+    // A deactivated branch is never an eligible location for finalizing an order
+    // or collecting/clearing dues — hard-block it here (the single chokepoint for
+    // ORDER finalization, which is also where previous-dues clearing happens).
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, tenantId },
+      select: { status: true, deletedAt: true },
+    });
+    if (!branch || branch.deletedAt || branch.status !== BranchStatus.ACTIVE) {
+      throw new BranchInactiveException(branchId);
+    }
+
     const settings =
       params.settings ??
       (await this.registrationSettingsService.getForBranch(tenantId, branchId));
@@ -1353,10 +1484,14 @@ export class OrderService {
     const duesGateActive =
       !settings.ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues;
     if (duesGateActive || previousDuesCleared > 0) {
+      // Branch-scoped: the gate and the clear-dues cap consider ONLY dues owed at
+      // this branch. Dues at other branches never block an order here and must be
+      // collected at the branch that owns them.
       const outstanding = await this.getPatientOutstanding(
         tenantId,
         patientId,
         excludeOrderId,
+        branchId,
       );
       // Can't clear more dues than are owed (settlement is capped at the balance).
       if (previousDuesCleared > outstanding) {
@@ -1640,9 +1775,10 @@ export class OrderService {
    * The caller has already validated (`assertBillingRules`) that `amount` never
    * exceeds the outstanding balance, so any tiny rounding remainder is a no-op.
    *
-   * Settlement is **business-wide** (all branches in the tenant): the cleared
-   * amount pays down the patient's oldest outstanding orders wherever they were
-   * placed. Each settlement row is tagged with the settled order's own branch.
+   * Settlement is **branch-scoped**: the cleared amount pays down only the
+   * patient's oldest outstanding orders **at `branchId`** (the branch collecting
+   * the dues), matching the branch-scoped gate/cap that bounded `amount`. Dues at
+   * other branches are left for those branches to collect.
    *
    * @param tx active transaction client
    * @param tenantId tenant scope
@@ -1652,6 +1788,8 @@ export class OrderService {
    * @param newOrderCode the new order's code, recorded as the settlement reference
    * @param paymentMode mode the dues were collected under (the new order's mode)
    * @param paymentDate when the dues were collected
+   * @param personId the staff person recording the settlement
+   * @param branchId the branch collecting the dues (settlement is scoped to it)
    */
   private async settlePreviousDuesInTx(
     tx: Prisma.TransactionClient,
@@ -1663,6 +1801,7 @@ export class OrderService {
     paymentMode: PaymentMode,
     paymentDate: Date,
     personId: string | null,
+    branchId: string,
   ): Promise<void> {
     if (amount <= 0) return;
     const orders = await tx.order.findMany({
@@ -1671,6 +1810,10 @@ export class OrderService {
         patientId,
         deletedAt: null,
         id: { not: newOrderId },
+        // Settlement is branch-scoped: the cleared amount only pays down the
+        // patient's outstanding orders AT THIS BRANCH (matching the gate/cap that
+        // bounded what could be cleared). Other branches' dues are untouched.
+        branchId,
         status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
       },
       orderBy: [{ orderDate: 'asc' }, { createdAt: 'asc' }],
@@ -6525,6 +6668,7 @@ export class OrderService {
           this.settlementPaymentMode(dto.payments),
           dto.orderDate ? new Date(dto.orderDate) : new Date(),
           personId,
+          branchId,
         );
       }
     });

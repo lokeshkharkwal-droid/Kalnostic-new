@@ -1,0 +1,48 @@
+meta {
+  name: 08 Create Test-Unmapped Adapter
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/lab-adapters
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Gate Test-Unmapped {{tatRunId}}",
+    "equipmentId": "{{equipmentId}}",
+    "branchIds": ["{{branchId}}"],
+    "labTestIds": ["{{branchLabTestBId}}"]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.token) bru.setVar("unmappedTestAdapterToken", data.token);
+}
+
+tests {
+  test("adapter created with a token", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data.token).to.be.a("string").and.not.empty;
+  });
+}
+
+docs {
+  **An adapter mapped to branch A but to the WRONG test.** Assigned to the order's
+  branch **A** (`branchId`) — so the branch gate passes — but it reports only
+  **`branchLabTestBId`** (the second test), NOT the order's CBC test. So the order's
+  test is not one this adapter is configured to report. Captures its token as
+  **`unmappedTestAdapterToken`**.
+}

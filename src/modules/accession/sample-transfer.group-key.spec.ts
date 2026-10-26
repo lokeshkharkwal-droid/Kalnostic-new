@@ -57,8 +57,28 @@ describe('SampleTransferService.findTransfers — group-key tagging', () => {
 
   it('two samples of one order + department + name share a key (one group)', async () => {
     const rows = await run('DEPARTMENT_SAMPLE_NAME', [
-      row({ id: 'tr1', sample: { id: 's1', orderId: 'o1', departmentId: 'd1', sampleGroupLabel: 'EDTA', tests: [], order: { id: 'o1', orderCode: 'DIG-001' } } }),
-      row({ id: 'tr2', sample: { id: 's2', orderId: 'o1', departmentId: 'd1', sampleGroupLabel: 'EDTA', tests: [], order: { id: 'o1', orderCode: 'DIG-001' } } }),
+      row({
+        id: 'tr1',
+        sample: {
+          id: 's1',
+          orderId: 'o1',
+          departmentId: 'd1',
+          sampleGroupLabel: 'EDTA',
+          tests: [],
+          order: { id: 'o1', orderCode: 'DIG-001' },
+        },
+      }),
+      row({
+        id: 'tr2',
+        sample: {
+          id: 's2',
+          orderId: 'o1',
+          departmentId: 'd1',
+          sampleGroupLabel: 'EDTA',
+          tests: [],
+          order: { id: 'o1', orderCode: 'DIG-001' },
+        },
+      }),
     ]);
     expect(rows[0]!.groupKey).toBe(rows[1]!.groupKey);
   });
@@ -73,9 +93,18 @@ describe('SampleTransferService.findTransfers — group-key tagging', () => {
     expect(r!.groupKey).toBe('o1::SAMPLE::s1');
   });
 
-  it('uses the sample\'s own order id for the key prefix (not a different field)', async () => {
+  it("uses the sample's own order id for the key prefix (not a different field)", async () => {
     const [r] = await run('DEPARTMENT', [
-      row({ sample: { id: 's9', orderId: 'oZ', departmentId: null, sampleGroupLabel: null, tests: [], order: { id: 'oZ', orderCode: 'DIG-009' } } }),
+      row({
+        sample: {
+          id: 's9',
+          orderId: 'oZ',
+          departmentId: null,
+          sampleGroupLabel: null,
+          tests: [],
+          order: { id: 'oZ', orderCode: 'DIG-009' },
+        },
+      }),
     ]);
     // Null department falls back to the stable "none" token, prefixed by oZ.
     expect(r!.groupKey).toBe('oZ::DEPT::none');
