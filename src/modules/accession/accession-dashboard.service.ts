@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  OrderStatus,
   Prisma,
   SampleSource,
   SampleStatus,
@@ -8,6 +9,9 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccessionSettingsService } from './accession-settings.service';
+import { SAMPLE_NOT_ITEM_REMOVED } from './utils/item-removed.util';
+import { HIDDEN_FROM_RECEIVER_WHERE } from './utils/receiver-visibility.util';
+import { SYSTEM_TRANSFER_CLOSE_REASONS } from './constants/transfer-close-reasons.constant';
 import {
   TatStatus,
   TatThresholds,
@@ -126,6 +130,25 @@ const STATUS_DISPLAY_ORDER: SampleStatus[] = [
  * unlike every other Accession endpoint, which is always locked to the
  * caller's own active branch (confirmed with the user).
  */
+/**
+ * Cancelled orders are not live work: the dashboard leaves their samples (and
+ * internal transfers) out of every count, so a cancelled order cannot look
+ * overdue. The same goes for a sample whose test was removed from the order (kept
+ * but frozen, nobody can work it, so it must not age into "TAT Breached"). The
+ * list itself still shows them, tagged "Order cancelled" / "Test removed from
+ * order".
+ */
+const LIVE_ORDER_SAMPLES = {
+  order: { status: { not: OrderStatus.CANCELLED } },
+  ...SAMPLE_NOT_ITEM_REMOVED,
+} satisfies Prisma.OrderSampleWhereInput;
+const LIVE_ORDER_TRANSFERS = {
+  sample: {
+    order: { status: { not: OrderStatus.CANCELLED } },
+    ...SAMPLE_NOT_ITEM_REMOVED,
+  },
+} satisfies Prisma.SampleTransferWhereInput;
+
 @Injectable()
 export class AccessionDashboardService {
   constructor(
@@ -220,6 +243,7 @@ export class AccessionDashboardService {
         tenantId,
         ...branchWhere(branchId),
         deletedAt: null,
+        ...LIVE_ORDER_SAMPLES,
       },
       _count: { _all: true },
     });
@@ -265,6 +289,7 @@ export class AccessionDashboardService {
         tenantId,
         ...branchWhere(branchId),
         deletedAt: null,
+        ...LIVE_ORDER_SAMPLES,
       },
       select: { createdAt: true, status: true },
     });
@@ -330,6 +355,7 @@ export class AccessionDashboardService {
           tenantId,
           ...branchWhere(branchId),
           deletedAt: null,
+          ...LIVE_ORDER_SAMPLES,
         },
         select: { createdAt: true, status: true },
       }),
@@ -338,7 +364,15 @@ export class AccessionDashboardService {
           tenantId,
           ...destinationBranchWhere,
           deletedAt: null,
+          ...LIVE_ORDER_TRANSFERS,
           transferStatus: TransferStatus.REJECTED,
+          // Only the receiving branch's OWN rejections: a transfer the system closed
+          // (the sender's Retrieve, a removed test) is not a rejection decision. A
+          // row with no reason still counts, as before.
+          OR: [
+            { rejectionReason: null },
+            { rejectionReason: { notIn: [...SYSTEM_TRANSFER_CLOSE_REASONS] } },
+          ],
           ...(createdAt && { createdAt }),
         },
       }),
@@ -402,6 +436,7 @@ export class AccessionDashboardService {
         where: {
           tenantId,
           deletedAt: null,
+          ...LIVE_ORDER_TRANSFERS,
           kind: TransferKind.INTERNAL,
           ...originWhere,
           destinationBranchId: { not: null },
@@ -414,8 +449,12 @@ export class AccessionDashboardService {
         where: {
           tenantId,
           deletedAt: null,
+          ...LIVE_ORDER_TRANSFERS,
           kind: TransferKind.INTERNAL,
           ...destinationWhere,
+          // What the receiving branch cannot see yet (In-Transit, no logistics type)
+          // is not counted as received from the other branch.
+          NOT: HIDDEN_FROM_RECEIVER_WHERE,
           originBranchId: { not: null },
           ...(createdAt && { createdAt }),
         },
@@ -606,6 +645,7 @@ export class AccessionDashboardService {
         tenantId,
         ...branchWhere(branchId),
         deletedAt: null,
+        ...LIVE_ORDER_SAMPLES,
         createdAt: createdAtRange,
       },
       select: {

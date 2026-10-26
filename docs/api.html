@@ -533,6 +533,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
   <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
+  <tr><td>GET /branch-lab-tests/options</td><td>Business JWT</td><td>lightweight orderable options (active default variants) for pickers; <code>search</code> on testName, <code>listId</code>, opt-in <code>preferredOnly</code> (unsearched view → preference tests) and <code>includeAka</code> (search also matches the AKA name — Create-Order picker)</td></tr>
   <tr><td>GET /branch-lab-tests/:id</td><td>Business JWT</td><td>get one branch lab test (with configSnapshot)</td></tr>
   <tr><td>PUT /branch-lab-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/notes/active)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>
@@ -546,7 +547,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PUT /branch-lab-panels/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/applicability/flags/TAT/active)</td></tr>
   <tr><td>PATCH /branch-lab-panels/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab panel</td></tr>
   <tr><td>DELETE /branch-lab-panels/:id</td><td>Business JWT</td><td>soft-delete a branch lab panel</td></tr>
-  <tr><td>GET /branch-lab-test-lists</td><td>Business JWT</td><td>list the branch's Lab Test Lists (pricing-list tabs; default Walk-in first)</td></tr>
+  <tr><td>GET /branch-lab-test-lists</td><td>Business JWT</td><td>list the branch's Lab Test Lists (pricing-list tabs; default Walk-in first, auto-created if missing)</td></tr>
   <tr><td>GET /branch-lab-test-lists/options</td><td>Business JWT</td><td>{id,name,isDefault}[] for the referral/registration list selectors</td></tr>
   <tr><td>POST /branch-lab-test-lists</td><td>Business JWT</td><td>create a list seeded from Walk-in (copyPriceFrom + priceType PERCENTAGE/CUSTOMIZED + copyPercentage)</td></tr>
   <tr><td>POST /branch-lab-test-lists/:id/clone</td><td>Business JWT</td><td>deep-copy a list (rows + prices) into a new independent list</td></tr>
@@ -947,14 +948,19 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
 <div class="ep" id="tenant-locale">
   <div><span class="m get">GET</span><span class="path">/api/v1/tenant/locale</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Return the caller tenant's locale so the frontend can convert UTC timestamps
-  into business-local time and format money with the configured currency. Scoped
-  to the caller's own tenant from the token. Storage stays UTC — this only drives
-  display. An unsupported stored time zone falls back to <code>Asia/Kolkata</code>.</p>
+  <p>Return the caller tenant's identity + locale so the frontend can label the
+  business, convert UTC timestamps into business-local time and format money with
+  the configured currency. Scoped to the caller's own tenant from the token.
+  Storage stays UTC — this only drives display. An unsupported stored time zone
+  falls back to <code>Asia/Kolkata</code>. <code>businessAddress</code> is the
+  registered address as one line (address line → area → city → state → pincode →
+  country, blanks skipped; falls back to the legacy <code>address</code> JSON;
+  <code>""</code> when none is stored).</p>
   <p class="lbl">200 response</p>
   <pre>{ "success": true, "data": {
+  "businessName": "Flow Lab", "businessAddress": "12 MG Road, Pune, Maharashtra, 411001, India",
   "timezone": "Asia/Kolkata", "currency": "INR",
-  "dateFormat": "DD/MM/YYYY", "language": "en"
+  "dateFormat": "DD/MM/YYYY", "timeFormat": "12h", "language": "en"
 }, "meta": { "timestamp": "…" } }</pre>
 </div>
 
@@ -1511,8 +1517,17 @@ tests never appear regardless of status.</div>
   <div><span class="m patch">PATCH</span><span class="path">/api/v1/master-data/:masterDataId/lab-tests/:labTestId</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>Patch core fields (send only what changes). When <code>samples</code> or <code>resultParams</code> is
-  provided, that whole child set is <b>replaced</b> (old active rows soft-deleted, new set created) in one
-  transaction. Same conflicts/cross-field rules as create. Toggle Active/Inactive via <code>isActive</code>.</p>
+  provided, that whole child set is <b>replaced</b> in one transaction. Same conflicts/cross-field rules as
+  create. Toggle Active/Inactive via <code>isActive</code>.</p>
+  <p><b>Parameters:</b> send each existing parameter's <code>id</code> so a rename of its <code>parameterCode</code>
+  keeps the parameter and the results entered for it; without an <code>id</code> it is matched by
+  <code>parameterCode</code>. A parameter nothing matches is created (a client <code>id</code> is never used for the new
+  row); one that is not sent is soft-deleted. <b>Ranges:</b> a range unchanged in analyzer, method, unit, gender, age band,
+  limits, critical limits and flag style keeps its row and id (only Default and Display are patched in place); a changed or
+  removed range is soft-deleted and a changed or added one created. Two ranges with the same analyzer, method, unit,
+  gender and age band are accepted when their lower or upper limit differs, provided exactly one of them is the
+  Default; identical limits are <span class="pill">422</span> "similar reference range", a partial overlap is still refused.
+  The Excel import keeps refusing a same-key pair.</p>
   <pre>{ "priceMaximum":600, "isActive":false }</pre>
 </div>
 
@@ -3064,7 +3079,15 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <code>ut_ids</code> lists the test's <strong>display name plus each of its result-parameter names</strong>
   (deduped) — the legacy <code>getFormattedOrder</code> shape the analyzers are calibrated against (sent back
   as <code>universal_test_id</code> on submit). No sample with that barcode →
-  <code>{ "s": "400", "m": "Specimen id not found" }</code>.</p>
+  <code>{ "s": "400", "m": "Specimen id not found" }</code>.
+  <strong>Mapping gate:</strong> the branch currently processing the scanned order and its lab test must both be
+  mapped to <strong>this adapter</strong> (<code>LabAdapterBranch</code> / <code>LabAdapterTest</code>). When the
+  adapter is authorised for none of the order's in-scope tests the request is rejected up-front (no order exposed):
+  the processing branch isn't linked → <code>{ "s": "400", "m": "The requesting branch is not registered with this
+  lab adapter." }</code>; the branch is linked but the test isn't mapped → <code>{ "s": "400", "m": "The requested
+  lab test is not linked to this lab adapter." }</code>. The check keys on the branch <em>currently processing</em>
+  the test (rehomed on an internal transfer), so an order created at a linked Branch&nbsp;A and transferred to an
+  unlinked Branch&nbsp;B is rejected — Branch&nbsp;A's mapping does not authorise Branch&nbsp;B.</p>
 </div>
 <div class="ep" id="emi-submit">
   <div><span class="m get">GET</span><span class="path">/emi/submitResult</span></div>
@@ -3085,6 +3108,14 @@ Every submission is persisted as an <code>AdapterResult</code> audit row.</div>
   <code>s: "200"</code>): <code>"Order not found."</code>, <code>"Test already marked as complete"</code>,
   <code>"No test result submitted"</code>, <code>"no test match found for requested token"</code> (with per-report
   <code>fill_status</code> notes such as <code>"Not filled due to report status is not pending."</code>).
+  <strong>Mapping gate (same as <code>/emi/orders</code>):</strong> before anything is written, the branch processing
+  the order and its lab test must be mapped to <strong>this adapter</strong>. When the adapter is authorised for none
+  of the order's in-scope tests the submission is <strong>rejected</strong> and <strong>no records are created,
+  modified, or updated</strong> (not even the <code>AdapterResult</code> audit row): processing branch not linked →
+  <code>{ "s": "400", "m": "The requesting branch is not registered with this lab adapter." }</code>; branch linked
+  but test not mapped → <code>{ "s": "400", "m": "The requested lab test is not linked to this lab adapter." }</code>.
+  A transfer from a linked Branch&nbsp;A to an unlinked Branch&nbsp;B is rejected (Branch&nbsp;A's mapping does not
+  authorise Branch&nbsp;B). A partially-mapped order (≥1 valid test) still proceeds and fills only the mapped tests.
   <strong>Histogram images</strong> in <code>test_result_suplement[]</code> (WBC/RBC/PLT/Diff as base64 data-URIs)
   are, on a successful fill, uploaded to S3 and linked as <code>LabReportAttachment</code>s (<code>kind = image</code>)
   on the filled report(s) — shown in Technician Reporting; the raw array is also kept on the

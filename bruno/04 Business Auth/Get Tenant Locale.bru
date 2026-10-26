@@ -16,7 +16,7 @@ auth:bearer {
 
 docs {
   Returns the caller tenant's identity + locale so the business frontend can
-  label the active business, convert UTC timestamps into business-local time,
+  label the active business (name + address), convert UTC timestamps into business-local time,
   and format money with the configured currency. Protected by the business JWT
   (any authenticated business user); scoped to the caller's own tenant from the
   token — no id in the path.
@@ -24,6 +24,11 @@ docs {
   Response `data`:
   - `businessName` — the tenant's display name (`Tenant.name`); used e.g. as the
     org-wide group label in the profile switcher.
+  - `businessAddress` — the tenant's registered address as one line (e.g.
+    `12 MG Road, Indiranagar, Bengaluru, Karnataka, 560038, India`): address
+    line → area → city → state → pincode → country, blanks skipped. Tenants
+    without the structured fields fall back to the legacy free-form `address`
+    JSON; `""` when no address is stored. Used e.g. in exported report headers.
   - `timezone` — IANA time zone (e.g. `Asia/Kolkata`). Always one of the
     supported zones; an unsupported stored value falls back to the platform
     default `Asia/Kolkata`.

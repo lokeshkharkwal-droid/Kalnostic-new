@@ -21,6 +21,11 @@ tests {
 }
 
 docs {
+  Branch scope: opens only for the transfer's sender, holder or receiver, or a branch
+  with a stake in its sample (e.g. the chain's origin). Any other branch gets 404 (the
+  same answer as a missing id). A caller with no active branch (business admin) is not
+  limited.
+
   One transfer with its linked `sample` (tests + order/patient/referral context).
   404 `SAMPLE_TRANSFER_NOT_FOUND` if missing / other tenant.
 

@@ -158,28 +158,70 @@ export class OrderController {
     );
   }
 
-  /** List orders (paginated, with search + filters). Scoped to the active branch. */
+  /**
+   * List orders (paginated, with search + filters). Scoped to the active branch,
+   * except a single patient's history (`patientId`) which goes business-wide
+   * (all branches) for the Create Order "Past Orders" lookup — but ONLY for a
+   * caller holding `View cross-branch results`. Without that permission (and no
+   * explicit branch override) a patient lookup is forced back to the active
+   * branch, so cross-branch orders are never leaked, not merely hidden by the UI.
+   */
   @Get()
-  findAll(
+  async findAll(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: ListOrdersDto,
   ) {
+    if (query.patientId && !query.isQuotation && !query.branchId) {
+      const ctx = {
+        tenantId,
+        personId,
+        branchId: profile.branchId,
+        profileKey: profile.profileKey,
+      };
+      const canCrossBranch = await this.permissionCheck.has(
+        ctx,
+        PERMISSION_KEYS.REG_VIEW_CROSS_BRANCH_RESULTS,
+      );
+      if (!canCrossBranch && profile.branchId) {
+        query.branchId = profile.branchId;
+      }
+    }
     return this.orderService.findAll(tenantId, profile.branchId, query);
   }
 
   /**
-   * A patient's outstanding previous dues **business-wide** (all branches in the
-   * tenant), summed across their active, non-cancelled orders. Used by the Create
-   * Order screen to display + pre-validate the Previous-Dues rules. Declared
-   * before `:id` so the static path isn't captured by the param route.
+   * A patient's outstanding previous dues for the Create Order screen: the
+   * active-branch figure (drives the clear-dues cap + previous-dues gate), the
+   * business-wide total, and a per-branch breakdown. Cross-branch figures are
+   * gated by `View cross-branch results` — without it, everything collapses to
+   * the active branch so other branches' dues are never leaked. Declared before
+   * `:id` so the static path isn't captured by the param route.
    */
   @Get('patient-dues')
-  patientDues(
+  async patientDues(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Query() query: PatientDuesQueryDto,
   ) {
-    return this.orderService.getPatientDues(tenantId, query.patientId);
+    const ctx = {
+      tenantId,
+      personId,
+      branchId: profile.branchId,
+      profileKey: profile.profileKey,
+    };
+    const canCrossBranch = await this.permissionCheck.has(
+      ctx,
+      PERMISSION_KEYS.REG_VIEW_CROSS_BRANCH_RESULTS,
+    );
+    return this.orderService.getPatientDues(
+      tenantId,
+      query.patientId,
+      profile.branchId,
+      canCrossBranch,
+    );
   }
 
   /**

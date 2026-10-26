@@ -1,0 +1,75 @@
+meta {
+  name: 05 Create Second Lab Test (unmapped)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/master-data/{{masterDataId}}/lab-tests
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "testName": "EMI Gate Other Test {{tatRunId}}",
+    "testDisplayName": "OTHER",
+    "testCode": "EMIOTHER-{{tatRunId}}",
+    "processMethod": "SINGLE_STEP",
+    "samplePriorityType": "ROUTINE",
+    "priceMsrp": 200,
+    "priceMaximum": 200,
+    "priceMinimum": 100,
+    "isActive": true,
+    "tatMinValue": 30,
+    "tatMinUnit": "MINUTES",
+    "tatMaxValue": 60,
+    "tatMaxUnit": "MINUTES",
+    "scheduleDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "scheduleFrom": "00:00",
+    "scheduleTo": "23:59",
+    "procTimeMinValue": 10,
+    "procTimeMinUnit": "MINUTES",
+    "procTimeMaxValue": 30,
+    "procTimeMaxUnit": "MINUTES",
+    "samples": [
+      { "sampleType": "Blood", "containerType": "EDTA_TUBE_PURPLE_TOP", "isDefault": true }
+    ],
+    "resultParams": [
+      {
+        "parameterName": "Glucose",
+        "parameterCode": "GLU",
+        "resultType": "QUANTITATIVE",
+        "reportingUnit": "mg/dL",
+        "sortOrder": 0
+      }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("labTestBId", data.id);
+}
+
+tests {
+  test("second master-data test created", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **A second, DISTINCT lab test** (`EMI Gate Other Test` / code `EMIOTHER-…`) —
+  different name + code from the order's CBC test, so it is a genuinely different
+  test, not another copy. We'll map the *test-unmapped* adapter to this one so the
+  order's own test is left unmapped. Captures **`labTestBId`**.
+}

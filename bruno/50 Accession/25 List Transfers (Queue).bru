@@ -48,6 +48,13 @@ tests {
     const data = res.getBody().data;
     if (data && data[0]) expect(data[0]).to.have.property("outsourceCenterName");
   });
+  test("rows carry groupKey + groupingMode (referral queue grouping)", function () {
+    const data = res.getBody().data;
+    if (data && data[0]) {
+      expect(data[0]).to.have.property("groupKey");
+      expect(data[0]).to.have.property("groupingMode");
+    }
+  });
 }
 
 docs {
@@ -69,4 +76,22 @@ docs {
   `deletedAt` filter, so a historical transfer to a since-deactivated center
   still shows its name instead of the raw id. `null` for INTERNAL/EXTERNAL
   transfers, when no center is assigned, or when the center no longer exists.
+
+  Each row additionally carries `groupKey` and `groupingMode` so the referral
+  queue can bucket transfers into the SAME Order → final-group groups the
+  In-House grouped list uses. `groupKey` is the sample's final-group key under
+  the tenant's current grouping mode (`${orderId}::${barcodeGroupKey}`) — the
+  one shared `barcodeGroupKey` rule drives both lists, so grouping never drifts.
+  `groupingMode` (`SAMPLE_NAME` | `ORDER` | `DEPARTMENT` | `DEPARTMENT_SAMPLE_NAME`)
+  is echoed as a layout hint — the FE groups rows by order then by `groupKey`,
+  and shows the per-group department label only in the department modes.
+
+  **Receiving branch's list (direction=incoming, the default).** An INTERNAL transfer
+  that is still `IN_TRANSIT` with NO logistics type is NOT listed: the sending branch
+  has not decided how the tube travels yet. It appears as soon as a logistics type is
+  set (at Send, or later through Assign / Edit Center). Transfers already
+  Picked Up / Received / Accepted (or closed) are always listed, whatever their
+  logistics; EXTERNAL / OUTSOURCE transfers are never affected. The sender's own list
+  (direction=outgoing) still shows every transfer it sent. The dashboard's "received"
+  counts follow the same rule.
 }

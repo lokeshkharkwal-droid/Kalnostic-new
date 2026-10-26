@@ -1,4 +1,8 @@
 import {
+  ReportBranchScope,
+  ReportBranchScopeGuard,
+} from './access/report-branch-scope.guard';
+import {
   Body,
   Controller,
   Delete,
@@ -30,7 +34,8 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * which have their own tenant-wide list views).
  */
 @Controller('lab-reports/:labReportId/inventory')
-@UseGuards(PermissionGuard)
+@UseGuards(ReportBranchScopeGuard, PermissionGuard)
+@ReportBranchScope({ entity: 'report', param: 'labReportId' })
 export class InventoryUsageController {
   constructor(private readonly inventoryUsageService: InventoryUsageService) {}
 

@@ -3382,6 +3382,10 @@ model BranchLabTest {
   // Order items that reference this branch lab test.
   orderItems OrderItem[]
 
+  // Reports a branch other than the order's own is working with THIS entry
+  // (see `LabReport.performingBranchLabTestId`).
+  performingReports LabReport[] @relation("ReportPerformingEntry")
+
   // Patient Category "Lab Test List" selections that include this test.
   patientCategoryMappings PatientCategoryLabTest[]
 
@@ -7283,6 +7287,15 @@ model LabReport {
 
   labTestId String? @map("lab_test_id")
 
+  /// The Lab Test List entry the branch that now HOLDS this report works it with
+  /// (its report template / PDF settings, TAT windows and department). NULL = the
+  /// order line's own entry (`OrderItem.branchLabTest`), which is the case until
+  /// the report moves to another branch: an accepted internal transfer sets it to
+  /// the receiver's entry, and a return to the order's own branch clears it again.
+  /// The order line itself is never changed (it carries price and billing).
+  performingBranchLabTestId String?          @map("performing_branch_lab_test_id")
+  performingEntry           BranchLabTest?   @relation("ReportPerformingEntry", fields: [performingBranchLabTestId], references: [id], onDelete: SetNull)
+
   /// Per-report overrides of the test's Notes content (Master Data > Add Test
   /// > Notes: Useful For / Interpretation / Limitations / Remarks /
   /// References). NULL (the default for every field on every report) means
@@ -7406,6 +7419,7 @@ model LabReport {
   @@index([status])
   @@index([labTestId])
   @@index([memberBranchLabTestId])
+  @@index([performingBranchLabTestId])
   @@index([isOutsourced])
   @@index([tatBand])
   @@index([deletedAt])
@@ -7495,8 +7509,11 @@ model LabReportOverallResult {
   templateId    String? @map("template_id")
   content       String? @db.Text
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  /// Soft delete: set when a test goes back for a repeat. The (report, param)
+  /// row is revived by the next save (`deletedAt` back to null).
+  deletedAt DateTime? @map("deleted_at")
 
   @@unique([labReportId, resultParamId])
   @@index([tenantId])
@@ -7536,6 +7553,10 @@ model LabReportNote {
 
   createdBy String   @map("created_by")
   createdAt DateTime @default(now()) @map("created_at")
+  /// Soft delete: set when a transferred test goes back for a repeat and the
+  /// receiving branch's result-related notes are hidden (see
+  /// LabReportService.resetReportsForReturn). Readers filter `deletedAt: null`.
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
   @@index([labReportId])
@@ -7565,6 +7586,9 @@ model LabReportAttachment {
 
   uploadedBy String   @map("uploaded_by")
   uploadedAt DateTime @default(now()) @map("uploaded_at")
+  /// Soft delete: set when a test goes back for a repeat (see
+  /// LabReportService.resetReportsForReturn). Readers filter `deletedAt: null`.
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([tenantId])
   @@index([labReportId])
@@ -8420,6 +8444,17 @@ model OrderSample {
   originBranchId     String? @map("origin_branch_id")
   processingBranchId String? @map("processing_branch_id")
 
+  // Set only on a receiving-branch copy created by an accepted INTERNAL transfer:
+  // the `SampleTransfer.id` that produced it (logical ref, no FK). Lets the
+  // receiving branch's Repeat find its transfer + the sender's original sample.
+  sourceTransferId String? @map("source_transfer_id")
+
+  // Every branch this sample (chain of transferred copies) has been with, once it
+  // has been transferred internally: the sender's list + the sender + the receiver,
+  // set when a copy is created. Empty on a never-transferred sample (its own and
+  // origin branch are implied). A sample may never be sent to any of these again.
+  heldBranchIds String[] @default([]) @map("held_branch_ids")
+
   tests         OrderSampleTest[]
   statusHistory OrderSampleStatusHistory[]
   transfers     SampleTransfer[]
@@ -8440,6 +8475,7 @@ model OrderSample {
   @@index([barcode])
   @@index([originBranchId])
   @@index([processingBranchId])
+  @@index([sourceTransferId])
   @@index([deletedAt])
   @@map("order_samples")
 }

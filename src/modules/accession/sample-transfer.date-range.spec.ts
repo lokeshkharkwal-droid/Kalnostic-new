@@ -15,7 +15,14 @@ describe('SampleTransferService.findTransfers — send date range', () => {
     Promise<number>,
     [{ where: Prisma.SampleTransferWhereInput }]
   >();
-  const tx = { sampleTransfer: { findMany, count } };
+  // findTransfers now reads the tenant's grouping mode (to tag each row with its
+  // final-group key) before listing — a no-op here since findMany resolves [].
+  const tenant = {
+    findUnique: jest
+      .fn()
+      .mockResolvedValue({ groupingMode: 'DEPARTMENT_SAMPLE_NAME' }),
+  };
+  const tx = { tenant, sampleTransfer: { findMany, count } };
   const prisma = {
     withTenant: (_t: string, fn: (t: typeof tx) => unknown) => fn(tx),
   };

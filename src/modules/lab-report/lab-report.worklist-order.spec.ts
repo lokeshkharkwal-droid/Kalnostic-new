@@ -170,7 +170,7 @@ describe('LabReportService — worklist paging', () => {
   type Priv = {
     pageWorklistReportIds: (
       tenantId: string,
-      branchId: string,
+      scope: { rules: Array<{ branchId: string }> },
       where: object,
       page: number,
       limit: number,
@@ -181,10 +181,17 @@ describe('LabReportService — worklist paging', () => {
     ) => Promise<Array<{ id: string }>>;
   };
   const priv = service as unknown as Priv;
+  const scope = { rules: [{ branchId: 'b1' }] };
 
   /** What the first (ids-only) query returns for one report. */
-  const found = (id: string, orderId: string, orderCreatedAt: string) => ({
+  const found = (
+    id: string,
+    orderId: string,
+    orderCreatedAt: string,
+    branchId = 'b1',
+  ) => ({
     id,
+    branchId,
     createdAt: at('2026-10-09T15:00:00.000Z'),
     orderItem: { orderId, order: { createdAt: at(orderCreatedAt) } },
   });
@@ -209,7 +216,7 @@ describe('LabReportService — worklist paging', () => {
       { orderId: 'o-new', _max: { createdAt: at('2026-10-09T14:00:01.000Z') } },
     ]);
 
-    const r = await priv.pageWorklistReportIds('t1', 'b1', {}, 1, 25);
+    const r = await priv.pageWorklistReportIds('t1', scope, {}, 1, 25);
 
     expect(r).toEqual({ pageIds: ['r-draft', 'r-new', 'r-old'], total: 3 });
   });
@@ -222,10 +229,10 @@ describe('LabReportService — worklist paging', () => {
     );
     groupBy.mockResolvedValue([]); // no samples → order creation time decides: 5,4,3,2,1
 
-    const p1 = await priv.pageWorklistReportIds('t1', 'b1', {}, 1, 2);
-    const p2 = await priv.pageWorklistReportIds('t1', 'b1', {}, 2, 2);
-    const p3 = await priv.pageWorklistReportIds('t1', 'b1', {}, 3, 2);
-    const p4 = await priv.pageWorklistReportIds('t1', 'b1', {}, 4, 2);
+    const p1 = await priv.pageWorklistReportIds('t1', scope, {}, 1, 2);
+    const p2 = await priv.pageWorklistReportIds('t1', scope, {}, 2, 2);
+    const p3 = await priv.pageWorklistReportIds('t1', scope, {}, 3, 2);
+    const p4 = await priv.pageWorklistReportIds('t1', scope, {}, 4, 2);
 
     expect(p1).toEqual({ pageIds: ['r5', 'r4'], total: 5 });
     expect(p2).toEqual({ pageIds: ['r3', 'r2'], total: 5 });
@@ -237,7 +244,7 @@ describe('LabReportService — worklist paging', () => {
     findMany.mockResolvedValue([found('r1', 'o1', '2026-10-09T00:00:00.000Z')]);
     groupBy.mockResolvedValue([]);
 
-    await priv.pageWorklistReportIds('t1', 'b1', {}, 1, 25);
+    await priv.pageWorklistReportIds('t1', scope, {}, 1, 25);
 
     expect(groupBy).toHaveBeenCalledTimes(1);
     expect(groupBy).toHaveBeenCalledWith({
@@ -260,12 +267,52 @@ describe('LabReportService — worklist paging', () => {
     ]);
     groupBy.mockResolvedValue([]);
 
-    await priv.pageWorklistReportIds('t1', 'b1', {}, 1, 25);
+    await priv.pageWorklistReportIds('t1', scope, {}, 1, 25);
 
     const calls = groupBy.mock.calls as Array<
       [{ where: { orderId: { in: string[] } } }]
     >;
     expect(calls[0]![0].where.orderId.in).toEqual(['o1', 'o2']);
+  });
+
+  it('ranks each report against the samples of its own branch on an All Branches page', async () => {
+    // One order with a report at branch A (the sender) and one at branch B (the
+    // receiver, whose copy sample is newer). Each report must be ranked by the
+    // newest sample at its own branch, and the sample lookup is made per branch.
+    const allBranches = { rules: [{ branchId: 'A' }, { branchId: 'B' }] };
+    findMany.mockResolvedValue([
+      found('rA', 'o1', '2026-10-01T00:00:00.000Z', 'A'),
+      found('rB', 'o1', '2026-10-01T00:00:00.000Z', 'B'),
+      found('rX', 'o2', '2026-10-05T00:00:00.000Z', 'A'),
+    ]);
+    groupBy.mockImplementation(
+      ({ where }: { where: { branchId: string; orderId: { in: string[] } } }) =>
+        Promise.resolve(
+          where.branchId === 'B'
+            ? [
+                {
+                  orderId: 'o1',
+                  _max: { createdAt: at('2026-10-09T20:00:00.000Z') },
+                },
+              ]
+            : [
+                {
+                  orderId: 'o1',
+                  _max: { createdAt: at('2026-10-02T00:00:00.000Z') },
+                },
+              ],
+        ),
+    );
+
+    const r = await priv.pageWorklistReportIds('t1', allBranches, {}, 1, 25);
+
+    // rB (B's newest sample 10-09) first; rX (order 10-05, no sample at A for o2) next;
+    // rA (A's newest sample 10-02) last.
+    expect(r.pageIds).toEqual(['rB', 'rX', 'rA']);
+    const branches = (
+      groupBy.mock.calls as Array<[{ where: { branchId: string } }]>
+    ).map((c) => c[0].where.branchId);
+    expect(branches.sort()).toEqual(['A', 'B']);
   });
 
   it('splits a very large worklist into chunks of 5000 orders', async () => {
@@ -276,7 +323,7 @@ describe('LabReportService — worklist paging', () => {
     );
     groupBy.mockResolvedValue([]);
 
-    const r = await priv.pageWorklistReportIds('t1', 'b1', {}, 1, 25);
+    const r = await priv.pageWorklistReportIds('t1', scope, {}, 1, 25);
 
     expect(r.total).toBe(12000);
     const sizes = (
@@ -288,7 +335,7 @@ describe('LabReportService — worklist paging', () => {
   it('no matches → empty page, and no sample lookup at all', async () => {
     findMany.mockResolvedValue([]);
 
-    const r = await priv.pageWorklistReportIds('t1', 'b1', {}, 1, 25);
+    const r = await priv.pageWorklistReportIds('t1', scope, {}, 1, 25);
 
     expect(r).toEqual({ pageIds: [], total: 0 });
     expect(groupBy).not.toHaveBeenCalled();

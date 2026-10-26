@@ -151,7 +151,7 @@ async function main(): Promise<void> {
     } as any);
     check('accept → ACCEPTED', (await read(sampleX.id))?.status === 'ACCEPTED');
 
-    await samples.retrieve([sampleX.id], tenantId, PERSON, {
+    await samples.retrieve([sampleX.id], tenantId, PERSON, branchA.id, {
       skipInvalid: true,
     } as any);
     check(
@@ -160,7 +160,7 @@ async function main(): Promise<void> {
       `got ${(await read(sampleX.id))?.status}`,
     );
 
-    await samples.retrieve([sampleX.id], tenantId, PERSON, {
+    await samples.retrieve([sampleX.id], tenantId, PERSON, branchA.id, {
       skipInvalid: true,
     } as any);
     check(
@@ -169,7 +169,7 @@ async function main(): Promise<void> {
       `got ${(await read(sampleX.id))?.status}`,
     );
 
-    await samples.retrieve([sampleX.id], tenantId, PERSON, {
+    await samples.retrieve([sampleX.id], tenantId, PERSON, branchA.id, {
       skipInvalid: true,
     } as any);
     check(
@@ -199,11 +199,23 @@ async function main(): Promise<void> {
       transfer?.transferStatus === 'IN_TRANSIT',
     );
 
-    await transfers.pickUp([transfer.id], tenantId, PERSON, {} as any);
-    await transfers.receive([transfer.id], tenantId, PERSON, {
+    await transfers.pickUp(
+      [transfer.id],
+      tenantId,
+      PERSON,
+      branchB.id,
+      {} as any,
+    );
+    await transfers.receive([transfer.id], tenantId, PERSON, branchB.id, {
       receiveCondition: 'Good',
     } as any);
-    await transfers.accept([transfer.id], tenantId, PERSON, {} as any);
+    await transfers.accept(
+      [transfer.id],
+      tenantId,
+      PERSON,
+      branchB.id,
+      {} as any,
+    );
 
     const tAccepted = await readTransfer(transfer.id);
     const cloneId = tAccepted?.clonedSampleId ?? null;
@@ -222,7 +234,7 @@ async function main(): Promise<void> {
     );
 
     // Retrieve the origin sample.
-    await samples.retrieve([sampleY.id], tenantId, PERSON, {
+    await samples.retrieve([sampleY.id], tenantId, PERSON, branchA.id, {
       skipInvalid: true,
     } as any);
     const yAfter = await read(sampleY.id);

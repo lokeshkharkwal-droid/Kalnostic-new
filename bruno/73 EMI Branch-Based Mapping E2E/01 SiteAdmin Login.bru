@@ -1,0 +1,40 @@
+meta {
+  name: 01 SiteAdmin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "{{siteAdminEmail}}",
+    "password": "{{siteAdminPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) bru.setVar("siteAdminToken", data.accessToken);
+}
+
+tests {
+  test("siteadmin login ok", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.body.data).to.have.property("accessToken");
+  });
+}
+
+docs {
+  **Bootstrap 1 - SiteAdmin login.** Uses the seeded platform super-owner
+  (`admin@kalnostics.com` / `SuperSecret1`). Captures **`siteAdminToken`** (8h),
+  used to create the tenant and the SiteAdmin equipment.
+}

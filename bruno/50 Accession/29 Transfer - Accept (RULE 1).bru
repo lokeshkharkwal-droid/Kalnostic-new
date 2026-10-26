@@ -37,4 +37,37 @@ docs {
   further processing happens on that In-House copy. An INTERNAL transfer with no
   destination assigned → 422 `TRANSFER_DESTINATION_MISSING`. Bulk:
   `POST /accession/transfers/bulk/accept`.
+
+  Cancelled order: a single call on a transfer whose order was cancelled is refused
+  (409 `TRANSFER_ORDER_CANCELLED`). In a bulk call with `skipInvalid: true` that transfer is
+  SKIPPED instead (listed in `skipped` with `code: TRANSFER_ORDER_CANCELLED` and the reason);
+  the other transfers are done. Bulk calls work through the ids in sorted order (so two
+  overlapping bulk calls cannot deadlock); `succeeded` / `skipped` come back in the order
+  the ids were sent.
+
+  **Accept is refused when the receiving branch does not offer every test on the tube (Phase 1 safety net).**
+  For a tube sent before the destination was checked: 422 `DESTINATION_LACKS_TEST`, "Your branch does not offer:
+  <tests>, so this transfer cannot be accepted. Reject it, or send it back with Repeat." Nothing is created and the
+  transfer stays Received; the receiving branch can Reject or Repeat it as usual. A bulk accept with `skipInvalid`
+  skips that transfer with this code and reason. Tubes already accepted are untouched.
+
+  **The receiving branch works the tube with ITS OWN copy of the test (Phase 2).** On Accept, inside the same
+  transaction, the report and the receiving branch's copy of the tube are switched from the sender's Branch Master
+  Data copy of the test to the receiver's: the report's `labTestId` (so the technician at the receiver is offered the
+  receiver's parameters, methods, reference ranges and values), the copy's tests, sample definition and department,
+  and `LabReport.performingBranchLabTestId` = the receiver's Lab Test List entry (its report template / PDF, TAT and
+  processing window, department and signatory department apply while it holds the report). The receiver's entry is
+  its default list's normal entry for the same tenant test (a "(Copy)" row and other lists come after). The order line
+  (price, billing) is never changed. Nothing is refused for missing parameters: the technician screen says "No result
+  parameters configured" and Save / Submit stay blocked without a value or a file. The TAT clock counts from the
+  receiver's own accept. Tubes accepted before this change keep the sender's copy.
+
+  **An OUTSOURCE transfer must be assigned before it moves.** A sample can be outsourced with no center and no
+  logistics type (both optional, set later with Assign Center), but such a transfer can not be Picked Up / Received /
+  Accepted: Pick Up needs a center AND a logistics type, Receive and Accept need the center. Otherwise 422
+  `TRANSFER_OUTSOURCE_NOT_ASSIGNED`, "This outsource transfer has no center and no logistics type yet. Use Assign
+  Center in In-House Orders to set it, then try again." (naming only what is missing; `details.missing` lists it).
+  Nothing is changed. A bulk call with `skipInvalid` skips that transfer with this code and reason. This is the
+  outsource counterpart of an INTERNAL transfer needing a destination branch and a logistics type; Forward (EXTERNAL)
+  is not covered, and Repeat / Reject are not guarded. The free-text Update Status is not affected.
 }

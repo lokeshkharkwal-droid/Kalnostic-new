@@ -86,6 +86,7 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
         'Create patient',
         'Update patient details',
         'View past order',
+        'View cross branch results',
         'Convert past orders',
         'Update patient category',
         'Update privilege card',
@@ -738,6 +739,8 @@ export const PERMISSION_KEYS = {
     'registration:create_order_patient_details__update_patient_details',
   REG_VIEW_PAST_ORDER:
     'registration:create_order_patient_details__view_past_order',
+  REG_VIEW_CROSS_BRANCH_RESULTS:
+    'registration:create_order_patient_details__view_cross_branch_results',
   REG_CONVERT_PAST_ORDERS:
     'registration:create_order_patient_details__convert_past_orders',
   REG_UPDATE_PATIENT_CATEGORY:

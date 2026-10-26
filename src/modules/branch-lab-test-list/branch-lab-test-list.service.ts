@@ -49,7 +49,11 @@ export class BranchLabTestListService {
   async findAll(
     tenantId: string,
     branchId: string,
+    actorId: string | null = null,
   ): Promise<BranchLabTestList[]> {
+    // A branch has no Walk-in list until something creates it; ensure it here so the
+    // page always has its first tab (Import / Sync need an active list to target).
+    await this.getOrCreateDefaultList(tenantId, branchId, actorId);
     return this.prisma.branchLabTestList.findMany({
       where: { tenantId, branchId, deletedAt: null },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
@@ -110,18 +114,34 @@ export class BranchLabTestListService {
     if (existing) {
       return existing;
     }
-    return this.prisma.branchLabTestList.create({
-      data: {
-        tenantId,
-        branchId,
-        name: DEFAULT_LAB_TEST_LIST_NAME,
-        isDefault: true,
-        priceType: 'CUSTOMIZED',
-        copyPriceFrom: 'MSRP',
-        createdBy: actorId,
-        updatedBy: actorId,
-      },
-    });
+    try {
+      return await this.prisma.branchLabTestList.create({
+        data: {
+          tenantId,
+          branchId,
+          name: DEFAULT_LAB_TEST_LIST_NAME,
+          isDefault: true,
+          priceType: 'CUSTOMIZED',
+          copyPriceFrom: 'MSRP',
+          createdBy: actorId,
+          updatedBy: actorId,
+        },
+      });
+    } catch (e) {
+      // Two requests can race to create it; the partial unique index lets one win.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        const winner = await this.prisma.branchLabTestList.findFirst({
+          where: { tenantId, branchId, isDefault: true, deletedAt: null },
+        });
+        if (winner) {
+          return winner;
+        }
+      }
+      throw e;
+    }
   }
 
   /**

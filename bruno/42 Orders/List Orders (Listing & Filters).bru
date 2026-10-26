@@ -87,8 +87,21 @@ docs {
   every column without a second fetch. Radiology orders also carry `radiologyStatus`
   (aggregated study stage) and `radiologyDepartments` (distinct department names
   across the order's studies) — the Radiology Order Console's Order Status +
-  Department columns. Defaults branch scope to the caller's active
-  branch; an explicit `branchId` overrides it. Pagination info lands in `meta`.
+  Department columns. Each row also carries `branchId` and `branch`
+  (`{ id, name, code }`) — the branch the order was placed at — which the Create Order
+  "Past Orders" view uses to label rows and to disable "Add" for other-branch orders.
+  Defaults branch scope to the caller's active branch; an explicit `branchId` overrides
+  it. Pagination info lands in `meta`.
+
+  ## Cross-branch Past Orders (single-patient history)
+
+  A single patient's history (`patientId` set, not a quotation) goes **business-wide**
+  (all branches) — but only for a caller holding `View cross-branch results`
+  (`registration:create_order_patient_details__view_cross_branch_results`). Without
+  that permission, and with no explicit `branchId`, a patient lookup is forced back to
+  the active branch server-side, so cross-branch orders are never returned (not merely
+  hidden by the UI). The "Past Orders" dialog omits `branchId` when the caller holds
+  the permission, and sends the active `branchId` otherwise.
 
   ## Search
 

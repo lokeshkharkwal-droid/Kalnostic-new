@@ -527,6 +527,13 @@ export type OrderWithRelations = Prisma.OrderGetPayload<{
   /** The invoice number of the active invoice linked to this order, if any. */
   invoiceCode: string | null;
   /**
+   * Why the lab side stops this order being cancelled right now: `RESULT_DONE`
+   * (a test, at any branch, is Result Done / Approved / Published); null when
+   * cancelling is allowed. Drives the disabled Cancel action;
+   * `OrderService.cancel` enforces the same rule.
+   */
+  cancelBlockedReason: 'RESULT_DONE' | null;
+  /**
    * Authoritative billing rollups (minor units) — the SAME derivation the
    * Billings list exposes (`findAll` → `billingRollups` → `computeBillingTotals`):
    * a PERCENT order-discount is recomputed against the current item total so
@@ -1017,7 +1024,44 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    * "Module" column (showing "Combined" when more than one section is present).
    */
   sections: OrderSection[];
+  /**
+   * Why the lab side stops this order being cancelled right now: `RESULT_DONE`
+   * (a test, at any branch, is Result Done / Approved / Published); null when
+   * cancelling is allowed. Drives the disabled Cancel action;
+   * `OrderService.cancel` enforces the same rule.
+   */
+  cancelBlockedReason: 'RESULT_DONE' | null;
 };
 
 /** A module section an order can belong to, derived from its items/relations. */
 export type OrderSection = 'DIAGNOSTICS' | 'RADIOLOGY' | 'OPD';
+
+/**
+ * One branch's row in the Create Order cross-branch dues breakdown: the patient's
+ * outstanding total at that branch, how many orders carry it, and the oldest such
+ * order's date. `isCurrentBranch` pins the active branch to the top and is the
+ * only branch where dues can be collected (`Collect Here = Yes`); `isActive`
+ * reflects the branch's own ACTIVE status so a deactivated branch can be shown as
+ * "Inactive here." and never treated as a collection location.
+ */
+export interface BranchDueRow {
+  branchId: string;
+  branchName: string;
+  isActive: boolean;
+  isCurrentBranch: boolean;
+  orderCount: number;
+  totalDue: number;
+  oldestDueOrderDate: Date | null;
+}
+
+/**
+ * The Create Order patient-dues read: the active-branch outstanding (`outstanding`
+ * — drives the clear-dues cap + previous-dues gate), the business-wide total
+ * (`businessWideOutstanding` — collapses to `outstanding` without the cross-branch
+ * permission), and the per-branch `branches` breakdown for the dues modal.
+ */
+export interface PatientDuesResult {
+  outstanding: number;
+  businessWideOutstanding: number;
+  branches: BranchDueRow[];
+}

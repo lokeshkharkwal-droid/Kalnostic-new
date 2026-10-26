@@ -1,0 +1,77 @@
+meta {
+  name: 30 Case 1 BEFORE - Submit Result (CC adapter) FILLS
+  type: http
+  seq: 30
+}
+
+post {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{adapterTokenCc}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "specimen_type": "",
+    "tube_information_id": "e9b6927a-f2e0-4898-910b-d892b45d8de1",
+    "equipment_id": "11111112",
+    "tube_no": "{{sampleBarcode}}",
+    "original_tube_no": "{{sampleBarcode}}",
+    "result_date": "1668583670356",
+    "sent": "",
+    "sent_date": "",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result_id": "b0a69d67-4434-44f0-b1e5-cf43f83bc536",
+        "test_result": "{{emiResultValueCc}}",
+        "test_name": "Hemoglobin",
+        "display_name": "Hemoglobin",
+        "universal_test_id": "{{emiParamCode}}",
+        "unit": "{{emiParamUnit}}",
+        "result_type": "",
+        "specimen_types": []
+      }
+    ],
+    "comment": "Case 1 before transfer (CC adapter)",
+    "token_id": "{{adapterTokenCc}}",
+    "adapter_id": "14",
+    "adapter_code": "erba-map"
+  }
+}
+
+vars:pre-request {
+  sampleBarcode: 10001
+}
+
+script:post-response {
+  const b = res.body;
+  if (b && b.report_log && b.report_log.log && b.report_log.log.length) {
+    bru.setVar("reportId", b.report_log.log[0].report_id);
+  }
+}
+
+tests {
+  test("result accepted (legacy s=200)", function () {
+    expect(res.body.s).to.equal("200");
+  });
+  test("CASE 1 (report at CC, adapter linked to CC): report FILLED", function () {
+    expect(res.body.m).to.equal("Result updated successfully");
+    expect(res.body.test_status).to.match(/test updated/);
+    expect(res.body.report_log.log[0].fill_status).to.equal("Report filled");
+  });
+}
+
+docs {
+  **Case 1, BEFORE transfer - submit with the CC-only adapter.** The report is at the
+  Collection Center and the adapter is linked there, so the `HGB` value
+  (`emiResultValueCc` = 13.5) is written with `source = ADAPTER` and the report moves
+  to `SAVED`. Captures **`reportId`** (from the report log) for the verification in
+  step 31 and again at Branch A in step 47.
+}

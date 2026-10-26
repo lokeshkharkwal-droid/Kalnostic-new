@@ -1,0 +1,34 @@
+meta {
+  name: 28 Accept Sample (creates report at Collection Center)
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+body:json {
+  {
+    "sampleCondition": "Good",
+    "notes": "Accepted for processing at the collection center"
+  }
+}
+
+docs {
+  **Accession - accept the sample** (COLLECTED -> ACCEPTED) at the Collection Center.
+  Acceptance auto-creates the technician `LabReport` (status PENDING) with
+  **`branchId = Collection Center`** - the report the machine fills, and whose branch
+  is the "processing branch" the LIS gate checks. This is the report that will later
+  be rehomed to Branch A by the transfer accept.
+}

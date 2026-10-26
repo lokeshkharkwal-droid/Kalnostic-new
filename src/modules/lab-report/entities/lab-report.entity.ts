@@ -6,6 +6,7 @@ import {
   MultiStepProcessType,
   MultiStepStage,
   ParameterType,
+  OrderStatus,
   PaymentStatus,
   Prisma,
   ResultType,
@@ -32,9 +33,9 @@ export interface WorklistTat {
 /** Relations eager-loaded when fetching a report's full detail (Test Entry screen). */
 export const LAB_REPORT_DETAIL_INCLUDE = {
   resultValues: { where: { deletedAt: null } },
-  notes: { orderBy: { createdAt: 'desc' } },
-  attachments: { orderBy: { uploadedAt: 'desc' } },
-  multiStepProcess: true,
+  notes: { where: { deletedAt: null }, orderBy: { createdAt: 'desc' } },
+  attachments: { where: { deletedAt: null }, orderBy: { uploadedAt: 'desc' } },
+  multiStepProcess: { where: { deletedAt: null } },
   orderItem: {
     include: {
       order: {
@@ -44,6 +45,8 @@ export const LAB_REPORT_DETAIL_INCLUDE = {
       branchLabPanel: true,
     },
   },
+  // the entry the holding branch works with, when it is not the order line's own
+  performingEntry: true,
 } satisfies Prisma.LabReportInclude;
 
 /** A report with its result values, notes, attachments, and order context. */
@@ -195,6 +198,8 @@ export const LAB_REPORT_LIST_INCLUDE = {
       branchLabPanel: true,
     },
   },
+  // the entry the holding branch works with, when it is not the order line's own
+  performingEntry: true,
 } satisfies Prisma.LabReportInclude;
 
 export type LabReportListRow = Prisma.LabReportGetPayload<{
@@ -279,6 +284,9 @@ export interface LabReportWorklistRow {
     createdAt: Date;
     billingType: BillingType;
     paymentStatus: PaymentStatus;
+    /** CANCELLED freezes the report: the worklist shows an "Order cancelled" tag
+     * and every action on the row is refused. */
+    status: OrderStatus;
   } | null;
 
   patient: {
@@ -310,6 +318,12 @@ export interface LabReportWorklistRow {
      * since `resultType` only exists on `LabTest`'s own result params. */
     resultType: ResultType | null;
   } | null;
+
+  /** True when this report's test was removed from the order: the report is kept
+   * (visible, tagged "Test removed from order") but frozen - every write is refused
+   * (409 `LAB_REPORT_ITEM_REMOVED`) and it never prints. Derived from the order
+   * item's `deletedAt`, not stored. */
+  itemRemoved: boolean;
 
   /** `LabReport.orderItemId` — the lookup key `attachSampleStatuses` uses to
    * find this row's `OrderSampleTest`(s). Not itself a display field. */
@@ -349,6 +363,29 @@ export interface LabReportWorklistRow {
    * Barcode" step). Empty array under the same (rare/defensive) condition as
    * `sampleStatuses`. */
   sampleBarcodes: (string | null)[];
+  /** Index-paired with `sampleIds` — the branch each linked sample belongs to.
+   * After an internal transfer an item has the sender's original and the
+   * receiver's copy; this lets each viewer see the status of ITS OWN sample. */
+  sampleBranchIds: (string | null)[];
+  /** The branch the Branch column shows for THIS caller (set by `attachDisplayBranch`,
+   * see `pickDisplayBranchId`): the branch that sent the caller's own copy of the
+   * sample, or the caller's own branch when it holds the original. `branch` is always
+   * the branch that holds the report. Null when none of the caller's branches holds a
+   * linked sample — the screen then shows `branch`. */
+  displayBranch?: { id: string; name: string } | null;
+  /** `full` when a branch of the caller holds the report; `view` when it is only
+   * listed because the caller's branch sent it, or its sample is sent out and
+   * waiting for the receiver (view and print only). */
+  accessMode?: 'full' | 'view';
+  /** Set when the holder branch's own sample is Sent and the receiving branch has
+   * already sent the report back (its transfer is closed as REPEAT / REJECTED): the
+   * report is reset and waiting for the sender to decide (Repeat / Error / Retrieve).
+   * Set by `attachReturnedByReceiver`; null otherwise. The screen words the
+   * view-only tag from it ("Returned by receiving branch") instead of "Sent". */
+  returnedByReceiver?: {
+    kind: 'REPEAT' | 'REJECTED';
+    reason: string | null;
+  } | null;
 
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
@@ -479,8 +516,12 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     branchId: row.branchId,
     branch: null,
 
-    departmentId:
-      branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null,
+    // The department of the setup the HOLDING branch works the test with: its own
+    // entry once the report was sent to it (even when that entry has no department),
+    // otherwise the order line's.
+    departmentId: row.performingEntry
+      ? row.performingEntry.departmentId
+      : (branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null),
     department: null,
 
     labTestId: row.labTestId,
@@ -495,6 +536,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
           createdAt: order.createdAt,
           billingType: order.billingType,
           paymentStatus: order.paymentStatus,
+          status: order.status,
         }
       : null,
 
@@ -570,9 +612,13 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
             : null,
 
     orderItemId: row.orderItemId,
+    itemRemoved: row.orderItem?.deletedAt != null,
     sampleStatuses: [],
     sampleIds: [],
     sampleBarcodes: [],
+    sampleBranchIds: [],
+    displayBranch: null,
+    returnedByReceiver: null,
     tat: null,
 
     multiStepProcessType: null,

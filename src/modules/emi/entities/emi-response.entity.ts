@@ -43,6 +43,26 @@ export const UPDATE_TEST_STATUS = {
 export const NOT_ACCEPTED_MESSAGE =
   'This sample is not accepted in the Accession module.';
 
+/**
+ * Rejection returned when the branch currently processing the scanned order is
+ * **not linked** to the authenticating lab adapter. The LIS gate is keyed on the
+ * branch mappings configured for this specific adapter (`LabAdapterBranch`), not
+ * on the order's originating branch — so an order created at a linked Branch A
+ * and transferred to an unlinked Branch B is rejected here (Branch A's mapping
+ * does not authorise Branch B). No records are created or updated when this
+ * fires.
+ */
+export const BRANCH_NOT_LINKED_MESSAGE =
+  'The requesting branch is not registered with this lab adapter.';
+
+/**
+ * Rejection returned when the scanned order's branch IS linked to the adapter but
+ * none of its in-scope tests are mapped to the adapter (`LabAdapterTest`). No
+ * records are created or updated when this fires.
+ */
+export const TEST_NOT_LINKED_MESSAGE =
+  'The requested lab test is not linked to this lab adapter.';
+
 /** One order row returned by `GET /emi/orders`. */
 export interface EmiOrderRow {
   specimen_id: string;

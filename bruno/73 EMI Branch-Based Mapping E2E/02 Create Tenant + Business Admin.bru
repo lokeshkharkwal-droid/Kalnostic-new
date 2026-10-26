@@ -1,0 +1,64 @@
+meta {
+  name: 02 Create Tenant + Business Admin
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Branch Mapping {{tatRunId}}",
+    "adminFirstName": "Mapping",
+    "adminLastName": "Admin {{tatRunId}}",
+    "adminPhone": "{{adminBootstrapPhone}}",
+    "adminPassword": "{{bootstrapAdminPassword}}",
+    "adminEmail": "emi.map.bizadmin.{{tatRunId}}@acme.test",
+    "email": "emi.map.contact.{{tatRunId}}@acme.test",
+    "shortName": "EMIMp",
+    "mrnPrefix": "EM",
+    "settings": {
+      "timezone": "Asia/Kolkata",
+      "currency": "INR",
+      "date_format": "DD/MM/YYYY",
+      "language": "en"
+    }
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data) {
+    if (data.id) bru.setVar("tenantId", data.id);
+    if (data.slug) bru.setVar("tenantSlug", data.slug);
+  }
+  // Admin phone (we sent) = login identifier; admin password (we chose) = login pw.
+  bru.setVar("adminIdentifier", bru.getVar("adminBootstrapPhone"));
+  bru.setVar("adminPassword", bru.getVar("bootstrapAdminPassword"));
+}
+
+tests {
+  test("tenant created", function () {
+    expect([200, 201]).to.include(res.getStatus());
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Bootstrap 2 - Create the tenant and its first Business Admin** (as SiteAdmin).
+  `adminPhone` is a 10-digit mobile (also the login identifier); `adminPassword` is
+  chosen here. Captures `tenantId`, `tenantSlug`, and wires `adminIdentifier` /
+  `adminPassword` into step 03 - no manual copy.
+}

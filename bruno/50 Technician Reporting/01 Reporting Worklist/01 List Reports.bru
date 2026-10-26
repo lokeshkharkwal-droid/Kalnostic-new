@@ -79,7 +79,25 @@ docs {
   TAT alert pills (Warning/Critical/Imminent/Breached) are explicitly out of
   scope per LABORATORY.docx — not a filter here.
 
+  **Branch columns (per row).** `branch` / `branchId` are the branch that
+  HOLDS the report — after an internal transfer (Sent Internal) the one report
+  row moves to the receiving branch, and every caller sees the same `branch`.
+  `displayBranch` (`{ id, name }`, or `null`) is what the Branch column shows for
+  THIS caller: where the caller's own sample came from — the branch that SENT the
+  caller's copy of the sample, or the caller's own branch when it holds the
+  original. For a report that goes A → B → C: A's row shows A, B's row shows A,
+  C's row shows B (while `branch` is C for all three). It is `null` when none of
+  the caller's branches holds a linked sample (the screen then shows `branch`);
+  with "All Branches", the sample held by the report's holder decides. Permissions
+  and scoping always use `branchId`, never `displayBranch`.
+
   Returns `{ rows, total, page, limit }`. Captures `labReportId` from the
   first row for the requests below. 422 `ACTIVE_BRANCH_REQUIRED` if the
   caller has no active branch.
+
+  **Department visibility is per branch (Phase 2).** A report is visible when the department of the entry the viewing
+  branch works the test with is unassigned or one of the caller's departments: for a report the branch HOLDS that is
+  its own entry once the report was sent to it (`performingBranchLabTestId`), otherwise the order line's; for a report
+  the branch only SENT (the sender view) it is the order line's entry. The row's `departmentId` is the department of
+  the holding branch's entry.
 }
