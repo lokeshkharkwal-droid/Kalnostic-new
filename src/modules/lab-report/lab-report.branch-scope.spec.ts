@@ -22,7 +22,11 @@ describe('worklist branch scope → query', () => {
   it('(8) own branch only keeps the plain branchId equality it always had', () => {
     const w = whereFor({ rules: [{ branchId: 'A', statuses: 'ALL' }] });
     expect(w.branchId).toBe('A');
-    expect(w.AND).toBeUndefined();
+    // no per-branch OR of rules: the only AND entry is the department visibility
+    // clause (one OR with this branch's own held-report rule)
+    const and = w.AND as Array<{ OR: Array<{ branchId?: string }> }>;
+    expect(and).toHaveLength(1);
+    expect(and[0]!.OR.map((r) => r.branchId)).toEqual(['A']);
   });
 
   it('(4) several branches become an OR of per-branch rules, one per branch', () => {
@@ -36,17 +40,70 @@ describe('worklist branch scope → query', () => {
       ],
     });
     expect(w.branchId).toBeUndefined();
-    expect(w.AND).toEqual([
-      {
-        OR: [
-          { branchId: 'A' },
-          {
-            branchId: 'B',
-            status: { in: [LabReportStatus.PENDING, LabReportStatus.SAVED] },
-          },
-        ],
-      },
+    const and = w.AND as Array<{ OR: Where[] }>;
+    // first the per-branch rules, then the department visibility clause (one entry per branch)
+    expect(and).toHaveLength(2);
+    expect(and[0]).toEqual({
+      OR: [
+        { branchId: 'A' },
+        {
+          branchId: 'B',
+          status: { in: [LabReportStatus.PENDING, LabReportStatus.SAVED] },
+        },
+      ],
+    });
+    expect(and[1]!.OR.map((r) => r.branchId)).toEqual(['A', 'B']);
+  });
+
+  it('department visibility is per branch: what a branch HOLDS uses the entry it works with, what it only SENT uses the order line', () => {
+    const w = whereFor({
+      rules: [{ branchId: 'A', statuses: 'ALL', senderLinked: true }],
+    });
+    const dept = (w.AND as Array<{ OR: Where[] }>).at(-1)!.OR;
+    expect(dept).toHaveLength(1);
+    const [rule] = dept as Array<{ OR: Where[] }>;
+    const [held, sent] = rule!.OR as [Where, Where];
+    // held by A: the setup entry A works with (null = the order line's), else the order line
+    expect(held.branchId).toBe('A');
+    expect(held.OR).toEqual([
+      expect.objectContaining({ performingBranchLabTestId: null }),
+      expect.objectContaining({
+        performingBranchLabTestId: { not: null },
+        performingEntry: { is: { departmentId: null } },
+      }),
     ]);
+    // sent by A and held elsewhere: always the order line's entry
+    expect(sent.branchId).toEqual({ not: 'A' });
+    expect(sent.orderItem).toBeDefined();
+    expect(sent.performingEntry).toBeUndefined();
+  });
+
+  it("a user's departments widen the entry rule: unassigned OR one of theirs", () => {
+    const svc = Object.create(LabReportService.prototype) as unknown as {
+      buildListWhere: (
+        t: string,
+        s: WorklistBranchScope,
+        f: object,
+        ids: string[],
+      ) => Where;
+    };
+    const w = svc.buildListWhere(
+      't1',
+      { rules: [{ branchId: 'A', statuses: 'ALL' }] },
+      {},
+      ['d1', 'd2'],
+    );
+    const held = (
+      (w.AND as Array<{ OR: Where[] }>)[0]!.OR[0] as { OR: Where[] }
+    ).OR;
+    expect(held[1]).toEqual({
+      performingBranchLabTestId: { not: null },
+      performingEntry: {
+        is: {
+          OR: [{ departmentId: null }, { departmentId: { in: ['d1', 'd2'] } }],
+        },
+      },
+    });
   });
 
   it("(9) a branch restricted to some statuses is never given the other branch's statuses", () => {

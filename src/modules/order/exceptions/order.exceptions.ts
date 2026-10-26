@@ -579,6 +579,22 @@ export class PreviousDuesNotClearedException extends KaltrosException {
 }
 
 /**
+ * 422 — the active branch is deactivated (status ≠ ACTIVE or soft-deleted), so no
+ * order can be finalized and no dues can be cleared there. A deactivated branch is
+ * never an eligible location for collecting dues or creating orders.
+ */
+export class BranchInactiveException extends KaltrosException {
+  constructor(branchId: string) {
+    super(
+      'BRANCH_INACTIVE',
+      'This branch is deactivated — orders cannot be created and dues cannot be collected here',
+      { branchId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — the amount being cleared toward previous dues exceeds the patient's
  * actual outstanding balance (you can't clear more dues than are owed).
  */

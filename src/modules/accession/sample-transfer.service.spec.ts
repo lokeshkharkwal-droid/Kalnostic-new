@@ -11,7 +11,20 @@ import {
   TransferNotEditableException,
   TransferNotOutsourceException,
   TransferWrongBranchException,
+  refusalMessage,
 } from './exceptions/accession.exceptions';
+
+/**
+ * The status writes on a transfer. A send-back also takes a claim on the transfer first
+ * (an updateMany that sets no status): it serialises overlapping group actions, so it is
+ * left out of the "what was written" checks.
+ */
+const finalWrites = (tx: {
+  sampleTransfer: { updateMany: { mock: { calls: unknown[][] } } };
+}) =>
+  tx.sampleTransfer.updateMany.mock.calls.filter(
+    (c) => 'transferStatus' in ((c[0] as { data: object }).data ?? {}),
+  );
 
 const TENANT = 't1';
 const PERSON = 'p1';
@@ -23,7 +36,9 @@ interface TransferRow {
   transferStatus: TransferStatus;
   destinationBranchId: string | null;
   receiveCondition: string | null;
+  logisticsType?: string | null;
   clonedSampleId?: string | null;
+  outsourceCenterId?: string | null;
 }
 
 function setup(
@@ -37,6 +52,7 @@ function setup(
     transferStatus: TransferStatus.RECEIVED,
     destinationBranchId: 'B',
     receiveCondition: null,
+    logisticsType: 'Courier', // a transfer the receiving branch can see
     ...row,
   };
   const tx = {
@@ -67,7 +83,7 @@ function setup(
     isOrderCancelled: jest.fn().mockResolvedValue(false),
     transitionInTx: jest.fn().mockResolvedValue({}),
     returnCopyToOrigin: jest.fn().mockResolvedValue('sA'),
-    notifySamplesRepeated: jest.fn().mockResolvedValue(undefined),
+    recordReturnedByReceiverInTx: jest.fn().mockResolvedValue(undefined),
     removeTransferCloneInTx: jest.fn().mockResolvedValue(undefined),
   };
   const svc = new SampleTransferService(
@@ -80,23 +96,24 @@ function setup(
 }
 
 describe('SampleTransferService — return to sender', () => {
-  it('reject from RECEIVED sends the original sample to REPEAT (system, forced)', async () => {
+  it('reject from RECEIVED leaves the sender’s sample Sent (it reads "Sent – Rejected") and only records the return on its history', async () => {
     const { svc, samples, tx } = setup({});
     await svc.reject(['tr1'], TENANT, PERSON, 'B', {
       rejectionReason: 'Leaked',
     });
-    expect(samples.transitionInTx).toHaveBeenCalledTimes(1);
-    const call = samples.transitionInTx.mock.calls[0] as unknown[];
-    expect(call[4]).toBe('repeat');
-    expect(call[3]).toBe('sA');
-    expect(call[6]).toMatchObject({ force: true, system: true });
+    // the sender's sample is NOT moved to Repeat any more: it stays Sent until the
+    // sender decides (Repeat / Error / Retrieve)
+    expect(samples.transitionInTx).not.toHaveBeenCalled();
     expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
-    // the sender's sample is notified once the transaction has committed
-    expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, ['sA']);
+    expect(samples.recordReturnedByReceiverInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      PERSON,
+      'sA',
+      'Leaked',
+    );
     // the transfer row moves REJECTED, conditional on its current status
-    const upd = (
-      tx.sampleTransfer.updateMany.mock.calls[0] as unknown[]
-    )[0] as {
+    const upd = (finalWrites(tx)[0] as unknown[])[0] as {
       where: { transferStatus: TransferStatus };
       data: { transferStatus: TransferStatus; rejectionReason: string };
     };
@@ -123,8 +140,10 @@ describe('SampleTransferService — return to sender', () => {
       'Clotted',
       'repeat',
     );
+    // the copy is returned (voided, report handed back); the sender's sample stays
+    // Sent, and the transfer service writes nothing on it itself
     expect(samples.transitionInTx).not.toHaveBeenCalled();
-    expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, ['sA']);
+    expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
   });
 
   it('repeat from ACCEPTED fails when the receiving copy cannot be found', async () => {
@@ -160,11 +179,10 @@ describe('SampleTransferService — return to sender', () => {
       'Leaked',
       'reject',
     );
+    // the sender's sample stays Sent: the transfer service writes nothing on it itself
     expect(samples.transitionInTx).not.toHaveBeenCalled();
-    expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, ['sA']);
-    const upd = (
-      tx.sampleTransfer.updateMany.mock.calls[0] as unknown[]
-    )[0] as {
+    expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
+    const upd = (finalWrites(tx)[0] as unknown[])[0] as {
       where: { transferStatus: TransferStatus };
       data: { transferStatus: TransferStatus; clonedSampleId?: string | null };
     };
@@ -185,8 +203,8 @@ describe('SampleTransferService — return to sender', () => {
     await expect(
       svc.reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' }),
     ).rejects.toThrow('SAMPLE_RETURN_BLOCKED');
-    expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
-    expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+    expect(finalWrites(tx)).toHaveLength(0);
+    expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
   });
 
   it('with skipInvalid a transfer that cannot take the action is reported as skipped, not thrown', async () => {
@@ -234,8 +252,8 @@ describe('SampleTransferService — return to sender', () => {
       expect(result.skipped[0]).toMatchObject({ id: 'tr1' });
       expect(result.skipped[0]!.reason).toContain('already done');
       expect(result.skipped[0]!.code).toBe('SAMPLE_RETURN_BLOCKED');
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
-      expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
+      expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
       expect(sqlOf(tx)).toEqual([
         'SAVEPOINT return_to_sender',
         'ROLLBACK TO SAVEPOINT return_to_sender',
@@ -284,8 +302,8 @@ describe('SampleTransferService — return to sender', () => {
         expect(result.skipped[0]!.reason).toContain('cancelled');
         expect(result.skipped[0]!.reason).toContain('Store and discard');
       }
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
-      expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
+      expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
     });
 
     it('without skip invalid the same refusal is thrown as a 422 SAMPLE_ORDER_CANCELLED and nothing is changed (N-5)', async () => {
@@ -306,8 +324,8 @@ describe('SampleTransferService — return to sender', () => {
       expect((err as SampleReturnOrderCancelledException).errorCode).toBe(
         'SAMPLE_ORDER_CANCELLED',
       );
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
-      expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
+      expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
     });
 
     it('also skips a transfer whose copy has already been passed on to another branch', async () => {
@@ -329,7 +347,7 @@ describe('SampleTransferService — return to sender', () => {
       expect(result.succeeded).toEqual([]);
       expect(result.skipped[0]!.reason).toContain('sent to another branch');
       expect(result.skipped[0]!.code).toBe('SAMPLE_SENT_TO_BRANCH');
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
     });
 
     it.each(['reject', 'repeat'] as const)(
@@ -415,18 +433,11 @@ describe('SampleTransferService — return to sender', () => {
       );
       expect(result.skipped.map((x) => x.id)).toEqual(['tr1']);
       expect(result.succeeded).toHaveLength(1);
-      // only the second transfer was written, and its sender sample is notified
-      expect(tx.sampleTransfer.updateMany).toHaveBeenCalledTimes(1);
+      // only the second transfer was written
+      expect(finalWrites(tx)).toHaveLength(1);
       expect(
-        (
-          tx.sampleTransfer.updateMany.mock.calls[0] as [
-            { where: { id: string } },
-          ]
-        )[0].where.id,
+        (finalWrites(tx)[0] as [{ where: { id: string } }])[0].where.id,
       ).toBe('tr2');
-      expect(samples.notifySamplesRepeated).toHaveBeenCalledWith(TENANT, [
-        'sB',
-      ]);
       expect(sqlOf(tx)).toEqual([
         'SAVEPOINT return_to_sender',
         'ROLLBACK TO SAVEPOINT return_to_sender',
@@ -448,7 +459,7 @@ describe('SampleTransferService — return to sender', () => {
         svc.reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' }),
       ).rejects.toBeInstanceOf(SampleReturnBlockedException);
       expect(tx.$executeRaw).not.toHaveBeenCalled();
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
     });
 
     it('an error that is NOT a refusal (e.g. the copy is missing) is never swallowed, even when skipping', async () => {
@@ -466,7 +477,7 @@ describe('SampleTransferService — return to sender', () => {
           true,
         ),
       ).rejects.toThrow();
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
     });
   });
 
@@ -477,7 +488,7 @@ describe('SampleTransferService — return to sender', () => {
     });
     expect(samples.transitionInTx).not.toHaveBeenCalled();
     expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
-    expect(samples.notifySamplesRepeated).not.toHaveBeenCalled();
+    expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
   });
 
   it('refuses when a concurrent change already moved the transfer', async () => {
@@ -485,6 +496,35 @@ describe('SampleTransferService — return to sender', () => {
     await expect(
       svc.reject(['tr1'], TENANT, PERSON, 'B', { rejectionReason: 'x' }),
     ).rejects.toThrow(InvalidTransferTransitionException);
+  });
+
+  it('the transfer is claimed BEFORE the send-back, so an overlapping group action that lost the race skips it instead of failing its whole batch', async () => {
+    const { svc, samples, tx } = setup(
+      { transferStatus: TransferStatus.RECEIVED },
+      { updateCount: 0 },
+    );
+    const result = await svc.reject(
+      ['tr1'],
+      TENANT,
+      PERSON,
+      'B',
+      { rejectionReason: 'x' },
+      true,
+    );
+    expect(result.succeeded).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({
+      id: 'tr1',
+      code: 'INVALID_TRANSFER_TRANSITION',
+    });
+    // nothing was recorded on the sender's sample, and the savepoint was rolled back
+    expect(samples.recordReturnedByReceiverInTx).not.toHaveBeenCalled();
+    expect(finalWrites(tx)).toHaveLength(0);
+    expect(
+      (tx.$executeRaw.mock.calls as unknown[][]).map((c) =>
+        (c[0] as string[]).join(''),
+      ),
+    ).toContain('ROLLBACK TO SAVEPOINT return_to_sender');
   });
 });
 
@@ -501,6 +541,29 @@ describe('SampleTransferService — assign center window', () => {
       }),
     ).rejects.toThrow(TransferNotEditableException);
   });
+
+  it.each([
+    TransferStatus.RECEIVED,
+    TransferStatus.ACCEPTED,
+    TransferStatus.REPEAT,
+    TransferStatus.REJECTED,
+  ])(
+    'is refused for an OUTSOURCE transfer in %s (the outside lab has it / sent it back), with the outsource wording',
+    async (status) => {
+      const { svc } = setup({
+        kind: TransferKind.OUTSOURCE,
+        transferStatus: status,
+        outsourceCenterId: 'c1',
+      });
+      const err = await svc
+        .assignCenter('tr1', TENANT, PERSON, { outsourceCenterId: 'c2' })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TransferNotEditableException);
+      expect(refusalMessage(err as TransferNotEditableException)).toContain(
+        'outsource transfer',
+      );
+    },
+  );
 });
 
 describe('SampleTransferService - a cancelled order freezes its transfers', () => {
@@ -519,7 +582,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
       await expect(
         call(['tr1'], TENANT, PERSON, 'B', {}),
       ).rejects.toBeInstanceOf(TransferOrderCancelledException);
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
       expect(samples.transitionInTx).not.toHaveBeenCalled();
       expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
     },
@@ -535,8 +598,11 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
         rejectionReason: 'Cancelled',
       });
       expect(samples.isOrderCancelled).not.toHaveBeenCalled();
-      expect(samples.transitionInTx).toHaveBeenCalledTimes(1);
-      expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
+      // the return is recorded on the sender's sample, which stays Sent (on a
+      // cancelled order its only way out is Retrieve: Repeat / Error stay frozen)
+      expect(samples.recordReturnedByReceiverInTx).toHaveBeenCalledTimes(1);
+      expect(samples.transitionInTx).not.toHaveBeenCalled();
+      expect(finalWrites(tx).length).toBeGreaterThan(0);
     });
 
     it('Repeat of an accepted copy is NOT refused (the copy goes back to the sender)', async () => {
@@ -549,7 +615,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
         repeatReason: 'Cancelled',
       });
       expect(samples.isOrderCancelled).not.toHaveBeenCalled();
-      expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
+      expect(finalWrites(tx).length).toBeGreaterThan(0);
     });
   });
 
@@ -619,7 +685,7 @@ describe('SampleTransferService - a cancelled order freezes its transfers', () =
   it('an order that is not cancelled goes on to the normal transfer step', async () => {
     const { svc, tx } = setup({ transferStatus: TransferStatus.PICKED_UP });
     await svc.receive(['tr1'], TENANT, PERSON, 'B', {} as never);
-    expect(tx.sampleTransfer.updateMany).toHaveBeenCalled();
+    expect(finalWrites(tx).length).toBeGreaterThan(0);
   });
 
   it('assign center is refused too', async () => {
@@ -652,7 +718,7 @@ describe('SampleTransferService — transfer with no destination', () => {
             })
           : svc[method](['tr1'], TENANT, PERSON, 'B', {});
       await expect(call).rejects.toThrow(TransferDestinationMissingException);
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
     },
   );
 
@@ -725,6 +791,7 @@ describe('SampleTransferService — accept clones the sample into the receiving 
     const samples = {
       ensureLabReportsForAcceptedSample: jest.fn().mockResolvedValue(undefined),
       rehomeLabReportsForSample: jest.fn().mockResolvedValue(undefined),
+      retargetCopyToReceivingSetup: jest.fn().mockResolvedValue(undefined),
     };
     const svc = new SampleTransferService(
       {} as never,
@@ -784,6 +851,22 @@ describe('SampleTransferService — accept clones the sample into the receiving 
       'B',
       'A', // the sender's branch
     );
+  });
+
+  it("then switches the copy and its reports to the RECEIVER's own copy of the test (after the report moved)", async () => {
+    const { done, samples } = accept();
+    await done;
+    expect(samples.retargetCopyToReceivingSetup).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      'copy1',
+      'B',
+    );
+    const rehomed =
+      samples.rehomeLabReportsForSample.mock.invocationCallOrder[0]!;
+    const switched =
+      samples.retargetCopyToReceivingSetup.mock.invocationCallOrder[0]!;
+    expect(switched).toBeGreaterThan(rehomed);
   });
 });
 
@@ -849,7 +932,7 @@ describe('SampleTransferService - only the receiving branch works an INTERNAL tr
       await expect(run(svc, method, branch)).rejects.toBeInstanceOf(
         TransferWrongBranchException,
       );
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
       expect(samples.transitionInTx).not.toHaveBeenCalled();
       expect(samples.returnCopyToOrigin).not.toHaveBeenCalled();
     });
@@ -859,7 +942,7 @@ describe('SampleTransferService - only the receiving branch works an INTERNAL tr
       await expect(run(svc, method, 'A', true)).rejects.toBeInstanceOf(
         TransferWrongBranchException,
       );
-      expect(tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(finalWrites(tx)).toHaveLength(0);
     });
 
     // Accept builds a whole copy of the sample; its success path is covered by the
@@ -965,6 +1048,7 @@ describe('SampleTransferService - the origin of a transfer is the branch sending
     };
     const samples = {
       assertInternalSendable: jest.fn().mockResolvedValue(undefined),
+      assertDispatchable: jest.fn().mockResolvedValue(undefined),
       transitionInTx: jest.fn().mockResolvedValue(heldSample),
     };
     const branches = { findById: jest.fn().mockResolvedValue({}) };

@@ -53,10 +53,19 @@ export interface LabAdapterOption {
   name: string;
 }
 
-/** A lab-test option row for the adapter form's manual Lab Tests picker. Carries
- * `branchId` so the form can drop a test when its branch is deselected. */
+/**
+ * A lab-test option row for the adapter form's manual Lab Tests picker. One row per
+ * **test** (not per branch copy): `id` is one copy's id (the first selected branch that
+ * has it) and `branchIds` lists every selected branch that has a copy. Saving a pick
+ * links all of its copies at the adapter's branches. `hint` says where it applies when
+ * several branches are selected.
+ */
 export interface LabAdapterLabTestOption {
   id: string;
   name: string;
+  /** The branch of the copy `id` belongs to. */
   branchId: string;
+  /** Every selected branch that has a copy of this test. */
+  branchIds: string[];
+  hint?: string;
 }

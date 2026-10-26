@@ -1,0 +1,62 @@
+meta {
+  name: 01 Create Branch B (unmapped)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Gate Branch B {{tatRunId}}",
+    "branchType": "DIAGNOSTIC",
+    "shortName": "EMGB",
+    "status": "ACTIVE",
+    "addressLine": "9 FC Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411004",
+    "phone": "+919822000061",
+    "email": "gateb.{{tatRunId}}@acme.test",
+    "openingTime": "00:00",
+    "closingTime": "23:59",
+    "dailyCapacity": 100,
+    "operationalDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "modules": [
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "lab_operations", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) bru.setVar("branchBId", data.id);
+}
+
+tests {
+  test("second branch created", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Create a second branch "B"** that is deliberately *not* the order's branch.
+  The order from folder 71 lives at branch **A** (`branchId`); this branch **B**
+  (`branchBId`) is where we'll point a mis-mapped adapter so the branch gate has a
+  concrete "wrong" branch to reject. `tenantId` comes from the JWT; `code` is
+  system-generated. Captures **`branchBId`**.
+}

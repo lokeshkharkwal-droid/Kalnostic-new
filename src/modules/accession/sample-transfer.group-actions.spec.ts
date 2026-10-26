@@ -44,6 +44,7 @@ function group(
             transferStatus: status,
             destinationBranchId: 'B',
             receiveCondition: null,
+            logisticsType: 'Courier', // a transfer the receiving branch can see
             clonedSampleId: null,
           }),
         ),
@@ -84,7 +85,7 @@ function group(
       ),
     transitionInTx: jest.fn().mockResolvedValue({}),
     returnCopyToOrigin: jest.fn().mockResolvedValue('sA'),
-    notifySamplesRepeated: jest.fn().mockResolvedValue(undefined),
+    recordReturnedByReceiverInTx: jest.fn().mockResolvedValue(undefined),
     removeTransferCloneInTx: jest.fn().mockResolvedValue(undefined),
   };
   const svc = new SampleTransferService(
@@ -102,7 +103,12 @@ function group(
     tx,
     samples,
     /** transfers written (updated), in order */
-    written: () => idsOf(tx.sampleTransfer.updateMany),
+    // (a send-back also takes a claim on the transfer first, which sets no status:
+    // it is left out here)
+    written: () =>
+      (tx.sampleTransfer.updateMany.mock.calls as unknown[][])
+        .filter((c) => 'transferStatus' in (c[0] as { data: object }).data)
+        .map((c) => (c[0] as { where: { id: string } }).where.id),
     /** transfers looked at, in order = the order locks are taken */
     visited: () => idsOf(tx.sampleTransfer.findFirst),
   };

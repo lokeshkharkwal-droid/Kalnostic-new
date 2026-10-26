@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { AdapterLogsService } from '../adapter-logs/adapter-logs.service';
 import { SubmitResultBody } from './dto/submit-result.dto';
+import { BRANCH_NOT_LINKED_MESSAGE } from './entities/emi-response.entity';
 
 /**
  * Regression for the "create at Branch A → transfer to Branch B → accept + assign a
@@ -145,6 +146,8 @@ describe('EmiService — cross-branch clone barcode (Tenant-MD provenance match)
       ]),
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // Not sent out (no pending internal transfer) → the fill path proceeds.
+    orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },
@@ -231,23 +234,23 @@ describe('EmiService — cross-branch clone barcode (Tenant-MD provenance match)
     const tx = buildTx(BRANCH_A_ADAPTER);
     const res = await makeService(tx).submitResult(adapter, submitBody, null);
 
-    expect(res.s).toBe('200');
-    expect(res.test_status).toBe('no test match found for requested token');
-    expect(res.report_log?.log[0]?.fill_status).toMatch(
-      /not processed at a branch linked to this adapter/,
-    );
-    // Nothing written to the report — the Branch-A adapter is blocked by the branch
-    // gate even though it "knows" this test (same srcA), because processing moved to
-    // Branch B.
+    // The branch mapping gate rejects the request up-front (HTTP 400) — the
+    // Branch-A adapter is not registered with Branch B, where processing moved,
+    // even though it "knows" this test (same srcA).
+    expect(res.s).toBe('400');
+    expect(res.m).toBe(BRANCH_NOT_LINKED_MESSAGE);
+    // Nothing written at all — not even the AdapterResult audit row.
+    expect(tx.adapterResult.create).not.toHaveBeenCalled();
     expect(tx.labReportResultValue.upsert).not.toHaveBeenCalled();
     expect(tx.labReport.update).not.toHaveBeenCalled();
   });
 
-  it('ISOLATION: getOrders for a Branch-A-only adapter returns an empty test list', async () => {
+  it('ISOLATION: getOrders for a Branch-A-only adapter is rejected with a branch error', async () => {
     const tx = buildTx(BRANCH_A_ADAPTER);
     const res = await makeService(tx).getOrders(adapter, CLONE_BARCODE, null);
 
-    expect(res.s).toBe('200');
-    expect(res.orders?.[0]?.ut_ids).toEqual([]);
+    expect(res.s).toBe('400');
+    expect(res.m).toBe(BRANCH_NOT_LINKED_MESSAGE);
+    expect(res.orders).toBeUndefined();
   });
 });

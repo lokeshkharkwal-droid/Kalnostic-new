@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { AdapterLogsService } from '../adapter-logs/adapter-logs.service';
 import { SubmitResultBody } from './dto/submit-result.dto';
+import { BRANCH_NOT_LINKED_MESSAGE } from './entities/emi-response.entity';
 
 /**
  * Branch-based Lab Adapter mapping (business-admin › Lab Adapter) for the three
@@ -14,14 +15,16 @@ import { SubmitResultBody } from './dto/submit-result.dto';
  * Fixture: one standalone test "Glucose" (tenant source `LabTest` id `lt-glu`).
  * The collection center `cc` has the test as `BranchLabTest` `blt-cc`; Branch A
  * `ba` has the SAME logical test as a DIFFERENT `BranchLabTest` `blt-ba` (both
- * resolve to source `lt-glu`). An order is created at `cc`, so its item/report
- * carry `blt-cc` / `lt-glu`. An internal transfer to `ba` leaves the barcode on
- * the origin (`cc`) sample but rehomes the report's branch to `ba`.
+ * resolve to source `lt-glu`). An order is created at `cc`, so its item carries
+ * `blt-cc` / `lt-glu`. After an internal transfer the report's branch is rehomed
+ * to `ba`, and the analyzer scans the ACCEPTED sample being worked on at `ba`;
+ * `reportBranchId` drives both in the fixture.
  *
  * The three cases assert that `GET /emi/orders` (test list) and
  * `POST /emi/submitResult` (fill) succeed iff the adapter is linked to the branch
- * processing the test — and that the same logical test is matched across branches
- * even though the order references the collection center's `BranchLabTest` row.
+ * processing the test — and are otherwise REJECTED up-front with a clear branch
+ * error (no records written) — while the same logical test is still matched across
+ * branches even though the order references the collection center's `BranchLabTest`.
  */
 describe('EmiService — branch-based adapter mapping', () => {
   const CC = 'cc';
@@ -58,12 +61,13 @@ describe('EmiService — branch-based adapter mapping', () => {
     adapterBranchIds: string[];
     /** The adapter's mapped `BranchLabTest`s (`LabAdapterTest` → auto-map per branch). */
     mapped: MappedTest[];
-    /** The branch currently processing the report (origin, or dest after transfer). */
+    /**
+     * The branch currently processing the report (`LabReport.branchId`) — the
+     * origin before a transfer, the destination after one. The analyzer scans the
+     * barcode of the sample being worked on at THIS branch (ACCEPTED there), so the
+     * scanned sample is modelled at this branch; the branch gate keys on it.
+     */
     reportBranchId: string;
-    /** Branch of the sample carrying the scanned barcode (always the origin). */
-    scannedSampleBranchId: string;
-    /** Origin sample status: ACCEPTED pre-transfer, SENT_INTERNAL once sent. */
-    sampleStatus: 'ACCEPTED' | 'SENT_INTERNAL';
   }
 
   const buildTx = (o: ScenarioOpts) => ({
@@ -90,14 +94,15 @@ describe('EmiService — branch-based adapter mapping', () => {
         })),
       ),
     },
-    // The scanned barcode lives on the ORIGIN sample (collection center); the
-    // internal-transfer clone is barcode-less, so the lookup always resolves here.
+    // The scanned barcode is on the ACCEPTED sample currently being processed at
+    // `reportBranchId` (the origin sample before a transfer, or the receiver's
+    // clone after one). The branch gate keys on the report's branch, not this.
     orderSample: {
       findMany: jest.fn().mockResolvedValue([
         {
           orderId: 'ord1',
-          branchId: o.scannedSampleBranchId,
-          status: o.sampleStatus,
+          branchId: o.reportBranchId,
+          status: 'ACCEPTED',
           tests: [{ orderItemId: 'oi1', labTestId: 'lt-glu' }],
         },
       ]),
@@ -106,7 +111,7 @@ describe('EmiService — branch-based adapter mapping', () => {
       findFirst: jest.fn().mockResolvedValue({
         id: 'ord1',
         orderCode: 'ORD-1',
-        branchId: o.scannedSampleBranchId,
+        branchId: o.reportBranchId,
         status: 'ORDER',
         orderDate: new Date('2026-01-01T00:00:00Z'),
         patient: {
@@ -158,6 +163,8 @@ describe('EmiService — branch-based adapter mapping', () => {
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
     labTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // Not sent out (no pending internal transfer) → the fill path proceeds.
+    orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },
@@ -203,7 +210,12 @@ describe('EmiService — branch-based adapter mapping', () => {
     expect(submitTx.labReport.update).toHaveBeenCalledTimes(1);
   };
 
-  /** Assert the LIS flow is BLOCKED (empty test list + nothing filled). */
+  /**
+   * Assert the LIS flow is BLOCKED by the branch mapping gate: both endpoints
+   * REJECT up-front with a clear branch error (HTTP `400`), and `submitResult`
+   * writes NO records at all — not even the `AdapterResult` audit row — because
+   * the processing branch isn't registered with the adapter.
+   */
   const expectLisBlocked = async (o: ScenarioOpts) => {
     const ordersTx = buildTx(o);
     const orders = await makeService(ordersTx).getOrders(
@@ -211,10 +223,10 @@ describe('EmiService — branch-based adapter mapping', () => {
       '10001',
       null,
     );
-    // The order still resolves (so the machine gets a clean envelope), but the
-    // test list is EMPTY because no test is processed at a linked branch.
-    expect(orders.s).toBe('200');
-    expect(orders.orders?.[0]?.ut_ids).toEqual([]);
+    // No order row is exposed — the request is rejected with a clear reason.
+    expect(orders.s).toBe('400');
+    expect(orders.m).toBe(BRANCH_NOT_LINKED_MESSAGE);
+    expect(orders.orders).toBeUndefined();
 
     const submitTx = buildTx(o);
     const submit = await makeService(submitTx).submitResult(
@@ -222,7 +234,10 @@ describe('EmiService — branch-based adapter mapping', () => {
       SUBMIT_BODY,
       null,
     );
-    expect(submit.test_status).toBe('no test match found for requested token');
+    expect(submit.s).toBe('400');
+    expect(submit.m).toBe(BRANCH_NOT_LINKED_MESSAGE);
+    // Nothing is created, modified, or updated on a validation failure.
+    expect(submitTx.adapterResult.create).not.toHaveBeenCalled();
     expect(submitTx.labReportResultValue.upsert).not.toHaveBeenCalled();
     expect(submitTx.labReport.update).not.toHaveBeenCalled();
   };
@@ -234,8 +249,6 @@ describe('EmiService — branch-based adapter mapping', () => {
       await expectLisWorks({
         ...base,
         reportBranchId: CC,
-        scannedSampleBranchId: CC,
-        sampleStatus: 'ACCEPTED',
       });
     });
 
@@ -243,8 +256,6 @@ describe('EmiService — branch-based adapter mapping', () => {
       await expectLisBlocked({
         ...base,
         reportBranchId: BA,
-        scannedSampleBranchId: CC,
-        sampleStatus: 'SENT_INTERNAL',
       });
     });
   });
@@ -256,8 +267,6 @@ describe('EmiService — branch-based adapter mapping', () => {
       await expectLisBlocked({
         ...base,
         reportBranchId: CC,
-        scannedSampleBranchId: CC,
-        sampleStatus: 'ACCEPTED',
       });
     });
 
@@ -267,8 +276,6 @@ describe('EmiService — branch-based adapter mapping', () => {
       await expectLisWorks({
         ...base,
         reportBranchId: BA,
-        scannedSampleBranchId: CC,
-        sampleStatus: 'SENT_INTERNAL',
       });
     });
   });
@@ -280,8 +287,6 @@ describe('EmiService — branch-based adapter mapping', () => {
       await expectLisWorks({
         ...base,
         reportBranchId: CC,
-        scannedSampleBranchId: CC,
-        sampleStatus: 'ACCEPTED',
       });
     });
 
@@ -289,8 +294,6 @@ describe('EmiService — branch-based adapter mapping', () => {
       await expectLisWorks({
         ...base,
         reportBranchId: BA,
-        scannedSampleBranchId: CC,
-        sampleStatus: 'SENT_INTERNAL',
       });
     });
   });

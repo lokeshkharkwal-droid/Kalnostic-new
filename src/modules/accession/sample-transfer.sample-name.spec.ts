@@ -43,6 +43,7 @@ describe('SampleTransferService — accept clone keeps the sample name', () => {
     const samples = {
       ensureLabReportsForAcceptedSample: jest.fn().mockResolvedValue(undefined),
       rehomeLabReportsForSample: jest.fn().mockResolvedValue(undefined),
+      retargetCopyToReceivingSetup: jest.fn().mockResolvedValue(undefined),
     };
     const service = new SampleTransferService(
       undefined as never,

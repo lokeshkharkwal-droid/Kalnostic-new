@@ -120,6 +120,9 @@ describe('OrderSampleService.transitionInTx - a removed test freezes its sample'
         findFirst: jest.fn().mockResolvedValue({ fromStatus: 'COLLECTED' }),
       },
       order: { findFirst: jest.fn().mockResolvedValue(null) },
+      // names + audit entry of the recall
+      branch: { findMany: jest.fn().mockResolvedValue([]) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
       orderSampleTest: {
         findMany: jest.fn().mockResolvedValue([
           {
@@ -129,6 +132,24 @@ describe('OrderSampleService.transitionInTx - a removed test freezes its sample'
         ]),
       },
       sampleTransfer: {
+        // Two reads share this mock: the OPEN transfers a Retrieve takes back (asks for
+        // In-Transit / Picked Up) - one is open - and "did the receiving branch send it
+        // back?" (the newest INTERNAL transfer) - it did not.
+        findMany: jest.fn(
+          (args: { where?: { transferStatus?: { in?: string[] } } }) =>
+            Promise.resolve(
+              args?.where?.transferStatus?.in
+                ? [
+                    {
+                      id: 'tr1',
+                      destinationBranchId: 'B',
+                      transferStatus: 'IN_TRANSIT',
+                      logisticsType: 'Courier',
+                    },
+                  ]
+                : [],
+            ),
+        ),
         // the "has the receiver received it?" probe of Retrieve
         findFirst: jest
           .fn()
@@ -202,7 +223,7 @@ describe('OrderSampleService.transitionInTx - a removed test freezes its sample'
     }
   });
 
-  it("the sender's Retrieve of a sample that is OUT at another branch stays open and closes the transfer", async () => {
+  it("the sender's Retrieve of a sample that is OUT at another branch stays open and removes (soft-deletes) the transfer", async () => {
     const { tx, transition } = build(true, { status: 'SENT_INTERNAL' });
     await transition('retrieve');
     expect(tx.orderSample.update).toHaveBeenCalledTimes(1);
@@ -210,11 +231,11 @@ describe('OrderSampleService.transitionInTx - a removed test freezes its sample'
       tx.sampleTransfer.updateMany.mock.calls as unknown[][]
     )[0]![0];
     expect(closed).toMatchObject({
-      data: {
-        transferStatus: 'REJECTED',
-        rejectionReason: 'Recalled via Retrieve',
-      },
+      data: { rejectionReason: 'Recalled via Retrieve' },
     });
+    expect(
+      (closed as { data: { deletedAt?: unknown } }).data.deletedAt,
+    ).toBeInstanceOf(Date);
   });
 
   it('Retrieve of a removed sample is still refused once the receiver has RECEIVED/ACCEPTED it', async () => {
@@ -583,6 +604,7 @@ describe('SampleTransferService - a removed test freezes its transfer', () => {
               kind: TransferKind.INTERNAL,
               transferStatus: status,
               destinationBranchId: 'B',
+              logisticsType: 'Courier',
               receiveCondition: null,
               clonedSampleId: null,
             }),
@@ -632,7 +654,7 @@ describe('SampleTransferService - a removed test freezes its transfer', () => {
       isOrderCancelled: jest.fn().mockResolvedValue(false),
       transitionInTx: jest.fn().mockResolvedValue({}),
       returnCopyToOrigin: jest.fn().mockResolvedValue('sA'),
-      notifySamplesRepeated: jest.fn().mockResolvedValue(undefined),
+      recordReturnedByReceiverInTx: jest.fn().mockResolvedValue(undefined),
     };
     const svc = new SampleTransferService(
       prisma as never,

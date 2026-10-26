@@ -75,6 +75,13 @@ docs {
     branch therefore only gets its own available subset (no duplicates). A non-empty
     `labTestIds` preserves the manual selection and skips auto-mapping. This is the
     **create** flow only — `PATCH` replaces sets explicitly.
+    A pick stands for the **test**, not one branch's copy: every copy of the same
+    test (same Test Name + Test Code) at the adapter's branches is linked, so
+    picking "CBC" once links it at each branch that has it, and a test that exists
+    at only some branches links just those. Copies at branches the adapter is not
+    assigned to are never linked; a pick with no copy at any of the adapter's
+    branches → 422 `LAB_ADAPTER_LAB_TEST_BRANCH_MISMATCH`. The stored rows are
+    still one per branch copy.
   - `status` (optional, default `ONLINE`) — one of `ONLINE` | `REPORT_ONLY` |
     `INACTIVE`. Only `ONLINE` passes the EMI/LIS token gate
     (`POST /emi/orders`, `/emi/submitResult`) — `REPORT_ONLY` and `INACTIVE`

@@ -86,4 +86,21 @@ docs {
   "test_status": "1 test updated", "report_log": { … log: [{ fill_status:
   "Report filled", … }] }, "prefered_test": { … }, "unique_test_ids": {} }`.
   Captures **`emiReportId`** from the report log.
+
+  **Mapping gate (branch + lab test).** Before anything is written, the branch
+  *currently processing* the order and its lab test must both be mapped to **this
+  adapter** (`LabAdapterBranch` / `LabAdapterTest`). If the adapter is authorised
+  for none of the order's in-scope tests the submission is **rejected** and **no
+  records are created, modified, or updated** — not even the `AdapterResult` audit
+  row:
+  - processing branch not linked → `{ "s": "400", "m": "The requesting branch is
+    not registered with this lab adapter." }`
+  - branch linked but test not mapped → `{ "s": "400", "m": "The requested lab
+    test is not linked to this lab adapter." }`
+
+  An order created at a linked Branch A and transferred to an unlinked Branch B is
+  rejected (Branch A's mapping does not authorise Branch B). A partially-mapped
+  order (≥1 valid test) still proceeds and fills only the mapped tests. To try the
+  negative case, point `TOKEN` at an adapter whose branch/test mappings exclude
+  this order's branch or test.
 }

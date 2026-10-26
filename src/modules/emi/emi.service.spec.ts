@@ -101,6 +101,8 @@ describe('EmiService — panel-member barcode', () => {
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
     labTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // Not sent out (no pending internal transfer) → the fill path proceeds.
+    orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },
@@ -243,6 +245,8 @@ describe('EmiService — standalone-test barcode', () => {
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
     labTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // Not sent out (no pending internal transfer) → the fill path proceeds.
+    orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },

@@ -43,6 +43,9 @@ import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/types/jwt-payload.type';
+import { auditActorOf } from './utils/actor.util';
+import { ApplyCenterChangesDto } from './dto/apply-center-changes.dto';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /** `@Audit` metadata shared by every transfer write route. */
@@ -394,12 +397,42 @@ export class SampleTransferController {
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
     @Body() dto: AssignCenterDto,
   ) {
+    const role = auditActorOf(user);
     return this.transfers.assignCenter(id, tenantId, personId, dto, {
       branchId: profile.branchId,
       profileKey: profile.profileKey,
+      roleKey: role.roleKey,
+      roleLabel: role.roleLabel,
+    });
+  }
+
+  /**
+   * The Assign / Edit Center dialog's Confirm as ONE all-or-nothing request: each
+   * ticked tube gets its own center, each un-ticked tube is retrieved, and the
+   * logistics fields are shared. Permissions are enforced per tube in the service
+   * (Assign vs Update Center, and Retrieve when anything is un-ticked). If any tube
+   * cannot be done nothing changes and the error names it (422
+   * `CENTER_CHANGES_REFUSED`).
+   */
+  @Post('transfers/apply-center-changes')
+  @Audit(auditUpdate('Applied center changes to a group of transfers'))
+  applyCenterChanges(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ApplyCenterChangesDto,
+  ) {
+    const role = auditActorOf(user);
+    return this.transfers.applyCenterChanges(tenantId, personId, dto, {
+      branchId: profile.branchId,
+      profileKey: profile.profileKey,
+      roleKey: role.roleKey,
+      roleLabel: role.roleLabel,
     });
   }
 

@@ -45,4 +45,9 @@ docs {
     `page` (+ optional `limit`, default 20) to get a paginated
     `{ data, total, page, limit }` envelope for the searchable "Load More"
     selector.
+
+  **`forSampleIds` (Phase 1).** Optional, comma separated accession sample ids (at most 200). When given, every
+  option also carries `offersAll` (true when that branch offers every test on those tubes) and `missingTests`
+  (the tests it lacks, worded for display, e.g. `["Complete Urine Examination"]`). The Send and Edit Center
+  dialogs use it to grey out a branch the tubes cannot go to. Without it the answer is exactly as before.
 }

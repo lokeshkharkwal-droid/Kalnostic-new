@@ -26,7 +26,25 @@ interface TransferUpdate {
   data: Record<string, unknown>;
 }
 
+interface LatestTransfer {
+  transferStatus: string;
+  kind?: string;
+  rejectionReason?: string | null;
+  repeatReason?: string | null;
+}
+
+interface OpenTransfer {
+  id: string;
+  destinationBranchId: string | null;
+  transferStatus: string;
+  logisticsType: string | null;
+}
+
 interface Opts {
+  /** The sample's OPEN INTERNAL transfers (what a Retrieve takes back); default: one in transit. */
+  open?: OpenTransfer[];
+  /** The sample's latest INTERNAL transfer (what the receiving branch did with it). */
+  latest?: LatestTransfer;
   progressed?: boolean;
   history?: { fromStatus: SampleStatus } | null;
   claimCount?: number;
@@ -48,6 +66,14 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
   };
   const tx = {
     order: { findFirst: jest.fn().mockResolvedValue(null) },
+    // names for the audit text of a recall
+    branch: {
+      findMany: jest.fn().mockResolvedValue([
+        { id: 'A', name: 'Branch A' },
+        { id: 'B', name: 'Branch B' },
+      ]),
+    },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     orderSample: {
       findFirst: jest.fn().mockResolvedValue(sample),
       updateMany: jest.fn().mockResolvedValue({ count: opts.claimCount ?? 1 }),
@@ -65,6 +91,42 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
       create: jest.fn().mockResolvedValue({}),
     },
     sampleTransfer: {
+      // Two reads share this mock: the OPEN transfers a Retrieve takes back (asks for
+      // In-Transit / Picked Up), and the newest INTERNAL transfer (`findReceiverReturns`).
+      findMany: jest.fn(
+        (args: { where?: { transferStatus?: { in?: string[] } } }) => {
+          if (args?.where?.transferStatus?.in) {
+            // (a sample that is not Sent has no open INTERNAL transfer: a Forwarded /
+            // Outsourced one is unwound by the recall instead)
+            return Promise.resolve(
+              opts.open ??
+                (sample.status === SampleStatus.SENT_INTERNAL
+                  ? [
+                      {
+                        id: 'tr1',
+                        destinationBranchId: 'B',
+                        transferStatus: 'IN_TRANSIT',
+                        logisticsType: 'Courier',
+                      },
+                    ]
+                  : []),
+            );
+          }
+          return Promise.resolve(
+            opts.latest
+              ? [
+                  {
+                    sampleId: 's1',
+                    kind: 'INTERNAL',
+                    rejectionReason: null,
+                    repeatReason: null,
+                    ...opts.latest,
+                  },
+                ]
+              : [],
+          );
+        },
+      ),
       findFirst: jest
         .fn()
         .mockResolvedValue(opts.progressed ? { id: 'tr1' } : null),
@@ -99,8 +161,13 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
     )
     .mockResolvedValue(undefined);
   const run = (
-    action: 'retrieve' | 'repeat',
-    note: { force?: boolean; system?: boolean; notes?: string } = {},
+    action: 'retrieve' | 'repeat' | 'error',
+    note: {
+      force?: boolean;
+      system?: boolean;
+      notes?: string;
+      actor?: { roleKey: string | null; roleLabel: string | null };
+    } = {},
   ) =>
     service.transitionInTx(
       tx as never,
@@ -170,19 +237,27 @@ describe('Retrieve of a sample sent to another branch', () => {
     expect(m.updatedData().status).toBe(SampleStatus.COLLECTED);
   });
 
-  it('closes the OPEN transfers as REJECTED "Recalled via Retrieve" and does not run the recall', async () => {
+  it('SOFT-DELETES the OPEN transfer (the row leaves the receiving branch) and does not run the recall', async () => {
     const m = build();
     await m.run('retrieve');
     expect(m.recall).not.toHaveBeenCalled();
     const call = m.tx.sampleTransfer.updateMany.mock.calls[0]![0];
+    expect(call.data.deletedAt).toBeInstanceOf(Date);
     expect(call.data).toMatchObject({
-      transferStatus: 'REJECTED',
       rejectionReason: 'Recalled via Retrieve',
       updatedBy: 'p1',
     });
-    // never an earlier cycle's finished transfer, never a deleted one, and only
-    // an INTERNAL transfer that the receiving branch has not received yet
-    expect(call.where).toMatchObject({
+    // it is no longer written as a REJECTED row the receiving branch could still see
+    expect(call.data).not.toHaveProperty('transferStatus');
+    // only the transfers that were open (In-Transit / Picked Up), none already deleted
+    expect(call.where).toMatchObject({ id: { in: ['tr1'] }, deletedAt: null });
+    // and only an INTERNAL transfer that the receiving branch has not received yet
+    const read = m.tx.sampleTransfer.findMany.mock.calls
+      .map((c) => c[0] as { where: Record<string, unknown> })
+      .find(
+        (c) => (c.where.transferStatus as { in?: string[] } | undefined)?.in,
+      )!;
+    expect(read.where).toMatchObject({
       sampleId: 's1',
       deletedAt: null,
       kind: 'INTERNAL',
@@ -263,6 +338,130 @@ describe('the sender cannot Repeat a Sent sample', () => {
   });
 });
 
+describe('the sender after the receiving branch sent the sample back (Sent – Repeated / Sent – Rejected)', () => {
+  const repeated = { transferStatus: 'REPEAT', repeatReason: 'clotted' };
+  const rejected = { transferStatus: 'REJECTED', rejectionReason: 'hemolysed' };
+
+  it('Sent – Repeated: the sender may Repeat; the sample leaves Sent for Repeat', async () => {
+    const m = build({}, { latest: repeated });
+    await m.run('repeat');
+    expect(m.updatedData()).toMatchObject({
+      status: SampleStatus.REPEAT,
+      previousStatus: SampleStatus.SENT_INTERNAL,
+      // back at its origin: processing branch and dispatch fields reset
+      processingBranchId: 'A',
+      dispatchedAt: null,
+    });
+  });
+
+  it('Sent – Rejected: the sender may flag Error; the sample leaves Sent for Error', async () => {
+    const m = build({}, { latest: rejected });
+    await m.run('error');
+    expect(m.updatedData()).toMatchObject({
+      status: SampleStatus.ERROR,
+      previousStatus: SampleStatus.SENT_INTERNAL,
+      processingBranchId: 'A',
+    });
+  });
+
+  it.each([
+    ['Repeat', 'repeat', repeated],
+    ['Error', 'error', rejected],
+  ] as const)(
+    "the sender's %s is NOT a recall: the receiving branch's closed transfer is kept for both branches",
+    async (_label, action, latest) => {
+      const m = build({}, { latest });
+      await m.run(action);
+      expect(m.recall).not.toHaveBeenCalled();
+      expect(m.tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it('the Repeat does not reset the report again (it was reset when the receiving branch acted)', async () => {
+    const m = build({}, { latest: repeated });
+    await m.run('repeat');
+    expect(
+      m.labReportService.findReportIdsForSampleTests,
+    ).not.toHaveBeenCalled();
+    expect(m.labReportService.resetReportsForReturn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Repeat after a REJECTION', 'repeat', rejected],
+    ['Error after a REPEAT request', 'error', repeated],
+    [
+      'Repeat while still IN_TRANSIT',
+      'repeat',
+      { transferStatus: 'IN_TRANSIT' },
+    ],
+    ['Error while RECEIVED', 'error', { transferStatus: 'RECEIVED' }],
+    ['Repeat while ACCEPTED', 'repeat', { transferStatus: 'ACCEPTED' }],
+    [
+      'Error after the SYSTEM closed it (Recalled via Retrieve)',
+      'error',
+      { transferStatus: 'REJECTED', rejectionReason: 'Recalled via Retrieve' },
+    ],
+    [
+      'Error after the SYSTEM closed it (Order item removed)',
+      'error',
+      { transferStatus: 'REJECTED', rejectionReason: 'Order item removed' },
+    ],
+    [
+      'Repeat after an EXTERNAL transfer closed as REPEAT',
+      'repeat',
+      { transferStatus: 'REPEAT', kind: 'EXTERNAL' },
+    ],
+  ] as const)(
+    '%s is refused, even when forced, and writes nothing',
+    async (_label, action, latest) => {
+      const m = build({}, { latest });
+      await expect(m.run(action, { force: true })).rejects.toBeInstanceOf(
+        SampleSentToBranchException,
+      );
+      expect(m.recall).not.toHaveBeenCalled();
+      expect(m.tx.orderSample.updateMany).not.toHaveBeenCalled();
+      expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('every other action stays refused on a sent-back sample (Hold, Store, Return, ...)', async () => {
+    const m = build({}, { latest: repeated });
+    const run = m.run as (a: string, n?: object) => Promise<unknown>;
+    for (const action of ['hold', 'store', 'return', 'send', 'cancel']) {
+      await expect(run(action)).rejects.toBeInstanceOf(
+        SampleSentToBranchException,
+      );
+    }
+    expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Sent – Repeated', repeated],
+    ['Sent – Rejected', rejected],
+  ])(
+    'Retrieve is refused on %s: it would only put the tube back to Accepted as if nothing had happened',
+    async (_label, latest) => {
+      const m = build({}, { latest });
+      await expect(m.run('retrieve')).rejects.toBeInstanceOf(
+        RetrieveBlockedException,
+      );
+      expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+      expect(m.tx.orderSample.updateMany).not.toHaveBeenCalled();
+      expect(m.tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      expect(m.recall).not.toHaveBeenCalled();
+    },
+  );
+
+  it('Retrieve of a Sent sample whose transfer is NOT a send-back (still open, or closed by the system) is unchanged', async () => {
+    const m = build({}, { latest: { transferStatus: 'IN_TRANSIT' } });
+    await m.run('retrieve');
+    expect(m.updatedData()).toMatchObject({
+      status: SampleStatus.ACCEPTED,
+      processingBranchId: 'A',
+    });
+  });
+});
+
 describe('Retrieve of a sample that is not transferred', () => {
   it('walks back its own history: the status it moved FROM into the current one', async () => {
     const m = build(
@@ -337,5 +536,117 @@ describe('Retrieve of a sample that is not transferred', () => {
     );
     await repeated.run('retrieve');
     expect(repeated.updatedData().status).toBe(SampleStatus.ACCEPTED);
+  });
+});
+
+describe('a Retrieve that takes a sample back from another branch writes the audit trail (in the same transaction)', () => {
+  const actor = {
+    roleKey: 'accession_manager',
+    roleLabel: 'Accession Manager',
+  };
+  const open = (over: Partial<OpenTransfer> = {}): OpenTransfer => ({
+    id: 'tr1',
+    destinationBranchId: 'B',
+    transferStatus: 'IN_TRANSIT',
+    logisticsType: 'Courier',
+    ...over,
+  });
+  const entries = (m: ReturnType<typeof build>) =>
+    (
+      m.tx.auditLog.create.mock.calls as Array<
+        [{ data: Record<string, unknown> }]
+      >
+    ).map((c) => c[0].data);
+  const historyNote = (m: ReturnType<typeof build>) =>
+    (
+      (
+        m.tx.orderSampleStatusHistory.create.mock.calls as unknown[][]
+      )[0]![0] as {
+        data: { notes: string | null };
+      }
+    ).data.notes;
+
+  it('one entry under the SENDER branch and one under the RECEIVING branch, with the details, who and the role', async () => {
+    const m = build({ accessionNo: 'ACC-7' }, { open: [open()] });
+    await m.run('retrieve', { actor });
+    const e = entries(m);
+    expect(e).toHaveLength(2);
+    expect(e.map((x) => x.branchId)).toEqual(['A', 'B']);
+    for (const x of e) {
+      expect(x).toMatchObject({
+        tenantId: 't1',
+        module: 'ACCESSION',
+        action: 'UPDATE',
+        actorPersonId: 'p1',
+        actorRoleKey: 'accession_manager',
+        actorRoleLabel: 'Accession Manager',
+        resourceId: 's1',
+      });
+      expect(x.metadata).toMatchObject({
+        sampleId: 's1',
+        accessionNo: 'ACC-7',
+        transferId: 'tr1',
+        stage: 'In-Transit',
+        fromBranch: 'Branch A',
+        toBranch: 'Branch B',
+      });
+    }
+    expect(e[0]!.description).toBe(
+      'Retrieved sample ACC-7 from Branch B while In-Transit',
+    );
+    expect(e[1]!.description).toContain(
+      'retrieved by Branch A before Branch B received it',
+    );
+  });
+
+  it("the sender's history row says where it was retrieved from and at which stage (Picked Up too)", async () => {
+    const m = build({}, { open: [open({ transferStatus: 'PICKED_UP' })] });
+    await m.run('retrieve', { notes: 'sent by mistake' });
+    expect(historyNote(m)).toBe(
+      'sent by mistake · Retrieved from Branch B while Picked Up',
+    );
+  });
+
+  it('no center assigned yet: only the sender is told (there is no receiving branch)', async () => {
+    const m = build(
+      {},
+      { open: [open({ destinationBranchId: null, logisticsType: null })] },
+    );
+    await m.run('retrieve', { actor });
+    const e = entries(m);
+    expect(e.map((x) => x.branchId)).toEqual(['A']);
+    expect(e[0]!.description).toContain('no center assigned yet');
+  });
+
+  it('In-Transit with no logistics type (hidden from the receiving branch): only the sender is told', async () => {
+    const m = build({}, { open: [open({ logisticsType: null })] });
+    await m.run('retrieve', { actor });
+    expect(entries(m).map((x) => x.branchId)).toEqual(['A']);
+  });
+
+  it('Picked Up with no logistics (older data) is visible to the receiving branch, so it is told too', async () => {
+    const m = build(
+      {},
+      { open: [open({ transferStatus: 'PICKED_UP', logisticsType: null })] },
+    );
+    await m.run('retrieve', { actor });
+    expect(entries(m).map((x) => x.branchId)).toEqual(['A', 'B']);
+  });
+
+  it('nothing was recalled (no open transfer): no soft delete and no audit entry', async () => {
+    const m = build({}, { open: [] });
+    await m.run('retrieve', { actor });
+    expect(entries(m)).toHaveLength(0);
+    expect(m.tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+    expect(historyNote(m)).toBeNull();
+  });
+
+  it('a Repeat / Error the sender does after a send-back is not a recall: no audit entry', async () => {
+    const m = build(
+      {},
+      { latest: { transferStatus: 'REPEAT', repeatReason: 'x' } },
+    );
+    await m.run('repeat');
+    expect(entries(m)).toHaveLength(0);
   });
 });

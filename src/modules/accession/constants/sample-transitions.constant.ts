@@ -63,6 +63,10 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.HALT]: SampleStatus.ERROR,
     [SampleStatus.COLLECTED]: SampleStatus.ERROR,
     [SampleStatus.ACQUIRED]: SampleStatus.ERROR,
+    // Only after the receiving branch REJECTED a sent sample (its transfer is
+    // closed as REJECTED): the sender flags it Error. `transitionInTx` refuses it
+    // in any other case.
+    [SampleStatus.SENT_INTERNAL]: SampleStatus.ERROR,
   },
   // Hold — defer collection / processing.
   hold: {
@@ -78,12 +82,15 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.ERROR]: SampleStatus.REPEAT,
     // A sample rejected at the partner/outsource station can be flagged for
     // re-collection without first being retrieved back to ACCEPTED (manager
-    // correction, 2026-09-18). NOT for SENT_INTERNAL: once a sample is sent to
-    // another branch of the tenant the sender cannot repeat it — only the
-    // receiving branch's Reject/Repeat returns it to REPEAT (system-driven,
-    // see `transitionInTx`'s `system` flag), per the 2026-09-29 manager flow.
+    // correction, 2026-09-18).
     [SampleStatus.FORWARD_EXTERNAL]: SampleStatus.REPEAT,
     [SampleStatus.OUTSOURCED]: SampleStatus.REPEAT,
+    // SENT_INTERNAL: the sender cannot repeat a sample while it is out at another
+    // branch. The ONE exception is after the receiving branch asked for a Repeat
+    // (its transfer is closed as REPEAT): the sender then confirms the Repeat and
+    // the sample leaves Sent. This entry only makes the move legal;
+    // `transitionInTx` refuses it unless the latest INTERNAL transfer says so.
+    [SampleStatus.SENT_INTERNAL]: SampleStatus.REPEAT,
   },
   // Store — store in freezer/rack.
   store: {
