@@ -21,6 +21,8 @@ import {
   EMI_STATUS,
   UPDATE_TEST_STATUS,
   NOT_ACCEPTED_MESSAGE,
+  BRANCH_NOT_LINKED_MESSAGE,
+  TEST_NOT_LINKED_MESSAGE,
   EmiOrderRow,
   EmiOrdersResponse,
   EmiReportLog,
@@ -309,11 +311,6 @@ export class EmiService {
             return { s: EMI.BAD_REQUEST, m: NOT_ACCEPTED_MESSAGE };
           }
 
-          const tenant = await tx.tenant.findUnique({
-            where: { id: adapter.tenantId },
-            select: { name: true },
-          });
-
           // Shared Tenant-MD provenance of every test on the order, so a test
           // processed at a different branch than the adapter is mapped on still
           // matches by its `sourceMasterLabTestId` (see `testMapped` tier 3).
@@ -321,6 +318,33 @@ export class EmiService {
             tx,
             this.collectOrderLabTestIds(order),
           );
+
+          // Mapping gate (branch + lab test): reject the whole request up-front
+          // when the adapter is authorised for NONE of the scanned order's
+          // in-scope tests — i.e. none is a mapped test processed at a linked
+          // branch. Keyed on THIS adapter's `LabAdapterBranch` / `LabAdapterTest`
+          // mappings and the branch CURRENTLY processing each test, so an order
+          // created at a linked Branch A but transferred to an unlinked Branch B
+          // is rejected (Branch A's mapping never authorises Branch B). No order
+          // row is exposed when this fires. A partially-mapped order (≥1 valid
+          // test) passes and the per-test loop below still skips the rest.
+          const rejection = this.adapterScopeRejection(
+            this.evaluateAdapterScope(
+              ctx,
+              order,
+              selectedItems,
+              masterByLabTestId,
+              scannedBranchId,
+            ),
+          );
+          if (rejection) {
+            return { s: EMI.BAD_REQUEST, m: rejection };
+          }
+
+          const tenant = await tx.tenant.findUnique({
+            where: { id: adapter.tenantId },
+            select: { name: true },
+          });
 
           // ut_ids: for each mapped + still-fillable test on this order, the test's
           // display NAME plus each of its result-parameter NAMES (deduped) — the
@@ -589,6 +613,44 @@ export class EmiService {
           };
         }
 
+        // Shared Tenant-MD provenance of every test on the order, so a test
+        // processed at a different branch than the adapter is mapped on still
+        // matches by its `sourceMasterLabTestId` (see `testMapped` tier 3).
+        const masterByLabTestId = await this.resolveMasterTestIds(
+          tx,
+          this.collectOrderLabTestIds(order),
+        );
+
+        // Mapping gate (branch + lab test): reject BEFORE any write when the
+        // adapter is authorised for NONE of the scanned order's in-scope tests —
+        // i.e. none is a mapped test processed at a linked branch. Keyed on THIS
+        // adapter's branch/test mappings and the branch CURRENTLY processing each
+        // test, so an order created at a linked Branch A but transferred to an
+        // unlinked Branch B is rejected (Branch A's mapping never authorises
+        // Branch B). Per requirement, NO records are written on this failure — the
+        // rejection returns before `writeAudit`, so no `AdapterResult` row and no
+        // report/value mutation occur. A partially-mapped order (≥1 valid test)
+        // passes and the per-report loop below still skips the unmapped rest.
+        const rejection = this.adapterScopeRejection(
+          this.evaluateAdapterScope(
+            ctx,
+            order,
+            selectedItems,
+            masterByLabTestId,
+            resolved?.scannedBranchId ?? null,
+          ),
+        );
+        if (rejection) {
+          return {
+            s: EMI.BAD_REQUEST,
+            m: rejection,
+            emi_status: this.emiStatusLabel(emiCode),
+            test_status: rejection,
+            prefered_test: ctx.preferedTest,
+            unique_test_ids: {},
+          };
+        }
+
         const submitted = this.normaliseSubmitted(testResults);
         if (submitted.length === 0) {
           await writeAudit(
@@ -610,14 +672,6 @@ export class EmiService {
         const enteredAt = parseResultDate(body.result_date) ?? now;
         const log: EmiReportLog[] = [];
         let updatedCount = 0;
-
-        // Shared Tenant-MD provenance of every test on the order, so a test
-        // processed at a different branch than the adapter is mapped on still
-        // matches by its `sourceMasterLabTestId` (see `testMapped` tier 3).
-        const masterByLabTestId = await this.resolveMasterTestIds(
-          tx,
-          this.collectOrderLabTestIds(order),
-        );
 
         // Each item now carries one report (non-panel/grandfathered-panel) or
         // several (one per member test, for a panel created after the
@@ -995,6 +1049,111 @@ export class EmiService {
       preferedBySource,
       equipmentCode: equipment?.code ?? null,
     };
+  }
+
+  /**
+   * Evaluate whether the scanned order carries at least one test THIS adapter is
+   * authorised to handle — a test that is **mapped** to the adapter
+   * (`LabAdapterTest`) AND processed at a **linked** branch (`LabAdapterBranch`).
+   * It iterates the same in-scope units (expanded panel-member reports, with a
+   * reportless fallback) and reuses the exact per-test gates ({@link branchLinked},
+   * {@link testMapped}) as the fill/listing loops, so the up-front mapping
+   * validation can never diverge from what those loops would actually process.
+   *
+   * Returned flags feed {@link adapterScopeRejection}:
+   * - `hasMappedAtLinkedBranch` — ≥1 in-scope test is both mapped and at a linked
+   *   branch (the request is authorised; proceed).
+   * - `hasLinkedBranch` — ≥1 in-scope test is processed at a linked branch
+   *   (distinguishes a branch-mapping failure from a test-mapping failure).
+   * - `hasCandidate` — ≥1 in-scope unit existed at all.
+   *
+   * @param ctx the adapter's resolved mappings (branches + mapped-test identity)
+   * @param order the resolved order graph
+   * @param selectedItems per-item member `labTestId` sets carried by the scanned group
+   * @param masterByLabTestId per-branch MD id → shared Tenant-MD provenance
+   * @param scannedBranchId branch of the sample carrying the scanned barcode
+   *   (branch-gate fallback for a not-yet-accepted, reportless unit)
+   */
+  private evaluateAdapterScope(
+    ctx: AdapterContext,
+    order: EmiOrder,
+    selectedItems: Map<string, Set<string | null>>,
+    masterByLabTestId: Map<string, string | null>,
+    scannedBranchId: string | null,
+  ): {
+    hasMappedAtLinkedBranch: boolean;
+    hasLinkedBranch: boolean;
+    hasCandidate: boolean;
+  } {
+    let hasMappedAtLinkedBranch = false;
+    let hasLinkedBranch = false;
+    let hasCandidate = false;
+
+    for (const item of order.items) {
+      const members = selectedItems.get(item.id);
+      if (!members) {
+        continue; // this item isn't part of the scanned sample group
+      }
+      const reports = item.labReports.length > 0 ? item.labReports : [null];
+      for (const report of reports) {
+        if (report && !this.reportInScannedGroup(members, report)) {
+          continue;
+        }
+        hasCandidate = true;
+
+        const mappedTestId =
+          report?.memberBranchLabTestId ?? item.branchLabTestId;
+        const sourceLabTestId =
+          report?.labTestId ?? item.branchLabTest?.sourceLabTestId ?? null;
+        // Branch currently processing this test (rehomed on transfer); a
+        // reportless unit falls back to the scanned sample's branch.
+        const processingBranchId = report ? report.branchId : scannedBranchId;
+
+        const branchOk = this.branchLinked(ctx, processingBranchId);
+        const testOk = this.testMapped(ctx, {
+          branchLabTestId: mappedTestId,
+          sourceLabTestId,
+          masterLabTestId: sourceLabTestId
+            ? masterByLabTestId.get(sourceLabTestId)
+            : null,
+          testName: item.branchLabTest?.testName,
+          testCode: item.branchLabTest?.testCode,
+        });
+
+        if (branchOk) {
+          hasLinkedBranch = true;
+        }
+        if (branchOk && testOk) {
+          hasMappedAtLinkedBranch = true;
+        }
+      }
+    }
+
+    return { hasMappedAtLinkedBranch, hasLinkedBranch, hasCandidate };
+  }
+
+  /**
+   * Turn an {@link evaluateAdapterScope} result into the up-front mapping-gate
+   * rejection message, or `null` when the request is authorised (≥1 mapped test at
+   * a linked branch). When nothing is authorised, the message distinguishes the
+   * two failure modes so the machine operator gets a clear reason:
+   * - no in-scope test is at a linked branch → {@link BRANCH_NOT_LINKED_MESSAGE}
+   *   (the requesting/processing branch isn't registered with this adapter);
+   * - a branch IS linked but no in-scope test is mapped → {@link TEST_NOT_LINKED_MESSAGE}.
+   * @param scope the flags from {@link evaluateAdapterScope}
+   * @returns the rejection message, or `null` to proceed
+   */
+  private adapterScopeRejection(scope: {
+    hasMappedAtLinkedBranch: boolean;
+    hasLinkedBranch: boolean;
+    hasCandidate: boolean;
+  }): string | null {
+    if (scope.hasMappedAtLinkedBranch) {
+      return null;
+    }
+    return scope.hasLinkedBranch
+      ? TEST_NOT_LINKED_MESSAGE
+      : BRANCH_NOT_LINKED_MESSAGE;
   }
 
   /**

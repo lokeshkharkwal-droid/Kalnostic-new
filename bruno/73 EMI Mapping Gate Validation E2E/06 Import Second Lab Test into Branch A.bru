@@ -1,0 +1,38 @@
+meta {
+  name: 06 Import Second Lab Test into Branch A
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/import
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+body:json {
+  {
+    "labTestIds": ["{{labTestBId}}"]
+  }
+}
+
+tests {
+  test("import accepted", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201]);
+  });
+}
+
+docs {
+  **Import the second test into branch A's list** (the operator token is
+  branch-scoped to branch A, from folder 71). This gives branch A a second branch
+  lab test — the one the next adapter will map instead of the order's test. Its
+  `branchLabTestId` is resolved in the next step.
+}

@@ -903,3 +903,33 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    */
   cancelBlockedReason: 'RESULT_DONE' | null;
 };
+
+/**
+ * One branch's row in the Create Order cross-branch dues breakdown: the patient's
+ * outstanding total at that branch, how many orders carry it, and the oldest such
+ * order's date. `isCurrentBranch` pins the active branch to the top and is the
+ * only branch where dues can be collected (`Collect Here = Yes`); `isActive`
+ * reflects the branch's own ACTIVE status so a deactivated branch can be shown as
+ * "Inactive here." and never treated as a collection location.
+ */
+export interface BranchDueRow {
+  branchId: string;
+  branchName: string;
+  isActive: boolean;
+  isCurrentBranch: boolean;
+  orderCount: number;
+  totalDue: number;
+  oldestDueOrderDate: Date | null;
+}
+
+/**
+ * The Create Order patient-dues read: the active-branch outstanding (`outstanding`
+ * — drives the clear-dues cap + previous-dues gate), the business-wide total
+ * (`businessWideOutstanding` — collapses to `outstanding` without the cross-branch
+ * permission), and the per-branch `branches` breakdown for the dues modal.
+ */
+export interface PatientDuesResult {
+  outstanding: number;
+  businessWideOutstanding: number;
+  branches: BranchDueRow[];
+}

@@ -1,0 +1,38 @@
+meta {
+  name: 09 EMI Get Orders - Lab Test Not Linked
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{sampleBarcode}}
+}
+
+headers {
+  TOKEN: {{unmappedTestAdapterToken}}
+}
+
+tests {
+  test("rejected with lab-test error (s=400)", function () {
+    expect(res.body.s).to.equal("400");
+    expect(res.body.m).to.equal("The requested lab test is not linked to this lab adapter.");
+  });
+  test("no order is exposed", function () {
+    expect(res.body.orders).to.be.undefined;
+  });
+}
+
+docs {
+  **Lab-test gate — `GET /emi/orders`.** Scan the order with the adapter that is
+  mapped to branch A (so the branch is fine) but reports a *different* test
+  (`unmappedTestAdapterToken`). The order's test isn't one this adapter is
+  configured for, so the request is rejected:
+
+  `{ "s": "400", "m": "The requested lab test is not linked to this lab adapter." }`
+}

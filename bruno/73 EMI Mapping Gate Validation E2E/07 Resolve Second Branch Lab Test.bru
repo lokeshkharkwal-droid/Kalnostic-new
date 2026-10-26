@@ -1,0 +1,38 @@
+meta {
+  name: 07 Resolve Second Branch Lab Test
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/options?search=EMI Gate Other Test {{tatRunId}}&page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  search: EMI Gate Other Test {{tatRunId}}
+  page: 1
+  limit: 10
+}
+
+auth:bearer {
+  token: {{operatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) bru.setVar("branchLabTestBId", data[0].id);
+}
+
+tests {
+  test("second branch lab test resolved", function () {
+    expect(res.body.data).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Resolve the second branch lab test's id** (`branchLabTestBId`) by its unique
+  name. This is the test the *test-unmapped* adapter will report — NOT the order's
+  test. Captures **`branchLabTestBId`**.
+}

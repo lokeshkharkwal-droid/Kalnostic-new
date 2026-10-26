@@ -1,0 +1,42 @@
+meta {
+  name: 03 EMI Get Orders - Branch Not Registered
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{sampleBarcode}}
+}
+
+headers {
+  TOKEN: {{unlinkedBranchAdapterToken}}
+}
+
+tests {
+  test("rejected with branch error (s=400)", function () {
+    expect(res.body.s).to.equal("400");
+    expect(res.body.m).to.equal("The requesting branch is not registered with this lab adapter.");
+  });
+  test("no order is exposed", function () {
+    expect(res.body.orders).to.be.undefined;
+  });
+}
+
+docs {
+  **Branch gate — `GET /emi/orders`.** Scan the branch-A order's barcode
+  (`sampleBarcode`) with the adapter mapped only to branch **B**
+  (`unlinkedBranchAdapterToken`). The branch currently processing the order (A) is
+  not in this adapter's branch mappings, so the request is rejected up-front and no
+  order is returned:
+
+  `{ "s": "400", "m": "The requesting branch is not registered with this lab adapter." }`
+
+  This is the "Branch A's mapping does not authorise Branch B" rule from the other
+  direction — an adapter scoped to B cannot read an order being processed at A.
+}

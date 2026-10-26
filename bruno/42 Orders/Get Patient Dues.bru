@@ -19,15 +19,37 @@ auth:bearer {
 }
 
 docs {
-  Returns the patient's outstanding **previous dues** **business-wide** (every
-  branch in the tenant) — `{ outstanding }`, the summed positive
-  `netAmount − paidAmount` balance across their active, non-cancelled orders
-  (`ORDER`/`APPOINTMENT`). Used by the Create Order screen (/registration/create)
-  as the "Clear Previous Dues" maximum and to pre-validate the branch's
-  Previous-Dues rules (Registration Settings → Charges & Reductions).
+  Returns the patient's outstanding **previous dues** for the Create Order screen
+  (/registration/create), resolved both at the active branch and business-wide:
 
-  Tenant-wide (NOT branch-scoped) so the value equals the patient's true total
-  dues to the business — the same figure the cap, the previous-dues gate, the
-  overpayment guard, and the oldest-first settlement all use. The tenant comes
-  from the JWT. 422 `ORDER_PATIENT_NOT_FOUND` if the patient is not in the tenant.
+  ```
+  {
+    "outstanding": number,              // CURRENT branch only — the "Clear
+                                        //   Previous Dues" cap + the previous-dues
+                                        //   gate (dues are collected/cleared per
+                                        //   branch, so these ignore other branches)
+    "businessWideOutstanding": number,  // all branches (collapses to `outstanding`
+                                        //   without the cross-branch permission)
+    "branches": [                       // per-branch breakdown (active branch first;
+      {                                 //   only the active branch without permission)
+        "branchId": string,
+        "branchName": string,
+        "isActive": boolean,            // false ⇒ "Inactive here." (never collectable)
+        "isCurrentBranch": boolean,     // true ⇒ Collect Here = Yes
+        "orderCount": number,           // orders carrying a due at this branch
+        "totalDue": number,
+        "oldestDueOrderDate": string | null
+      }
+    ]
+  }
+  ```
+
+  Each figure is the summed positive `netAmount − paidAmount` across the patient's
+  active, non-cancelled orders (`ORDER`/`APPOINTMENT`). Cross-branch visibility is
+  gated by `View cross-branch results`
+  (`registration:create_order_patient_details__view_cross_branch_results`); without
+  it, `businessWideOutstanding` equals `outstanding` and `branches` contains only
+  the active branch — other branches' dues are never leaked. Branch + cross-branch
+  permission come from the JWT. 422 `ORDER_PATIENT_NOT_FOUND` if the patient is not
+  in the tenant.
 }

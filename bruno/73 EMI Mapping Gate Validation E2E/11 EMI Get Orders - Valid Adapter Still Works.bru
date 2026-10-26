@@ -1,0 +1,37 @@
+meta {
+  name: 11 EMI Get Orders - Valid Adapter Still Works
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{emiBaseUrl}}/emi/orders?specimen_id={{sampleBarcode}}
+  body: none
+  auth: none
+}
+
+params:query {
+  specimen_id: {{sampleBarcode}}
+}
+
+headers {
+  TOKEN: {{flowAdapterToken}}
+}
+
+tests {
+  test("valid adapter still sees the order (s=200)", function () {
+    expect(res.body.s).to.equal("200");
+    expect(res.body.orders).to.be.an("array").with.length.of.at.least(1);
+  });
+  test("the order's mapped test is still listed", function () {
+    expect(res.body.orders[0].ut_ids).to.be.an("array").with.length.of.at.least(1);
+  });
+}
+
+docs {
+  **Positive control — the valid adapter is unaffected.** Re-scan the same order
+  with the ORIGINAL `flowAdapterToken` (branch A + the order's test, from folder 71
+  step 25). The gate passes and the order is returned with a non-empty `ut_ids`,
+  proving the new validation only rejects mis-mapped adapters and preserves correct
+  requests.
+}

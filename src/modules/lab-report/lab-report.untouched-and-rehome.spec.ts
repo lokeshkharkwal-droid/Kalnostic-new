@@ -132,7 +132,7 @@ describe('LabReportService.isReportUntouched - a report returned for repeat star
       category: { notIn: ['LOCK', 'UNLOCK'] },
     });
     // Any other note (ORDER, SAMPLE, TECH, ...) still counts: nothing narrows it.
-    const where = whereOf(tx, 'labReportNote') as Record<string, unknown>;
+    const where = whereOf(tx, 'labReportNote');
     expect(where).not.toHaveProperty('OR');
     expect(where).not.toHaveProperty('deletedAt');
   });

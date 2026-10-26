@@ -899,7 +899,10 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
   );
 
   it('assign barcode is refused on a copy received from another branch, even to re-save the same value', async () => {
-    const { tx, service } = assignOn({ status: 'ACCEPTED', sourceTransferId: 'tr1' });
+    const { tx, service } = assignOn({
+      status: 'ACCEPTED',
+      sourceTransferId: 'tr1',
+    });
     await expect(
       service.assignBarcode(['s1'], 't1', 'p1', {}),
     ).rejects.toBeInstanceOf(SampleBarcodeLockedException);
@@ -914,7 +917,9 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
     };
     jest
       .spyOn(
-        service as unknown as { findById: (...a: unknown[]) => Promise<unknown> },
+        service as unknown as {
+          findById: (...a: unknown[]) => Promise<unknown>;
+        },
         'findById',
       )
       .mockResolvedValue({ id: 's1' });
