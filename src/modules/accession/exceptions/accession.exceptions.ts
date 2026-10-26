@@ -59,7 +59,8 @@ export class InvalidSampleTransitionException extends KaltrosException {
 
 /**
  * 422 — a sample already sent to another branch (`SENT_INTERNAL`) can only be
- * Retrieved (and only before the receiving branch has received it). Extends
+ * Retrieved (and only before the receiving branch has received it) or, once the
+ * receiving branch sent it back, repeated / flagged as an error. Extends
  * {@link InvalidSampleTransitionException} so group actions that "skip invalid"
  * samples still skip it instead of failing the whole batch.
  */
@@ -69,7 +70,7 @@ export class SampleSentToBranchException extends InvalidSampleTransitionExceptio
     super(
       action as SampleAction,
       from,
-      `This sample has been sent to another branch, so "${action}" is not allowed. It can only be retrieved before the receiving branch receives it, or returned by the receiving branch.`,
+      `This sample has been sent to another branch, so "${action}" is not allowed. It can only be retrieved before the receiving branch receives it. Once the receiving branch has sent it back, it can also be repeated (if the receiving branch asked for a repeat) or flagged as an error (if it rejected it).`,
       'SAMPLE_SENT_TO_BRANCH',
     );
   }
@@ -165,6 +166,57 @@ export class TransferItemRemovedException extends KaltrosException {
 }
 
 /**
+ * 422 — the all-or-nothing "apply center changes" was refused because ONE tube could
+ * not be done (already received, sent back, no permission, ...). Nothing was changed;
+ * the message names the tube and says why, and `reasonCode` is the underlying error.
+ */
+export class CenterChangesRefusedException extends KaltrosException {
+  constructor(accessionNo: string, reason: string, reasonCode: string) {
+    super(
+      'CENTER_CHANGES_REFUSED',
+      `Nothing was changed. Tube ${accessionNo}: ${reason}`,
+      { accessionNo, reasonCode },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — an INTERNAL transfer that is still In-Transit cannot be picked up yet: the
+ * sending branch has not chosen a logistics type, so how it travels is undecided and
+ * the receiving branch does not see it. It becomes available once a logistics type
+ * is set (at Send, or through Assign / Edit Center). Skippable by group "skip
+ * invalid" actions.
+ */
+export class TransferLogisticsMissingException extends KaltrosException {
+  constructor(transferId: string, action: TransferAction) {
+    super(
+      'TRANSFER_LOGISTICS_MISSING',
+      'Logistics type not set by the sending branch yet.',
+      { id: transferId, action },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — an OUTSOURCE transfer that has no center and / or no logistics type yet cannot be
+ * Picked Up / Received / Accepted (the way an INTERNAL transfer needs a destination and a
+ * logistics type). Both are optional when the sample is outsourced and are set later through
+ * Assign Center. Skippable by group "skip invalid" actions.
+ */
+export class TransferOutsourceNotAssignedException extends KaltrosException {
+  constructor(transferId: string, action: TransferAction, missing: string[]) {
+    super(
+      'TRANSFER_OUTSOURCE_NOT_ASSIGNED',
+      `This outsource transfer has no ${missing.join(' and no ')} yet. Use Assign Center in In-House Orders to set it, then try again.`,
+      { id: transferId, action, missing },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 403 — the caller is working as a branch that has no say in this internal
  * transfer. Pick up / receive / accept / reject / repeat belong to the receiving
  * (destination) branch; Retrieve and Assign Center belong to the sending branch.
@@ -174,7 +226,7 @@ export class TransferItemRemovedException extends KaltrosException {
 export class TransferWrongBranchException extends KaltrosException {
   constructor(
     id: string,
-    action: TransferAction | 'retrieve' | 'assign-center',
+    action: TransferAction | 'retrieve' | 'repeat' | 'error' | 'assign-center',
     role: 'receiver' | 'sender',
   ) {
     super(
@@ -194,13 +246,18 @@ export class TransferWrongBranchException extends KaltrosException {
  * so there is nothing for the sender to pull back. Skippable by group "skip invalid" actions.
  */
 export class RetrieveBlockedException extends InvalidSampleTransitionException {
-  constructor(from: SampleStatus, reason: 'RECEIVED' | 'RETURNED') {
+  constructor(
+    from: SampleStatus,
+    reason: 'RECEIVED' | 'RETURNED' | 'SENT_BACK',
+  ) {
     super(
       'retrieve',
       from,
       reason === 'RECEIVED'
         ? 'The receiving branch has already received this sample, so it can no longer be retrieved.'
-        : 'This sample is no longer at another branch, so there is nothing to retrieve. Collect it again if it needs repeating.',
+        : reason === 'SENT_BACK'
+          ? 'The receiving branch has already sent this sample back, so there is nothing to retrieve. Repeat it (if the receiving branch asked for a repeat) or flag it as an error (if it rejected it).'
+          : 'This sample is no longer at another branch, so there is nothing to retrieve. Collect it again if it needs repeating.',
       'SAMPLE_RETRIEVE_BLOCKED',
     );
   }
@@ -265,8 +322,24 @@ export class SampleRetrieveBlockedByResultException extends InvalidSampleTransit
  * Skippable by group "skip invalid" actions.
  */
 export class SendBlockedException extends InvalidSampleTransitionException {
-  constructor(from: SampleStatus, reason: string) {
-    super('send', from, reason, 'SAMPLE_SEND_BLOCKED');
+  /** `action` names the dispatch that was refused (Send by default; Forward / Outsource too). */
+  constructor(
+    from: SampleStatus,
+    reason: string,
+    action: 'send' | 'forward' | 'outsource' = 'send',
+  ) {
+    super(action, from, reason, 'SAMPLE_SEND_BLOCKED');
+  }
+}
+
+/**
+ * 422 — the destination branch does not offer every test on the tube (it has no active
+ * Lab Test List entry for it), so the tube cannot be sent / re-addressed there, and the
+ * receiving branch cannot accept it. Skippable by group "skip invalid" actions.
+ */
+export class DestinationLacksTestException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus, message: string) {
+    super('send', from, message, 'DESTINATION_LACKS_TEST');
   }
 }
 
@@ -302,12 +375,50 @@ export class InvalidTransferTransitionException extends KaltrosException {
  * has already received/accepted it or it was returned/rejected.
  */
 export class TransferNotEditableException extends KaltrosException {
-  constructor(id: string, status: TransferStatus) {
+  constructor(id: string, status: TransferStatus, outsource = false) {
     super(
       'TRANSFER_NOT_EDITABLE',
-      'The destination of this transfer can no longer be changed because the receiving branch has already received it or it has been closed.',
+      outsource
+        ? 'The center of this outsource transfer can no longer be changed because the outside lab has already received it or it has been closed.'
+        : 'The destination of this transfer can no longer be changed because the receiving branch has already received it or it has been closed.',
       { id, status },
       HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the transfer's center is not the one the Edit Center dialog was showing: it was
+ * changed by someone else (or in another tab) after the dialog opened. Refusing keeps a
+ * stale screen from silently putting the tube back to the old branch.
+ */
+export class TransferCenterChangedException extends KaltrosException {
+  constructor(
+    id: string,
+    expectedBranchId: string | null,
+    currentBranchId: string | null,
+  ) {
+    super(
+      'TRANSFER_CENTER_CHANGED',
+      'The center of this tube was changed by someone else after this dialog was opened. Close the dialog and open it again to see the current center.',
+      { id, expectedBranchId, currentBranchId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 409 — the database turned the Assign / Edit Center request away because another request
+ * was changing the same rows at that moment (a deadlock or write conflict). The whole
+ * request was rolled back, so nothing changed and the user can simply try again.
+ */
+export class CenterChangesBusyException extends KaltrosException {
+  constructor() {
+    super(
+      'CENTER_CHANGES_BUSY',
+      'Someone else is changing these tubes at this moment. Nothing was changed - please try again.',
+      undefined,
+      HttpStatus.CONFLICT,
     );
   }
 }

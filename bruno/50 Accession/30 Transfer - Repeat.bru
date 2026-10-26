@@ -41,4 +41,27 @@ docs {
   with 422 `SAMPLE_ORDER_CANCELLED` (a group call with `skipInvalid` skips it with
   that reason) and nothing changes; Store then Discard stay open. Before Accept
   (transfer only Received) the receiving branch can still Reject / Repeat.
+
+  **Sent – Repeated / Sent – Rejected (sender's tube after the receiving branch sends it back).**
+  When the receiving branch Repeats or Rejects an INTERNAL transfer (before or after
+  Accept), the SENDER's original tube is NOT moved to Repeat any more: it stays
+  `SENT_INTERNAL`, its transfer is closed as `REPEAT` / `REJECTED` (with the receiving
+  branch's reason), and the sender's list reads "Sent – Repeated" / "Sent – Rejected"
+  (the reason is the tooltip; the sender's history also gets a "returned by the
+  receiving branch" row, no status change). The report is already reset and back at the
+  sender, view-only until the sender decides. The sender then chooses:
+    - **Sent – Repeated:** `POST order-samples/:id/repeat` (tube -> Repeat);
+    - **Sent – Rejected:** `POST order-samples/:id/error` (tube -> Error, then Repeat).
+  Repeat is refused (422 `SAMPLE_SENT_TO_BRANCH`) on a Sent tube whose transfer is still
+  open or was rejected, and Error on one whose transfer is open or was repeated - even for a
+  forced group call. Only the SENDING branch may do it (403 `TRANSFER_WRONG_BRANCH`),
+  like Retrieve. Retrieve itself is REFUSED on a sent-back tube (422 `SAMPLE_RETRIEVE_BLOCKED`: it would only put the tube back to Accepted as if nothing had happened). The sender's Repeat / Error does NOT delete the receiving branch's
+  closed transfer; the referring panel is notified at this point (not when the receiving
+  branch clicked). On a cancelled order the tube stays frozen: Repeat, Error and Retrieve are all refused.
+
+  **Back on the sender's own copy (Phase 2).** After the existing clear-down (values, notes, attachments and flags removed,
+  report back to Pending) and the move back, the report points at the SENDER's Branch Master Data copy of the test again
+  (`labTestId`) and `performingBranchLabTestId` is cleared (the order line's entry applies). A panel member's
+  `memberBranchLabTestId` returns to the member entry it had. The sender's TAT clock restarts when it accepts the
+  tube again. Still allowed only until a report has a validated result (Result Done, Approved, Published).
 }

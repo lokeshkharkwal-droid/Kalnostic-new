@@ -88,4 +88,20 @@ docs {
 
   Requires a confirmed diagnostic order to exist first (Orders folder) so samples
   have been generated.
+
+  **Where did I send it (sender's filters).** `destinationBranchId` (UUID): only samples Sent RIGHT NOW to that
+  branch (status Sent + a live INTERNAL transfer to it; a sample the receiving branch sent back, "Sent - Repeated",
+  still counts because it stays Sent until the sender decides; one the sender repeated or retrieved does not).
+  `externalPartnerName`: only samples Forwarded right now to a partner whose name contains the text (case-insensitive,
+  trimmed, max 200). `logisticsType`: now matches the TRANSFER's logistics type of a sample that is Sent / Forwarded /
+  Outsourced (a Send, Forward or Outsource records the logistics on the transfer, never on the sample; the sample's
+  own column is kept as an alternative for older rows). `outsourceCenterId` and `sendDate` / `forwardDate` /
+  `outsourceDate` already filtered on the transfer. All of them also apply to `/summary` (the tab counts) and
+  `/grouped`.
+
+  **Send details on every row.** The row's latest transfer (`transfers[0]`) now also carries
+  `externalPartnerName`, `sendDate`, `sendTime`, `sampleForm`, `logisticsType`, `logisticsPerson`, `createdAt`,
+  `outsourceCenterId` and the resolved names `destinationBranchName` (INTERNAL) and `outsourceCenterName`
+  (OUTSOURCE) - resolved in one batched lookup per page, deactivated branches / centers included; a name is absent /
+  null when there is nothing to name. The In-House list shows them in its "Send Details" column.
 }

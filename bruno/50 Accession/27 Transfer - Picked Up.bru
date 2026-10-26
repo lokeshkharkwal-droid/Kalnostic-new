@@ -40,4 +40,20 @@ docs {
   the other transfers are done. Bulk calls work through the ids in sorted order (so two
   overlapping bulk calls cannot deadlock); `succeeded` / `skipped` come back in the order
   the ids were sent.
+
+  **Logistics rule.** Picking up an INTERNAL transfer that is still `IN_TRANSIT` with no
+  logistics type is refused: 422 `TRANSFER_LOGISTICS_MISSING` ("Logistics type not set by
+  the sending branch yet."). The same on `transfers/bulk/pick-up`: with `skipInvalid: true`
+  the transfer is listed under `skipped` with that code and reason; without it the whole
+  call is refused. Receive and Accept can only follow Pick Up, so they cannot run ahead.
+  Transfers already Picked Up or later are not affected.
+
+  **An OUTSOURCE transfer must be assigned before it moves.** A sample can be outsourced with no center and no
+  logistics type (both optional, set later with Assign Center), but such a transfer can not be Picked Up / Received /
+  Accepted: Pick Up needs a center AND a logistics type, Receive and Accept need the center. Otherwise 422
+  `TRANSFER_OUTSOURCE_NOT_ASSIGNED`, "This outsource transfer has no center and no logistics type yet. Use Assign
+  Center in In-House Orders to set it, then try again." (naming only what is missing; `details.missing` lists it).
+  Nothing is changed. A bulk call with `skipInvalid` skips that transfer with this code and reason. This is the
+  outsource counterpart of an INTERNAL transfer needing a destination branch and a logistics type; Forward (EXTERNAL)
+  is not covered, and Repeat / Reject are not guarded. The free-text Update Status is not affected.
 }

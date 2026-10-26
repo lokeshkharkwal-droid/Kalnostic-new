@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { timestampRange } from '../../common/utils/date-range.util';
 import {
   AccessionGroupingMode,
+  AuditAction,
+  AuditModule,
   OrderSample,
   Prisma,
   SampleStatus,
@@ -10,10 +12,16 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
-import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import {
+  KaltrosException,
+  ValidationException,
+} from '../../common/exceptions/kaltros.exception';
 import { BranchService } from '../branch/branch.service';
 import { PermissionCheckService } from '../permissions/services/permission-check.service';
-import { ACCESSION_TRANSFER_KEY_GROUPS } from '../permissions/constants/module-permissions.constant';
+import {
+  ACCESSION_TRANSFER_KEY_GROUPS,
+  PERMISSION_KEYS,
+} from '../permissions/constants/module-permissions.constant';
 import { OrderSampleService } from './accession-sample.service';
 import {
   TransferAction,
@@ -29,6 +37,7 @@ import { TransferRepeatDto } from './dto/transfer-repeat.dto';
 import { TransferRejectDto } from './dto/transfer-reject.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { AssignCenterDto } from './dto/assign-center.dto';
+import { ApplyCenterChangesDto } from './dto/apply-center-changes.dto';
 import { OutsourceStatusDto } from './dto/outsource-status.dto';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 import {
@@ -41,6 +50,11 @@ import {
 } from './entities/sample-transfer.entity';
 import { barcodeGroupKey } from './utils/barcode-group-key';
 import {
+  HIDDEN_FROM_RECEIVER_WHERE,
+  isHiddenFromReceiver,
+} from './utils/receiver-visibility.util';
+import { missingOutsourceAssignment } from './utils/outsource-assignment.util';
+import {
   BulkActionResult,
   BulkSkippedItem,
 } from './entities/bulk-action-result.entity';
@@ -50,7 +64,10 @@ import {
   InvalidSampleTransitionException,
   InvalidTransferTransitionException,
   TransferOrderCancelledException,
+  CenterChangesRefusedException,
   TransferItemRemovedException,
+  TransferLogisticsMissingException,
+  TransferOutsourceNotAssignedException,
   TransferWrongBranchException,
   refusalMessage,
   OutsourceCenterNotFoundException,
@@ -58,6 +75,9 @@ import {
   TransferDestinationMissingException,
   TransferNotOutsourceException,
   TransferNotEditableException,
+  TransferCenterChangedException,
+  CenterChangesBusyException,
+  DestinationLacksTestException,
   SendBlockedException,
 } from './exceptions/accession.exceptions';
 import { inLockOrder, inRequestOrder } from './utils/request-order.util';
@@ -70,8 +90,34 @@ import {
   heldBranchesForCopy,
   isPreviousHolder,
 } from './utils/previous-holders.util';
+import { assertDestinationOffers } from './utils/destination-offers.util';
 
 /** Destination fields resolved once per Send/Forward/Outsource batch. */
+/** A checked Assign / Edit Center, ready to write (see `prepareCenterChange`). */
+/** Who made a center change, for the Audit-log entries (the role comes from the request). */
+interface CenterChangeActor {
+  roleKey?: string | null;
+  roleLabel?: string | null;
+}
+
+/** A deadlock or write conflict reported by the database (the request was rolled back). */
+function isDatabaseConflict(e: unknown): boolean {
+  if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034') {
+    return true;
+  }
+  const text = e instanceof Error ? e.message : '';
+  return /deadlock detected|40P01|could not serialize access/i.test(text);
+}
+
+interface PreparedCenterChange {
+  transferId: string;
+  transfer: SampleTransferWithRelations;
+  dto: AssignCenterDto;
+  data: Prisma.SampleTransferUpdateInput;
+  /** The destination the dialog was showing (`null` = none); undefined = do not check. */
+  expectedDestination?: string | null;
+}
+
 interface TransferDestination {
   destinationBranchId?: string | null;
   outsourceCenterId?: string | null;
@@ -307,8 +353,40 @@ export class SampleTransferService {
     tenantId: string,
     personId: string | null,
     dto: AssignCenterDto,
-    actor?: { branchId: string | null; profileKey: string | null },
+    actor?: {
+      branchId: string | null;
+      profileKey: string | null;
+      roleKey?: string | null;
+      roleLabel?: string | null;
+    },
   ): Promise<SampleTransferWithRelations> {
+    const prepared = await this.prepareCenterChange(
+      transferId,
+      tenantId,
+      personId,
+      dto,
+      actor,
+    );
+    await this.prisma.withTenant(tenantId, (tx) =>
+      this.persistCenterChange(tx, tenantId, personId, prepared, actor),
+    );
+    return this.findTransferById(transferId, tenantId);
+  }
+
+  /**
+   * Every check of an Assign / Edit Center (sender branch, cancelled order, removed
+   * test, the In-Transit / Picked Up window, permission, destination rules) and the
+   * data to write - without writing anything. Shared by the single Assign Center and
+   * the all-or-nothing "apply center changes".
+   */
+  private async prepareCenterChange(
+    transferId: string,
+    tenantId: string,
+    personId: string | null,
+    dto: AssignCenterDto,
+    actor?: { branchId: string | null; profileKey: string | null },
+    expectedDestination?: string | null,
+  ): Promise<PreparedCenterChange> {
     const transfer = await this.findTransferById(transferId, tenantId);
     // Choosing / changing where an INTERNAL transfer goes is the SENDING branch's
     // call (the branch that created it), never the receiver's or a bystander's.
@@ -344,15 +422,32 @@ export class SampleTransferService {
       throw new TransferItemRemovedException(transferId, 'assign-center');
     }
     // An INTERNAL transfer's destination can only change until the receiving
-    // branch has received it (same window as Retrieve).
+    // branch has received it (same window as Retrieve). An OUTSOURCE transfer follows
+    // the same window: once the outside lab has it, or sent it back (Repeated /
+    // Rejected), there is nothing left to re-address.
     if (
-      transfer.kind === TransferKind.INTERNAL &&
+      (transfer.kind === TransferKind.INTERNAL ||
+        transfer.kind === TransferKind.OUTSOURCE) &&
       transfer.transferStatus !== TransferStatus.IN_TRANSIT &&
       transfer.transferStatus !== TransferStatus.PICKED_UP
     ) {
       throw new TransferNotEditableException(
         transferId,
         transfer.transferStatus,
+        transfer.kind === TransferKind.OUTSOURCE,
+      );
+    }
+    // The dialog must be showing the center the tube has NOW: if someone changed it
+    // since the dialog opened, refuse instead of writing the stale value over theirs.
+    if (
+      transfer.kind === TransferKind.INTERNAL &&
+      expectedDestination !== undefined &&
+      (transfer.destinationBranchId ?? null) !== expectedDestination
+    ) {
+      throw new TransferCenterChangedException(
+        transferId,
+        expectedDestination,
+        transfer.destinationBranchId ?? null,
       );
     }
     // Permission: setting a MISSING destination is "Assign … center"; changing an
@@ -401,6 +496,18 @@ export class SampleTransferService {
           PREVIOUS_HOLDER_MESSAGE,
         );
       }
+      // ... and only to a branch that offers every test on the tube. Checked when the
+      // destination CHANGES (a logistics-only save keeps the destination it already had).
+      if (dto.destinationBranchId !== transfer.destinationBranchId) {
+        await assertDestinationOffers(
+          this.prisma,
+          tenantId,
+          [transfer.sampleId],
+          dto.destinationBranchId,
+          'sender',
+          transfer.sample.status,
+        );
+      }
       data.destinationBranchId = dto.destinationBranchId;
     } else if (transfer.kind === TransferKind.OUTSOURCE) {
       if (!dto.outsourceCenterId) {
@@ -414,33 +521,484 @@ export class SampleTransferService {
       }
       data.externalPartnerName = dto.externalPartnerName;
     }
-    await this.prisma.withTenant(tenantId, async (tx) => {
-      await tx.sampleTransfer.update({ where: { id: transferId }, data });
-      // Keep the source sample's processing branch in step when an INTERNAL
-      // destination is assigned (or changed) after dispatch, mirroring the
-      // dispatch-time behaviour so the origin branch's list stays accurate.
-      if (transfer.kind === TransferKind.INTERNAL && dto.destinationBranchId) {
-        await tx.orderSample.update({
-          where: { id: transfer.sampleId },
+    return { transferId, transfer, dto, data, expectedDestination };
+  }
+
+  /**
+   * Writes a prepared Assign / Edit Center inside the caller's transaction. For an
+   * INTERNAL transfer the update is conditional on the transfer still being
+   * In-Transit / Picked Up, so a receiving branch that received it in the meantime
+   * makes this refuse (and the caller's transaction roll back) instead of changing
+   * a transfer it no longer owns.
+   */
+  private async persistCenterChange(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    prepared: PreparedCenterChange,
+    actor?: CenterChangeActor,
+  ): Promise<void> {
+    const { transferId, transfer, dto, data, expectedDestination } = prepared;
+    let resetFromPickedUp = false;
+    if (transfer.kind === TransferKind.INTERNAL) {
+      const updated = await tx.sampleTransfer.updateMany({
+        where: {
+          id: transferId,
+          deletedAt: null,
+          transferStatus: {
+            in: [TransferStatus.IN_TRANSIT, TransferStatus.PICKED_UP],
+          },
+          // Still the center the dialog showed: a change that landed after the
+          // check in prepareCenterChange matches nothing here.
+          ...(expectedDestination !== undefined
+            ? { destinationBranchId: expectedDestination }
+            : {}),
+        },
+        data,
+      });
+      if (updated.count !== 1) {
+        const now = await tx.sampleTransfer.findFirst({
+          where: { id: transferId, deletedAt: null },
+          select: { transferStatus: true, destinationBranchId: true },
+        });
+        const editable =
+          now?.transferStatus === TransferStatus.IN_TRANSIT ||
+          now?.transferStatus === TransferStatus.PICKED_UP;
+        if (
+          now &&
+          editable &&
+          expectedDestination !== undefined &&
+          now.destinationBranchId !== expectedDestination
+        ) {
+          throw new TransferCenterChangedException(
+            transferId,
+            expectedDestination,
+            now.destinationBranchId,
+          );
+        }
+        throw new TransferNotEditableException(
+          transferId,
+          transfer.transferStatus,
+        );
+      }
+      // A transfer the first branch had already PICKED UP, re-addressed to a different
+      // branch, starts over at In-Transit: the new branch has not picked it up, and the
+      // old branch's pick-up (who, when) must not be shown as the new branch's. Done as
+      // its own conditional write so it follows the status as it is NOW, not as it was
+      // read when the dialog was prepared.
+      if (
+        dto.destinationBranchId &&
+        dto.destinationBranchId !== transfer.destinationBranchId
+      ) {
+        const reset = await tx.sampleTransfer.updateMany({
+          where: {
+            id: transferId,
+            deletedAt: null,
+            transferStatus: TransferStatus.PICKED_UP,
+          },
           data: {
-            processingBranchId: dto.destinationBranchId,
-            updatedBy: personId,
+            transferStatus: TransferStatus.IN_TRANSIT,
+            pickedUpBy: null,
+            pickedUpAt: null,
           },
         });
+        resetFromPickedUp = reset.count === 1;
       }
-      // Record the modal's optional note/attachment on the sample history (no
-      // status change), exactly as dispatch does — SampleTransfer has no history
-      // table, so the note lives on the sample's audit trail.
-      await this.samples.recordNoteInTx(
+    } else {
+      await tx.sampleTransfer.update({ where: { id: transferId }, data });
+    }
+    // Keep the source sample's processing branch in step when an INTERNAL
+    // destination is assigned (or changed) after dispatch, mirroring the
+    // dispatch-time behaviour so the origin branch's list stays accurate.
+    if (transfer.kind === TransferKind.INTERNAL && dto.destinationBranchId) {
+      await tx.orderSample.update({
+        where: { id: transfer.sampleId },
+        data: {
+          processingBranchId: dto.destinationBranchId,
+          updatedBy: personId,
+        },
+      });
+    }
+    if (
+      transfer.kind === TransferKind.INTERNAL &&
+      dto.destinationBranchId &&
+      dto.destinationBranchId !== transfer.destinationBranchId
+    ) {
+      await this.recordReAddressInTx(
         tx,
         tenantId,
         personId,
-        transfer.sampleId,
-        'assign-center',
-        { notes: dto.notes, attachmentUrl: dto.attachmentUrl },
+        prepared,
+        resetFromPickedUp,
+        actor,
       );
+    }
+    // Record the modal's optional note/attachment on the sample history (no
+    // status change), exactly as dispatch does — SampleTransfer has no history
+    // table, so the note lives on the sample's audit trail.
+    await this.samples.recordNoteInTx(
+      tx,
+      tenantId,
+      personId,
+      transfer.sampleId,
+      'assign-center',
+      { notes: dto.notes, attachmentUrl: dto.attachmentUrl },
+    );
+  }
+
+  /**
+   * Records an INTERNAL transfer's change of destination, inside the caller's
+   * transaction (so it commits or rolls back with the change): a row on the sender's
+   * sample history, and Audit-log entries - one under the sender's branch always, one
+   * under the OLD destination when it had been able to see the transfer (it now loses
+   * it), and one under the NEW destination when it can see it now. Each names the
+   * sample, order, both branches and the stage, and says when a Picked-Up transfer was
+   * started over at In-Transit. Skipped (audit only) when there is no acting person.
+   */
+  private async recordReAddressInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    prepared: PreparedCenterChange,
+    resetFromPickedUp: boolean,
+    actor?: CenterChangeActor,
+  ): Promise<void> {
+    const { transferId, transfer, dto } = prepared;
+    const fromId = transfer.destinationBranchId;
+    const toId = dto.destinationBranchId as string;
+    const sample = await tx.orderSample.findFirst({
+      where: { id: transfer.sampleId, tenantId },
+      select: {
+        id: true,
+        branchId: true,
+        status: true,
+        accessionNo: true,
+        order: { select: { orderCode: true } },
+      },
     });
-    return this.findTransferById(transferId, tenantId);
+    if (!sample) return;
+    const branches = await tx.branch.findMany({
+      where: {
+        id: {
+          in: [sample.branchId, fromId, toId].filter(
+            (id): id is string => !!id,
+          ),
+        },
+        tenantId,
+      },
+      select: { id: true, name: true },
+    });
+    const nameOf = (id: string | null): string | null =>
+      id ? (branches.find((b) => b.id === id)?.name ?? null) : null;
+    const senderName = nameOf(sample.branchId) ?? 'the sending branch';
+    const fromName = nameOf(fromId);
+    const toName = nameOf(toId) ?? 'another branch';
+    const stage = resetFromPickedUp ? 'Picked Up' : 'In-Transit';
+    const logistics = dto.logisticsType ?? transfer.logisticsType ?? null;
+    const reset = resetFromPickedUp
+      ? ' (it had been picked up, so it starts over at In-Transit)'
+      : '';
+
+    const text = fromName
+      ? `Center changed from ${fromName} to ${toName} while ${stage}${reset}`
+      : `Center assigned: ${toName}`;
+    await tx.orderSampleStatusHistory.create({
+      data: {
+        tenantId,
+        branchId: sample.branchId,
+        sampleId: sample.id,
+        action: 'assign-center',
+        toStatus: sample.status,
+        fromStatus: sample.status,
+        notes: text,
+        changedBy: personId,
+      },
+    });
+    if (!personId) return;
+
+    const base = {
+      sampleId: sample.id,
+      accessionNo: sample.accessionNo,
+      orderCode: sample.order?.orderCode ?? null,
+      transferId,
+      stage,
+      fromBranchId: fromId,
+      fromBranch: fromName,
+      toBranchId: toId,
+      toBranch: toName,
+      pickedUpReset: resetFromPickedUp,
+    };
+    const entries: {
+      branchId: string | null;
+      description: string;
+      side: string;
+    }[] = [
+      {
+        branchId: sample.branchId,
+        side: 'sender',
+        description: fromName
+          ? `Changed the center of sample ${sample.accessionNo} from ${fromName} to ${toName} while ${stage}${reset}`
+          : `Assigned center ${toName} to sample ${sample.accessionNo}`,
+      },
+    ];
+    // The old destination saw it (a transfer In-Transit with no logistics type is
+    // hidden from it) and now loses it.
+    const oldSawIt =
+      !!fromId &&
+      !isHiddenFromReceiver({
+        kind: TransferKind.INTERNAL,
+        transferStatus: resetFromPickedUp
+          ? TransferStatus.PICKED_UP
+          : transfer.transferStatus,
+        logisticsType: transfer.logisticsType,
+      });
+    if (oldSawIt) {
+      entries.push({
+        branchId: fromId,
+        side: 'old-receiver',
+        description: `Sample ${sample.accessionNo} was re-addressed by ${senderName} to ${toName}; it is no longer coming to ${fromName ?? 'your branch'} (it was ${stage})`,
+      });
+    }
+    // The new destination sees it from now on (In-Transit needs a logistics type).
+    const newSeesIt = !isHiddenFromReceiver({
+      kind: TransferKind.INTERNAL,
+      transferStatus: resetFromPickedUp
+        ? TransferStatus.IN_TRANSIT
+        : transfer.transferStatus,
+      logisticsType: logistics,
+    });
+    if (newSeesIt) {
+      entries.push({
+        branchId: toId,
+        side: 'new-receiver',
+        description: `Sample ${sample.accessionNo} is now on its way to ${toName}, re-addressed by ${senderName}${fromName ? ` (it was going to ${fromName})` : ''}`,
+      });
+    }
+    for (const e of entries) {
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          branchId: e.branchId,
+          module: AuditModule.ACCESSION,
+          action: AuditAction.UPDATE,
+          description: e.description,
+          actorPersonId: personId,
+          actorRoleKey: actor?.roleKey ?? null,
+          actorRoleLabel: actor?.roleLabel ?? null,
+          resourceId: sample.id,
+          metadata: { ...base, side: e.side },
+        },
+      });
+    }
+  }
+
+  /**
+   * The Assign / Edit Center dialog's Confirm as ONE all-or-nothing request: each
+   * ticked tube gets its own center (`changes`), each un-ticked tube is retrieved
+   * (`retrieveSampleIds`), and the logistics fields are shared by the changed tubes.
+   * Everything is checked first (sender branch, cancelled order, removed test, the
+   * In-Transit / Picked Up window, per-tube Assign / Update Center permission, and the
+   * Retrieve permission when anything is un-ticked), then written in ONE transaction
+   * with the writes conditional on the transfers still being In-Transit / Picked Up. If
+   * any tube cannot be done - including a receiving branch that received one in the
+   * meantime - nothing changes and the error names that tube
+   * (`CENTER_CHANGES_REFUSED`).
+   * @param actor the acting user's branch, profile and role (for permissions and the
+   *   Audit-log entries of the retrieves)
+   * @returns how many tubes got a new center and how many were retrieved
+   */
+  async applyCenterChanges(
+    tenantId: string,
+    personId: string | null,
+    dto: ApplyCenterChangesDto,
+    actor: {
+      branchId: string | null;
+      profileKey: string | null;
+      roleKey: string | null;
+      roleLabel: string | null;
+    },
+  ): Promise<{ changed: number; retrieved: number }> {
+    const changes = dto.changes ?? [];
+    const retrieveIds = [...new Set(dto.retrieveSampleIds ?? [])];
+    if (changes.length === 0 && retrieveIds.length === 0) {
+      throw new ValidationException('There is nothing to change.');
+    }
+    if (new Set(changes.map((c) => c.transferId)).size !== changes.length) {
+      throw new ValidationException(
+        'The same transfer appears twice in the center changes.',
+      );
+    }
+    const permCtx = {
+      tenantId,
+      personId: personId ?? '',
+      branchId: actor.branchId,
+      profileKey: actor.profileKey,
+    };
+    // Un-ticking a tube is a Retrieve: it needs that permission (the screen greys it
+    // out without it; this is the real guard).
+    if (retrieveIds.length > 0) {
+      await this.permissionCheck.assertAny(permCtx, [
+        PERMISSION_KEYS.ACC_IH_RETRIEVE,
+      ]);
+    }
+
+    // The accession number of a tube, to name it when it is the one that fails.
+    const accessionOfSample = async (
+      db: Pick<Prisma.TransactionClient, 'orderSample'>,
+      sampleId: string,
+    ): Promise<string> =>
+      (
+        await db.orderSample.findFirst({
+          where: { id: sampleId, tenantId },
+          select: { accessionNo: true },
+        })
+      )?.accessionNo ?? sampleId;
+    const refuse = (accessionNo: string, e: unknown): unknown =>
+      e instanceof KaltrosException
+        ? new CenterChangesRefusedException(
+            accessionNo,
+            refusalMessage(e),
+            e.errorCode,
+          )
+        : e;
+
+    // 1. Check every center change (reads only).
+    const prepared: PreparedCenterChange[] = [];
+    for (const c of changes) {
+      const shared = {
+        sendDate: dto.sendDate,
+        sendTime: dto.sendTime,
+        sampleForm: dto.sampleForm,
+        logisticsType: dto.logisticsType,
+        logisticsPerson: dto.logisticsPerson,
+        notes: dto.notes,
+        attachmentUrl: dto.attachmentUrl,
+      };
+      const one = Object.assign(new AssignCenterDto(), shared, {
+        destinationBranchId: c.destinationBranchId,
+        outsourceCenterId: c.outsourceCenterId,
+        externalPartnerName: c.externalPartnerName,
+      });
+      try {
+        prepared.push(
+          await this.prepareCenterChange(
+            c.transferId,
+            tenantId,
+            personId,
+            one,
+            { branchId: actor.branchId, profileKey: actor.profileKey },
+            c.expectedDestinationBranchId,
+          ),
+        );
+      } catch (e) {
+        const sample = await this.prisma.sampleTransfer.findFirst({
+          where: { id: c.transferId, tenantId },
+          select: { sample: { select: { accessionNo: true } } },
+        });
+        throw refuse(sample?.sample.accessionNo ?? c.transferId, e);
+      }
+    }
+    const retrieving = new Set(retrieveIds);
+    const clash = prepared.find((p) => retrieving.has(p.transfer.sampleId));
+    if (clash) {
+      throw new ValidationException(
+        'A tube cannot be retrieved and have its center changed in the same request.',
+      );
+    }
+
+    // 2. Write everything in ONE transaction; any refusal rolls all of it back.
+    //    The tubes are worked in ONE fixed order - ascending sample id, retrieves and
+    //    center changes together - whatever order the dialog listed them in. Two
+    //    overlapping Confirms that visited the same tubes in different orders would
+    //    otherwise each hold a row the other is waiting for (a deadlock -> HTTP 500).
+    //    Both kinds of work lock the transfer row, then the sample row, so one global
+    //    order by sample is enough.
+    const note = { notes: dto.notes, attachmentUrl: dto.attachmentUrl };
+    type Work =
+      | { sampleId: string; retrieve: true }
+      | { sampleId: string; retrieve: false; change: PreparedCenterChange };
+    const work: Work[] = [
+      ...retrieveIds.map((sampleId): Work => ({ sampleId, retrieve: true })),
+      ...prepared.map(
+        (change): Work => ({
+          sampleId: change.transfer.sampleId,
+          retrieve: false,
+          change,
+        }),
+      ),
+    ].sort((a, b) =>
+      a.sampleId < b.sampleId ? -1 : a.sampleId > b.sampleId ? 1 : 0,
+    );
+    // Names the failing tube for a refusal the service itself raised. A database error
+    // (a deadlock, a lost connection ...) has already aborted the transaction, so it
+    // is passed on untouched: running another query now would only fail with
+    // "current transaction is aborted" and hide the real error.
+    const refusedInTx = async (
+      tx: Prisma.TransactionClient,
+      sampleId: string,
+      e: unknown,
+    ): Promise<unknown> =>
+      e instanceof KaltrosException
+        ? refuse(await accessionOfSample(tx, sampleId), e)
+        : e;
+    try {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        for (const w of work) {
+          if (w.retrieve) {
+            // Only a sample sent to another branch and not yet received can be retrieved
+            // here (the plain Retrieve would otherwise walk any other sample back).
+            const open = await tx.sampleTransfer.findFirst({
+              where: {
+                sampleId: w.sampleId,
+                tenantId,
+                deletedAt: null,
+                kind: TransferKind.INTERNAL,
+                transferStatus: {
+                  in: [TransferStatus.IN_TRANSIT, TransferStatus.PICKED_UP],
+                },
+              },
+              select: { id: true },
+            });
+            try {
+              if (!open) {
+                throw new ValidationException(
+                  'This tube is not waiting at another branch (it may already have been received or sent back), so it cannot be retrieved here.',
+                );
+              }
+              await this.samples.retrieveOneInTx(
+                tx,
+                tenantId,
+                personId,
+                actor.branchId,
+                w.sampleId,
+                note,
+                { roleKey: actor.roleKey, roleLabel: actor.roleLabel },
+              );
+            } catch (e) {
+              throw await refusedInTx(tx, w.sampleId, e);
+            }
+          } else {
+            try {
+              await this.persistCenterChange(
+                tx,
+                tenantId,
+                personId,
+                w.change,
+                actor,
+              );
+            } catch (e) {
+              throw await refusedInTx(tx, w.sampleId, e);
+            }
+          }
+        }
+      });
+    } catch (e) {
+      // The database refused the whole request because another one held the same rows
+      // (deadlock / write conflict): nothing was written, so say "try again".
+      if (isDatabaseConflict(e)) throw new CenterChangesBusyException();
+      throw e;
+    }
+    return { changed: prepared.length, retrieved: retrieveIds.length };
   }
 
   /** Manually update an OUTSOURCE transfer's status (CR-3 — no sync). */
@@ -490,6 +1048,11 @@ export class SampleTransferService {
       where.originBranchId = branchId;
     } else {
       where.destinationBranchId = branchId;
+      // The receiving branch does not see an INTERNAL transfer that is still
+      // In-Transit with no logistics type: how it travels is not decided yet. It
+      // appears once the sender sets one (see receiver-visibility.util). The sender's
+      // own (outgoing) view is unchanged.
+      where.AND = [{ NOT: HIDDEN_FROM_RECEIVER_WHERE }];
     }
     // A day-only `dateTo` covers that whole day (see `timestampRange`).
     const sendDateRange = timestampRange(query.dateFrom, query.dateTo);
@@ -786,6 +1349,15 @@ export class SampleTransferService {
               sampleId,
               destination.destinationBranchId ?? null,
             );
+          } else {
+            // Forward / Outsource: like a Send, only while the report has not been
+            // worked on (the message tells the user why the sample cannot go out).
+            await this.samples.assertDispatchable(
+              tx,
+              tenantId,
+              sampleId,
+              sampleAction === 'forward' ? 'forward' : 'outsource',
+            );
           }
           sample = await this.samples.transitionInTx(
             tx,
@@ -898,9 +1470,6 @@ export class SampleTransferService {
   ): Promise<BulkActionResult<SampleTransferWithRelations>> {
     const skipped: BulkSkippedItem[] = [];
     let changed: string[];
-    // Sender-side samples returned to REPEAT by this call (notified once the
-    // transaction has committed).
-    const returnedSampleIds: string[] = [];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         // Pre-read transfer id → sample accession no so a skipped transfer can be
@@ -1012,6 +1581,32 @@ export class SampleTransferService {
             }
             throw refusal;
           }
+          // An INTERNAL transfer still In-Transit with no logistics type is hidden from
+          // the receiving branch (how it travels is undecided), so it cannot be picked
+          // up either - not through the API or a bulk call. Pick Up is the first step,
+          // so Receive and Accept cannot follow. A group "skip invalid" call skips it
+          // with this reason; a single action gets the 422. Transfers already picked
+          // up (or later) are not affected.
+          if (
+            action === 'pick-up' &&
+            transfer.destinationBranchId &&
+            isHiddenFromReceiver(transfer)
+          ) {
+            const refusal = new TransferLogisticsMissingException(
+              transfer.id,
+              action,
+            );
+            if (skipInvalid) {
+              skipped.push({
+                id,
+                accessionNo: accNoById.get(id) ?? null,
+                reason: refusalMessage(refusal),
+                code: refusal.errorCode,
+              });
+              continue;
+            }
+            throw refusal;
+          }
           // An INTERNAL transfer nobody was addressed to cannot be picked up,
           // received or accepted — the sender must assign a branch first (Assign
           // Center closes once the receiver has it, so it would be stuck).
@@ -1023,6 +1618,28 @@ export class SampleTransferService {
               action === 'accept')
           ) {
             throw new TransferDestinationMissingException(transfer.id);
+          }
+          // An OUTSOURCE transfer with no center / no logistics type yet cannot move
+          // either (both are set later through Assign Center): Pick Up needs a center
+          // and a logistics type, Receive and Accept a center. A group "skip invalid"
+          // call skips it with the reason; a single action gets the 422.
+          const notAssigned = missingOutsourceAssignment(transfer, action);
+          if (notAssigned.length > 0) {
+            const refusal = new TransferOutsourceNotAssignedException(
+              transfer.id,
+              action,
+              notAssigned,
+            );
+            if (skipInvalid) {
+              skipped.push({
+                id,
+                accessionNo: accNoById.get(id) ?? null,
+                reason: refusalMessage(refusal),
+                code: refusal.errorCode,
+              });
+              continue;
+            }
+            throw refusal;
           }
           const to = nextTransferStatus(action, transfer.transferStatus);
           if (!to) {
@@ -1048,6 +1665,35 @@ export class SampleTransferService {
           // and `returnToSender` would then find none (and skip the validated-result
           // check). Only INTERNAL transfers ever have a copy (`clonedSampleId`).
           let clonedSampleId: string | null = null;
+          if (
+            action === 'accept' &&
+            transfer.kind === TransferKind.INTERNAL &&
+            transfer.destinationBranchId
+          ) {
+            // Safety net for a tube sent before the destination was checked: this branch
+            // must offer every test on it, else it can not accept (Reject / Repeat instead).
+            try {
+              await assertDestinationOffers(
+                tx,
+                tenantId,
+                [transfer.sampleId],
+                transfer.destinationBranchId,
+                'receiver',
+                SampleStatus.SENT_INTERNAL,
+              );
+            } catch (e) {
+              if (skipInvalid && e instanceof DestinationLacksTestException) {
+                skipped.push({
+                  id,
+                  accessionNo: accNoById.get(id) ?? null,
+                  reason: refusalMessage(e),
+                  code: e.errorCode,
+                });
+                continue;
+              }
+              throw e;
+            }
+          }
           if (action === 'accept') {
             clonedSampleId = await this.cloneIntoDestination(
               tx,
@@ -1071,7 +1717,27 @@ export class SampleTransferService {
             // first one was already returned.
             if (skipInvalid) await tx.$executeRaw`SAVEPOINT return_to_sender`;
             try {
-              const returned = await this.returnToSender(
+              // Claim the transfer FIRST, on the status we validated. This is the
+              // serialisation point of two group actions that overlap on the same
+              // transfers: the second blocks on this row until the first commits, then
+              // matches nothing and (with skip invalid) skips the transfer instead of
+              // failing - and rolling back - its whole batch. (It used to be the
+              // sender's sample claim, which a send-back no longer touches.)
+              const claim = await tx.sampleTransfer.updateMany({
+                where: {
+                  id: transfer.id,
+                  deletedAt: null,
+                  transferStatus: transfer.transferStatus,
+                },
+                data: { updatedBy: personId },
+              });
+              if (claim.count !== 1) {
+                throw new InvalidTransferTransitionException(
+                  action,
+                  transfer.transferStatus,
+                );
+              }
+              await this.returnToSender(
                 tx,
                 tenantId,
                 personId,
@@ -1082,11 +1748,11 @@ export class SampleTransferService {
               if (skipInvalid) {
                 await tx.$executeRaw`RELEASE SAVEPOINT return_to_sender`;
               }
-              returnedSampleIds.push(...returned);
             } catch (e) {
               if (
                 skipInvalid &&
-                e instanceof InvalidSampleTransitionException
+                (e instanceof InvalidSampleTransitionException ||
+                  e instanceof InvalidTransferTransitionException)
               ) {
                 await tx.$executeRaw`ROLLBACK TO SAVEPOINT return_to_sender`;
                 await tx.$executeRaw`RELEASE SAVEPOINT return_to_sender`;
@@ -1137,9 +1803,6 @@ export class SampleTransferService {
       this.rethrowConflict(e);
       throw e;
     }
-    if (returnedSampleIds.length > 0) {
-      await this.samples.notifySamplesRepeated(tenantId, returnedSampleIds);
-    }
     // The work ran in sorted-id order; report it in the order the caller asked.
     const succeeded = await Promise.all(
       inRequestOrder(changed, transferIds, (x) => x).map((id) =>
@@ -1155,14 +1818,16 @@ export class SampleTransferService {
   /**
    * The receiving branch rejected/repeated an INTERNAL transfer — hand the test
    * back to the sender, inside the caller's transaction:
-   *  - before the receiver accepted (`RECEIVED`): the sender's original sample
-   *    goes `SENT_INTERNAL → REPEAT` (its report never left the sender, and stops
-   *    being hidden);
+   *  - before the receiver accepted (`RECEIVED`): nothing moves (its report never
+   *    left the sender); the return is recorded on the sender's sample history;
    *  - after the receiver accepted (`ACCEPTED`, Repeat or Reject): the receiver's
-   *    copy is voided, the report returns to the sender, and the original sample
-   *    goes to `REPEAT` — refused if the report has been worked on
-   *    (see `OrderSampleService.returnCopyToOrigin`).
-   * @returns the sender's original sample id(s) that went to `REPEAT`
+   *    copy is voided and the report returns to the sender, reset — refused if a
+   *    report has a validated result (see `OrderSampleService.returnCopyToOrigin`).
+   * Either way the sender's original sample STAYS `SENT_INTERNAL`: the caller closes
+   * the transfer as `REPEAT` / `REJECTED`, which the sender's list reads as
+   * "Sent – Repeated" / "Sent – Rejected". The sender then chooses Repeat, Error or
+   * Retrieve (`OrderSampleService.transitionInTx`), and only then is the referring
+   * panel told.
    * @throws SampleReturnBlockedException if a report at the receiver was worked on
    * @throws ValidationException if the receiver's copy cannot be found
    */
@@ -1173,7 +1838,7 @@ export class SampleTransferService {
     transfer: { id: string; sampleId: string; transferStatus: TransferStatus },
     reason: string | undefined,
     action: 'repeat' | 'reject',
-  ): Promise<string[]> {
+  ): Promise<void> {
     const why = reason ?? 'Returned by the receiving branch';
     if (transfer.transferStatus === TransferStatus.ACCEPTED) {
       const copies = await tx.orderSample.findMany({
@@ -1185,35 +1850,27 @@ export class SampleTransferService {
           "The receiving branch's copy of this sample was not found.",
         );
       }
-      const originIds: string[] = [];
       for (const copy of copies) {
-        originIds.push(
-          await this.samples.returnCopyToOrigin(
-            tx,
-            tenantId,
-            personId,
-            copy.id,
-            why,
-            action,
-          ),
+        await this.samples.returnCopyToOrigin(
+          tx,
+          tenantId,
+          personId,
+          copy.id,
+          why,
+          action,
         );
       }
-      return originIds;
+      return;
     }
-    await this.samples.transitionInTx(
+    // Before the receiver accepted: nothing moved (no copy, the report never left
+    // the sender). The sender's sample stays Sent; only its trail entry is written.
+    await this.samples.recordReturnedByReceiverInTx(
       tx,
       tenantId,
       personId,
       transfer.sampleId,
-      'repeat',
-      () => ({ data: {}, reason: why }),
-      {
-        force: true,
-        system: true,
-        notes: `Returned by the receiving branch: ${why}`,
-      },
+      why,
     );
-    return [transfer.sampleId];
   }
 
   /**
@@ -1331,6 +1988,15 @@ export class SampleTransferService {
       cloned.id,
       destBranch,
       source.branchId,
+    );
+
+    // From here the receiving branch works the tube with ITS OWN copy of the test
+    // (parameters, ranges, values, sample definition, department), not the sender's.
+    await this.samples.retargetCopyToReceivingSetup(
+      tx,
+      tenantId,
+      cloned.id,
+      destBranch,
     );
 
     return cloned.id;
