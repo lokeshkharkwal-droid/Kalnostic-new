@@ -9,14 +9,33 @@ import type { CollectionProgress } from '../../../common/utils/collection-progre
  */
 export const SAMPLE_LIST_INCLUDE = {
   tests: { where: { deletedAt: null } },
-  // Latest transfer only (id/kind/status): lets the in-house list tell whether a
-  // sent sample can still be retrieved / re-addressed (only until the receiving
-  // branch has received it) without fetching the full detail per row.
+  // Latest transfer only: lets the in-house list tell whether a sent sample can still
+  // be retrieved / re-addressed (only until the receiving branch has received it),
+  // whether it already has a center ("Edit Center" vs "Assign Center"), and why the
+  // receiving branch sent it back ("Sent - Repeated / Rejected" tooltip) without
+  // fetching the full detail per row.
   transfers: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'desc' },
     take: 1,
-    select: { id: true, kind: true, transferStatus: true },
+    select: {
+      id: true,
+      kind: true,
+      transferStatus: true,
+      destinationBranchId: true,
+      outsourceCenterId: true,
+      // Where / when / how it went, for the list's "Send details" column (the same facts the
+      // Internal Referral / Outsource pages show for the other side).
+      externalPartnerName: true,
+      sendDate: true,
+      sendTime: true,
+      sampleForm: true,
+      logisticsType: true,
+      logisticsPerson: true,
+      createdAt: true,
+      rejectionReason: true,
+      repeatReason: true,
+    },
   },
   order: {
     select: {
@@ -83,10 +102,25 @@ export const SAMPLE_INCLUDE = {
   },
 } satisfies Prisma.OrderSampleInclude;
 
-/** An accession sample list row with its test links + order/patient context. */
-export type OrderSampleListRow = Prisma.OrderSampleGetPayload<{
+/** What Prisma returns for one list row (the latest transfer carries ids only). */
+type OrderSampleListRowRaw = Prisma.OrderSampleGetPayload<{
   include: typeof SAMPLE_LIST_INCLUDE;
 }>;
+
+/**
+ * The latest transfer of a list row, plus the names the "Send details" column shows (the
+ * destination branch / outsource center are logical refs, so the names are resolved in one
+ * batched lookup per page - see `OrderSampleService.withTransferNames`; absent = not resolved).
+ */
+export type ListRowTransfer = OrderSampleListRowRaw['transfers'][number] & {
+  destinationBranchName?: string | null;
+  outsourceCenterName?: string | null;
+};
+
+/** An accession sample list row with its test links + order/patient context. */
+export type OrderSampleListRow = Omit<OrderSampleListRowRaw, 'transfers'> & {
+  transfers: ListRowTransfer[];
+};
 
 /** A fully-composed accession sample (tests + history + transfers + order). */
 export type OrderSampleWithRelations = Prisma.OrderSampleGetPayload<{

@@ -55,7 +55,14 @@
 //   use `->` (Latte) but also tolerate `.`. A `{define}` block renders against
 //   `[rootData, paramFrame]` so it sees globals plus its bound parameters.
 
-import { imageSizeStyleAttr, toText } from './pdf-document.util';
+import {
+  escapeHtmlKeepLines,
+  imageSizeStyleAttr,
+  toText,
+} from './pdf-document.util';
+
+/** An output expression that prints a reference range's Display text (`$r->reference_display`, `$row['reference_display']`). */
+const REFERENCE_DISPLAY_EXPR = /\breference_display\b/;
 
 type Scope = Record<string, unknown>;
 
@@ -557,7 +564,8 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
     case 'token': {
       const pageToken = PAGE_NUMBER_TOKENS[n.name];
       if (pageToken !== undefined) return pageToken;
-      return toText(lookupScope(n.name, scopes));
+      const text = toText(lookupScope(n.name, scopes));
+      return n.name === 'reference_display' ? escapeHtmlKeepLines(text) : text;
     }
     case 'out': {
       let v: unknown;
@@ -572,14 +580,22 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
       // transforms the string (unknown ones pass through unchanged).
       let str = toText(v);
       let escape = true;
+      let breakLines = false;
       for (const filter of n.filters) {
         if (filter === 'noescape') {
           escape = false;
+        } else if (filter === 'nl2br') {
+          breakLines = true;
         } else {
           str = applyFilter(filter, str);
         }
       }
-      return escape ? escapeHtml(str) : str;
+      if (!escape) return str;
+      // `|nl2br`: escape first, then turn each typed line break into <br />.
+      if (breakLines) return escapeHtml(str).replace(/\r\n|\r|\n/g, '<br />');
+      // A reference range typed over several lines keeps its lines, as in the flat engine.
+      if (REFERENCE_DISPLAY_EXPR.test(n.expr)) return escapeHtmlKeepLines(str);
+      return escapeHtml(str);
     }
     case 'if': {
       let cond: unknown;

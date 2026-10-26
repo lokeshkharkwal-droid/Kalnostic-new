@@ -47,7 +47,12 @@ function build() {
     );
   (service as unknown as { returnCopyToOrigin: unknown }).returnCopyToOrigin =
     returnCopy;
-  const notify = jest.spyOn(service, 'notifySamplesRepeated');
+  // The referring-panel announcement (`emitSampleFlagged`): nothing is announced
+  // when the refusal aborts the call.
+  const notify = jest.spyOn(
+    service as unknown as { emitSampleFlagged: (...a: unknown[]) => void },
+    'emitSampleFlagged',
+  );
   return { service, tx, returnCopy, notify };
 }
 
