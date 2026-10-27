@@ -127,6 +127,7 @@ export class RadiologyReportingDoctorService {
    * the doctor is then created in one tenant-scoped transaction.
    * @param tenantId owning tenant (from the JWT, never the body)
    * @param dto validated payload
+   * @param scopeBranchId active branch from the JWT (null/undefined for tenant-level callers); overrides `dto.branchId`
    * @returns the created doctor with its resolved classification names
    * @throws BranchNotFoundException if `branchId` isn't an active branch of this tenant
    * @throws DepartmentNotFoundException / CategoryNotFoundException /
@@ -138,9 +139,12 @@ export class RadiologyReportingDoctorService {
   async create(
     tenantId: string,
     dto: CreateRadiologyReportingDoctorDto,
+    scopeBranchId?: string | null,
   ): Promise<RadiologyReportingDoctorDetail> {
-    if (dto.branchId) {
-      await this.branchService.findById(dto.branchId, tenantId);
+    // A branch-scoped caller always creates into its own active branch.
+    const branchId = scopeBranchId ?? dto.branchId;
+    if (branchId) {
+      await this.branchService.findById(branchId, tenantId);
     }
     await this.validateClassification(
       tenantId,
@@ -151,7 +155,7 @@ export class RadiologyReportingDoctorService {
 
     const data: Prisma.RadiologyReportingDoctorUncheckedCreateInput = {
       tenantId,
-      branchId: dto.branchId ?? null,
+      branchId: branchId ?? null,
       doctorType: dto.doctorType ?? RadiologyReportingDoctorType.REPORTING,
       salutation: dto.salutation ?? null,
       firstName: dto.firstName,
@@ -211,10 +215,12 @@ export class RadiologyReportingDoctorService {
    * filter, a `doctorType` filter, and a `branchId` filter.
    * @param tenantId tenant scope
    * @param query pagination + filters
+   * @param scopeBranchId active branch from the JWT; restricts the list to that branch (tenant-level callers pass null)
    */
   async findAllForTenant(
     tenantId: string,
     query: ListRadiologyReportingDoctorsDto,
+    scopeBranchId?: string | null,
   ): Promise<PaginatedResult<RadiologyReportingDoctorListItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -226,7 +232,9 @@ export class RadiologyReportingDoctorService {
     if (query.status) where.status = query.status;
     if (query.departmentId) where.departmentId = query.departmentId;
     if (query.doctorType) where.doctorType = query.doctorType;
-    if (query.branchId) where.branchId = query.branchId;
+    // The caller's active branch (JWT) wins over the optional `branchId` filter.
+    const branchId = scopeBranchId ?? query.branchId;
+    if (branchId) where.branchId = branchId;
     if (query.search) {
       where.OR = [
         { firstName: { contains: query.search, mode: 'insensitive' } },
@@ -254,14 +262,21 @@ export class RadiologyReportingDoctorService {
    * linked department/category/sub-category names resolved.
    * @param id doctor id
    * @param tenantId tenant scope
-   * @throws RadiologyReportingDoctorNotFoundException if missing or soft-deleted
+   * @param scopeBranchId active branch from the JWT; doctors of other branches read as not found
+   * @throws RadiologyReportingDoctorNotFoundException if missing, soft-deleted, or outside the caller's branch
    */
   async findById(
     id: string,
     tenantId: string,
+    scopeBranchId?: string | null,
   ): Promise<RadiologyReportingDoctorDetail> {
     const doctor = await this.prisma.radiologyReportingDoctor.findFirst({
-      where: { id, tenantId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        ...(scopeBranchId ? { branchId: scopeBranchId } : {}),
+      },
     });
     if (!doctor) {
       throw new RadiologyReportingDoctorNotFoundException(id);
@@ -276,6 +291,7 @@ export class RadiologyReportingDoctorService {
    * @param id doctor id
    * @param tenantId tenant scope
    * @param dto partial update
+   * @param scopeBranchId active branch from the JWT; the doctor must belong to it
    * @throws RadiologyReportingDoctorNotFoundException if missing/soft-deleted
    * @throws BranchNotFoundException if a supplied `branchId` isn't an active branch
    *   of this tenant
@@ -289,8 +305,11 @@ export class RadiologyReportingDoctorService {
     id: string,
     tenantId: string,
     dto: UpdateRadiologyReportingDoctorDto,
+    scopeBranchId?: string | null,
   ): Promise<RadiologyReportingDoctorDetail> {
-    await this.findById(id, tenantId);
+    await this.findById(id, tenantId, scopeBranchId);
+    // A branch-scoped caller cannot move a doctor to another branch.
+    if (scopeBranchId) dto = { ...dto, branchId: scopeBranchId };
     if (dto.branchId !== undefined && dto.branchId !== null) {
       await this.branchService.findById(dto.branchId, tenantId);
     }
@@ -409,8 +428,9 @@ export class RadiologyReportingDoctorService {
   async remove(
     id: string,
     tenantId: string,
+    scopeBranchId?: string | null,
   ): Promise<RadiologyReportingDoctorDetail> {
-    await this.findById(id, tenantId);
+    await this.findById(id, tenantId, scopeBranchId);
     const removed = await this.prisma.withTenant(tenantId, (tx) =>
       tx.radiologyReportingDoctor.update({
         where: { id },

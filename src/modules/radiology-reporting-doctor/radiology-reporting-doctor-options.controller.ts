@@ -2,6 +2,8 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { RadiologyReportingDoctorService } from './radiology-reporting-doctor.service';
 import { RadiologyReportingDoctorOptionsQueryDto } from './dto/radiology-reporting-doctor-options-query.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 
 /**
  * Flat radiology reporting-doctor options endpoint
@@ -24,10 +26,12 @@ export class RadiologyReportingDoctorOptionsController {
   @Get('options')
   findOptions(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: RadiologyReportingDoctorOptionsQueryDto,
   ) {
     return this.radiologyReportingDoctorService.findOptions(tenantId, {
-      branchId: query.branchId,
+      // The active branch (JWT) wins; tenant-level callers may filter via `?branchId=`.
+      branchId: profile.branchId ?? query.branchId,
       search: query.search,
       page: query.page,
       limit: query.limit,

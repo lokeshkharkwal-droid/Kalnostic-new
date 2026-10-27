@@ -18,11 +18,15 @@ import { CreateRadiologyReportingDoctorDto } from './dto/create-radiology-report
 import { ListRadiologyReportingDoctorsDto } from './dto/list-radiology-reporting-doctors.dto';
 import { UpdateRadiologyReportingDoctorDto } from './dto/update-radiology-reporting-doctor.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * Radiology reporting-doctor registry endpoints (business-authenticated; tenant
- * comes from the JWT). The global `JwtAuthGuard` protects all routes. Reuses the
+ * comes from the JWT; the active branch, when the caller is in a branch profile,
+ * also comes from the JWT and scopes every route — tenant-level callers see the
+ * whole tenant). The global `JwtAuthGuard` protects all routes. Reuses the
  * doctor permission key groups and the `AuditModule.DOCTOR` audit enum — there are
  * no radiology-reporting-doctor-specific ones.
  */
@@ -45,9 +49,14 @@ export class RadiologyReportingDoctorController {
   })
   create(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: CreateRadiologyReportingDoctorDto,
   ) {
-    return this.radiologyReportingDoctorService.create(tenantId, dto);
+    return this.radiologyReportingDoctorService.create(
+      tenantId,
+      dto,
+      profile.branchId,
+    );
   }
 
   /**
@@ -58,11 +67,13 @@ export class RadiologyReportingDoctorController {
   @Get()
   findAll(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Query() query: ListRadiologyReportingDoctorsDto,
   ) {
     return this.radiologyReportingDoctorService.findAllForTenant(
       tenantId,
       query,
+      profile.branchId,
     );
   }
 
@@ -71,8 +82,16 @@ export class RadiologyReportingDoctorController {
    * classification names).
    */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.radiologyReportingDoctorService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.radiologyReportingDoctorService.findById(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 
   /**
@@ -87,10 +106,16 @@ export class RadiologyReportingDoctorController {
   })
   update(
     @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: UpdateRadiologyReportingDoctorDto,
   ) {
-    return this.radiologyReportingDoctorService.update(id, tenantId, dto);
+    return this.radiologyReportingDoctorService.update(
+      id,
+      tenantId,
+      dto,
+      profile.branchId,
+    );
   }
 
   /**
@@ -103,7 +128,15 @@ export class RadiologyReportingDoctorController {
     action: AuditAction.DELETE,
     description: 'Deleted a radiology reporting doctor',
   })
-  remove(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.radiologyReportingDoctorService.remove(id, tenantId);
+  remove(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.radiologyReportingDoctorService.remove(
+      id,
+      tenantId,
+      profile.branchId,
+    );
   }
 }
