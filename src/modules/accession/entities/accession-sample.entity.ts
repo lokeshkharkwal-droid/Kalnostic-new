@@ -1,5 +1,6 @@
 import { AccessionGroupingMode, Prisma, SampleStatus } from '@prisma/client';
 import { TatStatus } from '../constants/tat.constant';
+import type { CollectionProgress } from '../../../common/utils/collection-progress.util';
 
 /**
  * Lightweight relations included on every accession sample list row — mirrors the
@@ -8,6 +9,34 @@ import { TatStatus } from '../constants/tat.constant';
  */
 export const SAMPLE_LIST_INCLUDE = {
   tests: { where: { deletedAt: null } },
+  // Latest transfer only: lets the in-house list tell whether a sent sample can still
+  // be retrieved / re-addressed (only until the receiving branch has received it),
+  // whether it already has a center ("Edit Center" vs "Assign Center"), and why the
+  // receiving branch sent it back ("Sent - Repeated / Rejected" tooltip) without
+  // fetching the full detail per row.
+  transfers: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+    select: {
+      id: true,
+      kind: true,
+      transferStatus: true,
+      destinationBranchId: true,
+      outsourceCenterId: true,
+      // Where / when / how it went, for the list's "Send details" column (the same facts the
+      // Internal Referral / Outsource pages show for the other side).
+      externalPartnerName: true,
+      sendDate: true,
+      sendTime: true,
+      sampleForm: true,
+      logisticsType: true,
+      logisticsPerson: true,
+      createdAt: true,
+      rejectionReason: true,
+      repeatReason: true,
+    },
+  },
   order: {
     select: {
       id: true,
@@ -15,6 +44,8 @@ export const SAMPLE_LIST_INCLUDE = {
       orderDate: true,
       orderTime: true,
       createdAt: true,
+      // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
+      status: true,
       billId: true,
       patient: true,
       referredByDoctor: true,
@@ -36,6 +67,8 @@ export const SAMPLE_INCLUDE = {
     include: {
       orderItem: {
         select: {
+          // Set when the test was removed from the order (see `itemRemoved`).
+          deletedAt: true,
           branchLabTest: { select: { departmentId: true } },
           branchLabPanel: { select: { departmentId: true } },
           // The center this order line was assigned to at order create/edit
@@ -59,6 +92,8 @@ export const SAMPLE_INCLUDE = {
       orderDate: true,
       orderTime: true,
       createdAt: true,
+      // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
+      status: true,
       billId: true,
       patient: true,
       referredByDoctor: true,
@@ -67,10 +102,25 @@ export const SAMPLE_INCLUDE = {
   },
 } satisfies Prisma.OrderSampleInclude;
 
-/** An accession sample list row with its test links + order/patient context. */
-export type OrderSampleListRow = Prisma.OrderSampleGetPayload<{
+/** What Prisma returns for one list row (the latest transfer carries ids only). */
+type OrderSampleListRowRaw = Prisma.OrderSampleGetPayload<{
   include: typeof SAMPLE_LIST_INCLUDE;
 }>;
+
+/**
+ * The latest transfer of a list row, plus the names the "Send details" column shows (the
+ * destination branch / outsource center are logical refs, so the names are resolved in one
+ * batched lookup per page - see `OrderSampleService.withTransferNames`; absent = not resolved).
+ */
+export type ListRowTransfer = OrderSampleListRowRaw['transfers'][number] & {
+  destinationBranchName?: string | null;
+  outsourceCenterName?: string | null;
+};
+
+/** An accession sample list row with its test links + order/patient context. */
+export type OrderSampleListRow = Omit<OrderSampleListRowRaw, 'transfers'> & {
+  transfers: ListRowTransfer[];
+};
 
 /** A fully-composed accession sample (tests + history + transfers + order). */
 export type OrderSampleWithRelations = Prisma.OrderSampleGetPayload<{
@@ -88,6 +138,12 @@ export type OrderSampleDetail = Omit<
   'tests' | 'transfers'
 > & {
   departmentLabel: string | null;
+  /**
+   * True when the test(s) this sample carries were removed from the order: the
+   * sample is kept but frozen (only Store / Discard stay open), tagged "Test
+   * removed from order". Derived from the order items' `deletedAt`, not stored.
+   */
+  itemRemoved: boolean;
   tests: (OrderSampleWithRelations['tests'][number] & {
     department: string | null;
   })[];
@@ -104,6 +160,8 @@ export type OrderSampleDetail = Omit<
 /** A list row enriched with its derived TAT band (§A.4 — not stored). */
 export type OrderSampleListItem = OrderSampleListRow & {
   tatStatus: TatStatus | null;
+  /** True when the test(s) on this sample were removed from the order (frozen, kept for wind-down). */
+  itemRemoved: boolean;
 };
 
 /**
@@ -155,4 +213,11 @@ export interface InHouseOrderGroup {
   groupingMode: AccessionGroupingMode;
   sampleIds: string[];
   groups: InHouseSampleGroup[];
+  /**
+   * Order-level sample **collection progress** (`PENDING`/`PARTIAL`/`COLLECTED`),
+   * derived from the order's workflow items' `collectedAt` — the §A.6 "Collection
+   * Status" column. Set by the paged in-house list (`findAllGrouped`); omitted by
+   * the single-order grouped view (Product Overview), which doesn't show it.
+   */
+  collectionStatus?: CollectionProgress;
 }

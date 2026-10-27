@@ -1,0 +1,67 @@
+meta {
+  name: 04 Create Collection Center Branch
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Collection Center {{tatRunId}}",
+    "branchType": "COLLECTION_CENTER",
+    "shortName": "EMCC",
+    "status": "ACTIVE",
+    "addressLine": "42 MG Road",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411001",
+    "phone": "+919822000070",
+    "email": "emi.cc.{{tatRunId}}@acme.test",
+    "openingTime": "00:00",
+    "closingTime": "23:59",
+    "dailyCapacity": 200,
+    "operationalDays": ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"],
+    "modules": [
+      { "moduleKey": "registration", "isEnabled": true },
+      { "moduleKey": "accession", "isEnabled": true },
+      { "moduleKey": "lab_operations", "isEnabled": true },
+      { "moduleKey": "branch_admin", "isEnabled": true }
+    ]
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.id) {
+    bru.setVar("ccBranchId", data.id);
+    if (data.code) bru.setVar("ccBranchCode", data.code);
+  }
+}
+
+tests {
+  test("collection center branch created", function () {
+    expect([200, 201]).to.include(res.getStatus());
+    expect(res.body.data).to.have.property("id");
+  });
+}
+
+docs {
+  **Setup - Create the Collection Center branch** (where the order is created).
+  `registration`, `accession` and `lab_operations` are enabled so it can take the
+  order, run the accession lifecycle, and hold the technician report. Captures
+  **`ccBranchId`**. If `COLLECTION_CENTER` is rejected by your build's branch-type
+  enum, change `branchType` to `DIAGNOSTIC` - it has no effect on this flow.
+}

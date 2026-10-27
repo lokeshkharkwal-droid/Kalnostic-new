@@ -1,0 +1,31 @@
+meta {
+  name: 39 Receive Transfer (Branch A)
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/receive
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+body:json {
+  {
+    "receiveCondition": "Good",
+    "notes": "Received at Branch A"
+  }
+}
+
+docs {
+  **Transfer - receive** (Picked Up -> Received) at Branch A. `receiveCondition` is
+  mandatory. Requires the internal-referral receive permission from step 09.
+}

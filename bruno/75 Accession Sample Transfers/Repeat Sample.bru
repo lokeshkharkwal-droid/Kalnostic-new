@@ -1,0 +1,76 @@
+meta {
+  name: Repeat Sample
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/repeat
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "repeatReason": "Sample clotted"
+  }
+}
+
+tests {
+  test("200 OK", function () { expect(res.getStatus()).to.equal(200); });
+}
+
+docs {
+  Flag a sample for re-collection (REPEAT) with a mandatory reason.
+
+  Not allowed from the sender once the sample is SENT_INTERNAL (422
+  SAMPLE_SENT_TO_BRANCH).
+
+  On the RECEIVING branch's copy of a transferred sample (a sample created by an
+  accepted internal transfer) the test is not repeated in place - it goes back to
+  the sender: the copy is voided (soft-deleted, CANCELLED), the report(s) return to the
+  sender, and the sender's original sample goes SENT_INTERNAL -> REPEAT. Allowed only
+  while every report the copy serves is untouched (PENDING, no result values, notes,
+  attachments, overall-result entries or Notes-section overrides); otherwise 422
+  SAMPLE_RETURN_BLOCKED. The copy is not in the response (it is voided).
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+
+  **Sent – Repeated / Sent – Rejected (sender's tube after the receiving branch sends it back).**
+  When the receiving branch Repeats or Rejects an INTERNAL transfer (before or after
+  Accept), the SENDER's original tube is NOT moved to Repeat any more: it stays
+  `SENT_INTERNAL`, its transfer is closed as `REPEAT` / `REJECTED` (with the receiving
+  branch's reason), and the sender's list reads "Sent – Repeated" / "Sent – Rejected"
+  (the reason is the tooltip; the sender's history also gets a "returned by the
+  receiving branch" row, no status change). The report is already reset and back at the
+  sender, view-only until the sender decides. The sender then chooses:
+    - **Sent – Repeated:** `POST order-samples/:id/repeat` (tube -> Repeat);
+    - **Sent – Rejected:** `POST order-samples/:id/error` (tube -> Error, then Repeat).
+  Repeat is refused (422 `SAMPLE_SENT_TO_BRANCH`) on a Sent tube whose transfer is still
+  open or was rejected, and Error on one whose transfer is open or was repeated - even for a
+  forced group call. Only the SENDING branch may do it (403 `TRANSFER_WRONG_BRANCH`),
+  like Retrieve. Retrieve itself is REFUSED on a sent-back tube (422 `SAMPLE_RETRIEVE_BLOCKED`: it would only put the tube back to Accepted as if nothing had happened). The sender's Repeat / Error does NOT delete the receiving branch's
+  closed transfer; the referring panel is notified at this point (not when the receiving
+  branch clicked). On a cancelled order the tube stays frozen: Repeat, Error and Retrieve are all refused.
+
+  **Back on the sender's own copy (Phase 2).** After the existing clear-down (values, notes, attachments and flags removed,
+  report back to Pending) and the move back, the report points at the SENDER's Branch Master Data copy of the test again
+  (`labTestId`) and `performingBranchLabTestId` is cleared (the order line's entry applies). A panel member's
+  `memberBranchLabTestId` returns to the member entry it had. The sender's TAT clock restarts when it accepts the
+  tube again. Still allowed only until a report has a validated result (Result Done, Approved, Published).
+}

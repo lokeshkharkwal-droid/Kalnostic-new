@@ -1,4 +1,8 @@
 import {
+  ReportBranchScope,
+  ReportBranchScopeGuard,
+} from './access/report-branch-scope.guard';
+import {
   Body,
   Controller,
   Delete,
@@ -27,7 +31,8 @@ import { CreateLabReportAttachmentDto } from './dto/create-lab-report-attachment
  * analyzer histogram images the EMI submit flow attaches.
  */
 @Controller('lab-reports')
-@UseGuards(PermissionGuard)
+@UseGuards(ReportBranchScopeGuard, PermissionGuard)
+@ReportBranchScope({ entity: 'report', param: 'id' })
 export class LabReportAttachmentController {
   constructor(private readonly service: LabReportAttachmentService) {}
 

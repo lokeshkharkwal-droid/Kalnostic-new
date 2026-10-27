@@ -1,0 +1,111 @@
+meta {
+  name: 73 EMI Branch-Based Mapping E2E
+  seq: 73
+}
+
+script:pre-request {
+  // ---------------------------------------------------------------------------
+  // EMI Branch-Based Lab Adapter Mapping — full E2E, zero manual input.
+  //
+  // Proves the fix: LIS access (/emi/orders + /emi/submitResult) depends on the
+  // branch CURRENTLY PROCESSING a test (LabReport.branchId, rehomed to follow the
+  // specimen on an internal transfer), NOT the branch the order was created at.
+  //
+  // Two branches (a Collection Center + Branch A), one order created at the
+  // Collection Center, and THREE adapters with different branch mappings:
+  //   - adapterTokenCc   -> linked to Collection Center only
+  //   - adapterTokenBa   -> linked to Branch A only
+  //   - adapterTokenBoth -> linked to both
+  // The same specimen barcode is scanned BEFORE (report at Collection Center) and
+  // AFTER (report at Branch A) an internal transfer, giving all three cases:
+  //   Case 1 (CC linked, BA not): works at CC, blocked at BA.
+  //   Case 2 (BA linked, CC not): blocked at CC, works at BA.
+  //   Case 3 (both linked):       works at CC and at BA.
+  //
+  // Run Folder, or click Next through 01..47. Every id/token is captured by each
+  // request's post-response via bru.setVar(...) — nothing is copied by hand.
+  // ---------------------------------------------------------------------------
+
+  if (!bru.getVar("baseUrl"))    bru.setVar("baseUrl", "http://localhost:3000/api/v1");
+  // EMI endpoints live at the ROOT (not under /api/v1) — host only.
+  if (!bru.getVar("emiBaseUrl")) bru.setVar("emiBaseUrl", "http://localhost:3000");
+
+  // The seeded platform SiteAdmin (prisma/seed.ts) — the only credential assumed
+  // to exist. Everything else (tenant, branches, users, catalogue) is created here.
+  if (!bru.getVar("siteAdminEmail"))    bru.setVar("siteAdminEmail", "admin@kalnostics.com");
+  if (!bru.getVar("siteAdminPassword")) bru.setVar("siteAdminPassword", "SuperSecret1");
+
+  // Known passwords this flow sets, so every login is automated.
+  if (!bru.getVar("operatorPassword"))       bru.setVar("operatorPassword", "Str0ng@Pass1");
+  if (!bru.getVar("bootstrapAdminPassword")) bru.setVar("bootstrapAdminPassword", "Str0ng@Pass1");
+
+  // The analyte the machine reports — equals the result parameter created on the
+  // lab test (parameterCode), so the machine's universal_test_id matches it. Two
+  // result values: one written BEFORE the transfer (at the Collection Center) and
+  // one AFTER (at Branch A), so the final verifies prove which branch filled.
+  if (!bru.getVar("emiParamCode"))     bru.setVar("emiParamCode", "HGB");
+  if (!bru.getVar("emiParamUnit"))     bru.setVar("emiParamUnit", "g/dL");
+  if (!bru.getVar("emiResultValueCc")) bru.setVar("emiResultValueCc", "13.5");
+  if (!bru.getVar("emiResultValueBa")) bru.setVar("emiResultValueBa", "14.2");
+
+  // One-time per-run unique suffix + derived unique mobiles (guarded: computed
+  // once, reused for the whole run) so re-runs never collide on unique fields.
+  if (!bru.getVar("tatRunId")) {
+    const n = String(Date.now());
+    bru.setVar("tatRunId", n.slice(-6));
+    // 10-digit national mobiles (tenant create requires adminPhone ^\d{10}$).
+    bru.setVar("adminBootstrapPhone", "95" + n.slice(-8));
+    bru.setVar("ccOperatorMobile",    "98" + n.slice(-8));
+    bru.setVar("baOperatorMobile",    "97" + n.slice(-8));
+    bru.setVar("patientMobile",       "96" + n.slice(-8));
+  }
+}
+
+docs {
+  # EMI Branch-Based Lab Adapter Mapping — end-to-end
+
+  Validates the branch-based LIS access rule from scratch: a Lab Adapter may only
+  read/fill a test when the branch CURRENTLY PROCESSING that test is one the adapter
+  is linked to. The processing branch is `LabReport.branchId`, which an internal
+  transfer rehomes to follow the specimen — so it is the branch the test is worked
+  at, not the branch the order was created at.
+
+  ## Setup it builds
+  - SiteAdmin, then tenant + business admin.
+  - Two branches: a Collection Center (`ccBranchId`) and Branch A (`baBranchId`).
+  - An operator at each branch with the accession permissions it needs
+    (CC: collect/accept/send; BA: internal-referral pick-up/receive/accept).
+  - The same lab test created in each branch's Master Data (same name/code, one
+    `HGB` result parameter) and imported into each branch's list, so the two
+    branches' BranchLabTest rows represent the same logical test (matched
+    cross-branch by name/code).
+  - One SiteAdmin equipment plus three adapters: `adapterTokenCc` (CC only),
+    `adapterTokenBa` (BA only), `adapterTokenBoth` (both). All created
+    `status: ONLINE` (required for live EMI auth).
+
+  ## What it proves (one order at the Collection Center, scanned before and after an internal transfer)
+  | Case | Adapter linked to | BEFORE transfer (report at CC) | AFTER transfer (report at Branch A) |
+  |---|---|---|---|
+  | 1 | Collection Center only | works (ut_ids populated, result filled) | blocked (ut_ids empty, nothing filled) |
+  | 2 | Branch A only | blocked (ut_ids empty, nothing filled) | works (ut_ids populated, result filled) |
+  | 3 | both | works | works |
+
+  A blocked `GET /emi/orders` returns the legacy `{ "s": "200" }` envelope with an
+  empty `ut_ids` (empty test list), not an error. A blocked submit returns
+  `test_status: "no test match found for requested token"` with a per-report
+  `fill_status` of "... not processed at a branch linked to this adapter".
+
+  ## Verification
+  Two report reads close the loop: after the before-phase, the report is read at the
+  Collection Center (`source: ADAPTER`, `status: SAVED`, value = `emiResultValueCc`);
+  after the after-phase, the same report is read at Branch A (`source: ADAPTER`,
+  `status: SAVED`, value = `emiResultValueBa`) — proving the machine result landed
+  at whichever branch was processing the test.
+
+  ## Notes
+  - EMI endpoints are at the root (`{{emiBaseUrl}}/emi/...`), authenticated by the
+    `TOKEN` header (the adapter token), NOT the business JWT — see folder
+    70 EMI Machine Interface for the standalone request reference.
+  - Branch operating schedules are intentionally omitted (they drive TAT only; the
+    EMI path does not depend on them).
+}

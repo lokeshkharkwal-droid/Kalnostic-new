@@ -4,6 +4,7 @@ import {
   AppointmentStatus,
   AppointmentType,
   BillStatus,
+  BranchStatus,
   DiscountMode,
   DoctorType,
   ExternalIdFormat,
@@ -64,6 +65,7 @@ import {
   formatOrderDateTime,
   resolveOrderLocalDateTime,
   classifyOrderDate,
+  buildCollectionProgressWhere,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -83,6 +85,8 @@ import {
   ORDER_INCLUDE,
   ORDER_LIST_INCLUDE,
   OrderListRow,
+  BranchDueRow,
+  PatientDuesResult,
   OrderWithRelations,
   BILLING_ORDER_INCLUDE,
   BillingOrder,
@@ -104,6 +108,7 @@ import {
   deriveBillStatus,
   recomputeBillStatusInTx,
 } from './utils/bill-status';
+import { CANCEL_BLOCKING_REPORT_STATUSES } from './utils/cancel-rules.util';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -202,6 +207,8 @@ import {
   OrderExternalReferralNotFoundException,
   OrderAlreadyCancelledException,
   OrderAlreadyInvoicedException,
+  OrderCancelBlockedByResultException,
+  OrderNotDeletableException,
   CancellationChargeExceedsPaidException,
   RefundExceedsRefundableException,
   NothingToRefundException,
@@ -223,6 +230,7 @@ import {
   QuotationAlreadyConvertedException,
   QuotationNotExpiredException,
   QuotationDuplicationNotAllowedException,
+  BranchInactiveException,
   PreviousDuesNotClearedException,
   PreviousDuesOverpaymentException,
   FullPaymentRequiredException,
@@ -992,6 +1000,7 @@ export class OrderService {
             this.settlementPaymentMode(dto.payments),
             new Date(dto.orderDate),
             personId,
+            branchId,
           );
         }
         // Reserve the phlebotomist slot for a home-visit appointment (atomic
@@ -1234,19 +1243,25 @@ export class OrderService {
   /**
    * Sum a patient's outstanding previous dues — the positive
    * `netAmount − paidAmount` balance across their active, non-cancelled orders
-   * (`ORDER`/`APPOINTMENT`), **business-wide** (every branch in the tenant).
-   * Overpaid orders never offset others (each order is floored at 0). Tenant-wide
-   * (not branch-scoped) so the figure matches the patient's true total dues to the
-   * business — the Create Order "Clear Previous Dues" cap, the previous-dues gate,
-   * the overpayment guard, and the oldest-first settlement all share it.
+   * (`ORDER`/`APPOINTMENT`). Overpaid orders never offset others (each order is
+   * floored at 0).
+   *
+   * Scoping: pass `branchId` to total only the dues owed **at that branch** — this
+   * is what every *money* path uses (the Create Order "Clear Previous Dues" cap,
+   * the previous-dues gate, the overpayment guard, and the oldest-first
+   * settlement), because dues are collected and cleared branch-by-branch. Omit
+   * `branchId` for the **business-wide** figure (every branch in the tenant), used
+   * only for the informational cross-business total.
    * @param tenantId tenant scope (RLS also isolates to this tenant)
    * @param patientId the patient to total
    * @param excludeOrderId an order to exclude (e.g. the one being finalized)
+   * @param branchId when set, restrict to dues owed at this branch
    */
   private async getPatientOutstanding(
     tenantId: string,
     patientId: string,
     excludeOrderId?: string,
+    branchId?: string | null,
   ): Promise<number> {
     const orders = await this.prisma.order.findMany({
       where: {
@@ -1255,6 +1270,7 @@ export class OrderService {
         deletedAt: null,
         status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
         ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+        ...(branchId ? { branchId } : {}),
       },
       select: {
         payments: {
@@ -1273,21 +1289,129 @@ export class OrderService {
   }
 
   /**
-   * Public read for the Create Order screen: a patient's **business-wide**
-   * outstanding previous dues (all branches in the tenant), so the UI can display
-   * them and pre-validate the Previous-Dues rules before submitting.
+   * Public read for the Create Order screen: a patient's outstanding previous
+   * dues, resolved both **at the active branch** (the figure that drives the
+   * "Clear Previous Dues" cap and the previous-dues gate — dues are collected and
+   * cleared per branch) and **business-wide** (an informational total across all
+   * branches), plus a per-branch breakdown for the cross-branch dues modal.
+   *
+   * Cross-branch visibility is gated: when `includeAllBranches` is false (the
+   * caller lacks `View cross-branch results`), the business-wide total collapses
+   * to the active-branch figure and the breakdown contains only the active
+   * branch, so other branches' dues are never leaked.
    * @param tenantId tenant scope (from JWT)
    * @param patientId the patient to total
-   * @returns `{ outstanding }` in the same integer units as the payment ledger
+   * @param currentBranchId the caller's active branch (dues collectable here)
+   * @param includeAllBranches whether the caller may see other branches' dues
+   * @returns {@link PatientDuesResult} (amounts in the payment-ledger units)
    * @throws OrderPatientNotFoundException if the patient is not in the tenant
    */
   async getPatientDues(
     tenantId: string,
     patientId: string,
-  ): Promise<{ outstanding: number }> {
+    currentBranchId: string | null,
+    includeAllBranches: boolean,
+  ): Promise<PatientDuesResult> {
     await this.assertPatient(tenantId, patientId);
-    const outstanding = await this.getPatientOutstanding(tenantId, patientId);
-    return { outstanding };
+
+    // One pass over the patient's active, non-cancelled orders; group the
+    // per-order balance (floored at 0) by branch.
+    const orders = await this.prisma.order.findMany({
+      where: {
+        tenantId,
+        patientId,
+        deletedAt: null,
+        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+      },
+      select: {
+        branchId: true,
+        orderDate: true,
+        createdAt: true,
+        payments: {
+          where: { deletedAt: null },
+          select: { netAmount: true, paidAmount: true },
+        },
+      },
+    });
+
+    interface BranchAgg {
+      totalDue: number;
+      orderCount: number;
+      oldestDueOrderDate: Date | null;
+    }
+    const byBranch = new Map<string, BranchAgg>();
+    let businessWide = 0;
+    let currentBranchDue = 0;
+    for (const o of orders) {
+      const net = o.payments.reduce((s, p) => s + toNum(p.netAmount), 0);
+      const paid = o.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
+      const due = Math.max(net - paid, 0);
+      if (due <= 0) continue;
+      businessWide += due;
+      if (o.branchId === currentBranchId) currentBranchDue += due;
+      // Null-branch dues (tenant-level, not collectable at any location) count
+      // toward the business-wide total but have no branch row in the breakdown.
+      if (!o.branchId) continue;
+      const anchor = o.orderDate ?? o.createdAt;
+      const agg = byBranch.get(o.branchId) ?? {
+        totalDue: 0,
+        orderCount: 0,
+        oldestDueOrderDate: null,
+      };
+      agg.totalDue += due;
+      agg.orderCount += 1;
+      if (!agg.oldestDueOrderDate || anchor < agg.oldestDueOrderDate) {
+        agg.oldestDueOrderDate = anchor;
+      }
+      byBranch.set(o.branchId, agg);
+    }
+
+    const outstanding = roundToTwoDecimalPlaces(currentBranchDue);
+    const businessWideOutstanding = roundToTwoDecimalPlaces(businessWide);
+
+    // Resolve the branches to display. Without the cross-branch permission, only
+    // the active branch is ever shown.
+    const branchIds = includeAllBranches
+      ? [...byBranch.keys()]
+      : [...byBranch.keys()].filter((id) => id === currentBranchId);
+    const branchMeta =
+      branchIds.length > 0
+        ? await this.prisma.branch.findMany({
+            where: { tenantId, id: { in: branchIds } },
+            select: { id: true, name: true, status: true, deletedAt: true },
+          })
+        : [];
+    const metaById = new Map(branchMeta.map((b) => [b.id, b]));
+
+    const branches: BranchDueRow[] = branchIds.map((id) => {
+      const agg = byBranch.get(id) as BranchAgg;
+      const meta = metaById.get(id);
+      const isActive =
+        meta != null && meta.status === BranchStatus.ACTIVE && !meta.deletedAt;
+      return {
+        branchId: id,
+        branchName: meta?.name ?? 'Unknown branch',
+        isActive,
+        isCurrentBranch: id === currentBranchId,
+        orderCount: agg.orderCount,
+        totalDue: roundToTwoDecimalPlaces(agg.totalDue),
+        oldestDueOrderDate: agg.oldestDueOrderDate,
+      };
+    });
+    // Active branch pinned to the top; the rest by descending due amount.
+    branches.sort((a, b) => {
+      if (a.isCurrentBranch !== b.isCurrentBranch)
+        return a.isCurrentBranch ? -1 : 1;
+      return b.totalDue - a.totalDue;
+    });
+
+    return {
+      outstanding,
+      businessWideOutstanding: includeAllBranches
+        ? businessWideOutstanding
+        : outstanding,
+      branches,
+    };
   }
 
   /**
@@ -1338,6 +1462,17 @@ export class OrderService {
     } = params;
     if (status !== OrderStatus.ORDER || !branchId) return;
 
+    // A deactivated branch is never an eligible location for finalizing an order
+    // or collecting/clearing dues — hard-block it here (the single chokepoint for
+    // ORDER finalization, which is also where previous-dues clearing happens).
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, tenantId },
+      select: { status: true, deletedAt: true },
+    });
+    if (!branch || branch.deletedAt || branch.status !== BranchStatus.ACTIVE) {
+      throw new BranchInactiveException(branchId);
+    }
+
     const settings =
       params.settings ??
       (await this.registrationSettingsService.getForBranch(tenantId, branchId));
@@ -1349,10 +1484,14 @@ export class OrderService {
     const duesGateActive =
       !settings.ChargesAndDeductions_AllowOrderWithoutClearingPreviousDues;
     if (duesGateActive || previousDuesCleared > 0) {
+      // Branch-scoped: the gate and the clear-dues cap consider ONLY dues owed at
+      // this branch. Dues at other branches never block an order here and must be
+      // collected at the branch that owns them.
       const outstanding = await this.getPatientOutstanding(
         tenantId,
         patientId,
         excludeOrderId,
+        branchId,
       );
       // Can't clear more dues than are owed (settlement is capped at the balance).
       if (previousDuesCleared > outstanding) {
@@ -1636,9 +1775,10 @@ export class OrderService {
    * The caller has already validated (`assertBillingRules`) that `amount` never
    * exceeds the outstanding balance, so any tiny rounding remainder is a no-op.
    *
-   * Settlement is **business-wide** (all branches in the tenant): the cleared
-   * amount pays down the patient's oldest outstanding orders wherever they were
-   * placed. Each settlement row is tagged with the settled order's own branch.
+   * Settlement is **branch-scoped**: the cleared amount pays down only the
+   * patient's oldest outstanding orders **at `branchId`** (the branch collecting
+   * the dues), matching the branch-scoped gate/cap that bounded `amount`. Dues at
+   * other branches are left for those branches to collect.
    *
    * @param tx active transaction client
    * @param tenantId tenant scope
@@ -1648,6 +1788,8 @@ export class OrderService {
    * @param newOrderCode the new order's code, recorded as the settlement reference
    * @param paymentMode mode the dues were collected under (the new order's mode)
    * @param paymentDate when the dues were collected
+   * @param personId the staff person recording the settlement
+   * @param branchId the branch collecting the dues (settlement is scoped to it)
    */
   private async settlePreviousDuesInTx(
     tx: Prisma.TransactionClient,
@@ -1659,6 +1801,7 @@ export class OrderService {
     paymentMode: PaymentMode,
     paymentDate: Date,
     personId: string | null,
+    branchId: string,
   ): Promise<void> {
     if (amount <= 0) return;
     const orders = await tx.order.findMany({
@@ -1667,6 +1810,10 @@ export class OrderService {
         patientId,
         deletedAt: null,
         id: { not: newOrderId },
+        // Settlement is branch-scoped: the cleared amount only pays down the
+        // patient's outstanding orders AT THIS BRANCH (matching the gate/cap that
+        // bounded what could be cleared). Other branches' dues are untouched.
+        branchId,
         status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
       },
       orderBy: [{ orderDate: 'asc' }, { createdAt: 'asc' }],
@@ -1746,6 +1893,7 @@ export class OrderService {
     // Invoice-lock status: exposed on every composed-order response (get-one,
     // create, update, cancel, …), all of which funnel through here.
     const invoiceCodes = await this.invoicedOrderCodes(tenantId, [id]);
+    const cancelBlocked = await this.cancelBlockedReasons(tenantId, [id]);
     // Authoritative billing rollups — the SAME derivation the Billings list uses
     // (`findAll` → `billingRollups`), so the detail response (and thus the Order
     // Overview) always matches the list. Without these, consumers fall back to a
@@ -1761,6 +1909,7 @@ export class OrderService {
       paidAmount,
       hasInvoice: invoiceCodes.has(id),
       invoiceCode: invoiceCodes.get(id) ?? null,
+      cancelBlockedReason: cancelBlocked.get(id) ?? null,
     };
   }
 
@@ -3531,59 +3680,11 @@ export class OrderService {
       });
     }
     if (query.sampleStatus) {
-      // Bill-only tests/panels never enter the workflow (never collected), so
-      // they must be excluded from the collection-progress filter — otherwise a
-      // fully-collected order with a bill-only item would read as PARTIAL and
-      // never as COLLECTED. Mirrors the displayed item/collected counts.
-      const workflowItem: Prisma.OrderItemWhereInput = {
-        NOT: {
-          OR: [
-            { branchLabTest: { isBillOnlyTest: true } },
-            { branchLabPanel: { isBillOnlyTest: true } },
-          ],
-        },
-      };
-      switch (query.sampleStatus) {
-        case 'PENDING':
-          // Has workflow items, none collected.
-          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
-          and.push({
-            items: {
-              none: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          });
-          break;
-        case 'COLLECTED':
-          // Has workflow items, none still uncollected.
-          and.push({ items: { some: { deletedAt: null, ...workflowItem } } });
-          and.push({
-            items: {
-              none: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          });
-          break;
-        case 'PARTIAL':
-          // At least one workflow item collected and at least one still uncollected.
-          and.push({
-            items: {
-              some: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          });
-          and.push({
-            items: {
-              some: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          });
-          break;
-      }
+      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived
+      // from the workflow items' `collectedAt` — shared with the Accession
+      // "Collection Status" filter via `buildCollectionProgressWhere` so the two
+      // can never drift (bill-only items are excluded there).
+      and.push(buildCollectionProgressWhere(query.sampleStatus));
     }
     if (query.reportStatus) {
       // Reuses `deriveReportStatus` — the same function that computes the
@@ -3780,9 +3881,10 @@ export class OrderService {
       ),
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
-    const [counts, invoiceCodes] = await Promise.all([
+    const [counts, invoiceCodes, cancelBlocked] = await Promise.all([
       this.countItemsByOrder(tenantId, orderIds),
       this.invoicedOrderCodes(tenantId, orderIds),
+      this.cancelBlockedReasons(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
@@ -3871,6 +3973,7 @@ export class OrderService {
         // update/cancel guards).
         hasInvoice: invoiceCodes.has(r.id),
         invoiceCode: invoiceCodes.get(r.id) ?? null,
+        cancelBlockedReason: cancelBlocked.get(r.id) ?? null,
       };
     });
     return { data, total, page, limit };
@@ -4949,6 +5052,35 @@ export class OrderService {
   }
 
   /**
+   * Which of these orders the lab side currently stops from being cancelled - the
+   * rule {@link assertLabAllowsCancel} enforces (a validated result at any
+   * branch), read without locking for the Billings screen.
+   * @param tenantId tenant scope
+   * @param orderIds the page's orders
+   * @returns order id → reason (orders that can be cancelled are absent)
+   */
+  private async cancelBlockedReasons(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, 'RESULT_DONE'>> {
+    const reasons = new Map<string, 'RESULT_DONE'>();
+    if (orderIds.length === 0) return reasons;
+    const validated = await this.prisma.labReport.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { in: CANCEL_BLOCKING_REPORT_STATUSES },
+        orderItem: { orderId: { in: orderIds } },
+      },
+      select: { orderItem: { select: { orderId: true } } },
+    });
+    for (const r of validated) {
+      reasons.set(r.orderItem.orderId, 'RESULT_DONE');
+    }
+    return reasons;
+  }
+
+  /**
    * Guard: throw if an invoice has already been generated for this order. Invoice
    * generation is the definitive point at which an order becomes immutable — an
    * invoiced order can be neither updated nor cancelled, regardless of payment
@@ -5637,6 +5769,7 @@ export class OrderService {
    * @param tenantId tenant scope
    * @param dto partial update
    * @throws OrderNotFoundException / reference 422s
+   * @throws OrderAlreadyCancelledException (409) if the order is cancelled
    * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
    * @throws TestNotDeletableAfterReportException (422) removing a test whose report is filled/generated
    */
@@ -6535,6 +6668,7 @@ export class OrderService {
           this.settlementPaymentMode(dto.payments),
           dto.orderDate ? new Date(dto.orderDate) : new Date(),
           personId,
+          branchId,
         );
       }
     });
@@ -6683,6 +6817,7 @@ export class OrderService {
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
    * @throws OrderAlreadyCancelledException if already cancelled
    * @throws OrderAlreadyInvoicedException (409) if an invoice exists for the order
+   * @throws OrderCancelBlockedByResultException (409) if any report is Result Done / Approved / Published
    * @throws CancellationChargeExceedsPaidException if the charge exceeds paid
    * @throws RefundExceedsRefundableException if the refund exceeds the refundable balance
    */
@@ -6768,6 +6903,15 @@ export class OrderService {
             booking?.diagnostics,
           );
     await this.prisma.withTenant(tenantId, async (tx) => {
+      // Take the order row first (FOR UPDATE). A receiving branch's Accept takes it
+      // FOR SHARE before it re-checks the status, so the two are serialised: whichever
+      // lands second sees the other's final answer (an accept can no longer create a
+      // copy on an order that was cancelled a moment earlier). The lock order is
+      // always order row, then its reports, so the two paths cannot deadlock.
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} AND tenant_id = ${tenantId} FOR UPDATE`;
+      // Lab rule next, with the order's reports locked, so nothing can be
+      // validated between this check and the status flip below.
+      await this.assertLabAllowsCancel(tx, tenantId, id);
       // Ledger sums drive the charge/refund guards + the paymentStatus recompute.
       const agg = await tx.paymentDetails.aggregate({
         where: { orderId: id, tenantId, deletedAt: null },
@@ -6913,6 +7057,37 @@ export class OrderService {
       refundAmount: dto.refund?.amount ?? null,
     });
     return this.findById(id, tenantId);
+  }
+
+  /**
+   * The lab's say in whether an order may be cancelled, run inside the cancel
+   * transaction: refused when any live report of the order - at ANY branch - is
+   * CURRENTLY Result Done, Approved or Published (one validated test among many is
+   * enough; Validation Pending, Error Reported and Result Rejected do not count).
+   * A sample that is out at another branch does NOT block the cancel: the work is
+   * frozen and the sent sample is wound down (Retrieve / Reject / Repeat / Return /
+   * Discard stay allowed on a cancelled order).
+   * The order's live reports are locked first (`FOR UPDATE`, the same row lock a
+   * technician's validate takes), so a concurrent validate waits and then fails
+   * its own cancelled-order check instead of finishing a cancelled order.
+   * @throws OrderCancelBlockedByResultException a report is already validated
+   */
+  private async assertLabAllowsCancel(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT lr.id FROM lab_reports lr JOIN order_items oi ON oi.id = lr.order_item_id WHERE oi.order_id = ${orderId} AND lr.tenant_id = ${tenantId} AND lr.deleted_at IS NULL FOR UPDATE OF lr`;
+    const validated = await tx.labReport.findFirst({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { in: CANCEL_BLOCKING_REPORT_STATUSES },
+        orderItem: { orderId },
+      },
+      select: { id: true },
+    });
+    if (validated) throw new OrderCancelBlockedByResultException(orderId);
   }
 
   /**
@@ -7077,14 +7252,22 @@ export class OrderService {
   }
 
   /**
-   * Soft-delete an order and cascade soft-delete its items, sections, and
-   * payments, in one transaction.
+   * Soft-delete a DRAFT order and cascade soft-delete its items, sections, and
+   * payments, in one transaction. Only a draft can be deleted: every other status
+   * is part of the lab's record and is cancelled instead. The status is checked up
+   * front AND claimed atomically inside the transaction (`status = DRAFT` in the
+   * update's own filter), so a draft that someone finalized a moment earlier (a
+   * stale Drafts list) is refused rather than deleted.
    * @param id order id
    * @param tenantId tenant scope
    * @throws OrderNotFoundException if missing/soft-deleted/other tenant
+   * @throws OrderNotDeletableException (409) if the order is not a draft
    */
   async remove(id: string, tenantId: string): Promise<Order> {
-    await this.findById(id, tenantId);
+    const current = await this.findById(id, tenantId);
+    if (current.status !== OrderStatus.DRAFT) {
+      throw new OrderNotDeletableException(id, current.status);
+    }
     // Booking context so a soft-deleted order releases the phlebotomist slot it
     // held (unless its appointment was already cancelled — that already released).
     const booking = await this.prisma.order.findFirst({
@@ -7114,6 +7297,13 @@ export class OrderService {
           );
     const now = new Date();
     return this.prisma.withTenant(tenantId, async (tx) => {
+      // Claim the order while it is STILL a draft. If it was finalized between the
+      // check above and now, nothing matches and the whole delete is refused.
+      const claimed = await tx.order.updateMany({
+        where: { id, tenantId, status: OrderStatus.DRAFT, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      if (claimed.count !== 1) throw new OrderNotDeletableException(id);
       const where = { orderId: id, tenantId, deletedAt: null };
       await Promise.all([
         tx.orderItem.updateMany({ where, data: { deletedAt: now } }),
@@ -7132,10 +7322,6 @@ export class OrderService {
           reservation.at,
         );
       }
-      const deleted = await tx.order.update({
-        where: { id },
-        data: { deletedAt: now },
-      });
       // Deleting a DRAFT order that was saved from a quote (Convert → Save as
       // Draft) abandons the conversion: reopen the source quote so it can be
       // converted again. A finalized/cancelled order is a real business event and
@@ -7148,7 +7334,7 @@ export class OrderService {
           id,
         );
       }
-      return deleted;
+      return tx.order.findUniqueOrThrow({ where: { id } });
     });
   }
 

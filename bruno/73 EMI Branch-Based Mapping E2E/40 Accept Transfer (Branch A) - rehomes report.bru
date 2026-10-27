@@ -1,0 +1,40 @@
+meta {
+  name: 40 Accept Transfer (Branch A) - rehomes report
+  type: http
+  seq: 40
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/accept
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{baOperatorToken}}
+}
+
+body:json {
+  {
+    "notes": "Accepted at Branch A - now processing here"
+  }
+}
+
+tests {
+  test("transfer accepted at Branch A", function () {
+    expect([200, 201]).to.include(res.getStatus());
+  });
+}
+
+docs {
+  **Transfer - accept at Branch A** (Received -> Accepted). This is the pivotal step:
+  RULE 1 clones the sample into Branch A's In-House list AND **rehomes the technician
+  report's branch to Branch A** (`rehomeReportsForAcceptedItem`). From here on, the
+  "branch currently processing the test" is Branch A - which flips every LIS result
+  for the after-transfer phase. Requires the internal-referral accept permission from
+  step 09.
+}

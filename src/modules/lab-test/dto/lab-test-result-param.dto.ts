@@ -34,6 +34,19 @@ import { ReflexTestRefDto } from './reflex-test-ref.dto';
  * filled in yet (see `LabTestService.assertParam`/`assertImportParam`).
  */
 export class LabTestResultParamDto {
+  /**
+   * The id of an EXISTING parameter of this test, echoed back by the editor so a
+   * rename (a changed `parameterCode`) updates that parameter in place instead of
+   * replacing it — a replaced parameter orphans every result already entered
+   * against it. Only `LabTestService.update` reads it, and only when it names a
+   * live parameter of the same test; it is never used as a new row's id and is
+   * ignored on create. Omit it for a new parameter (matching then falls back to
+   * `parameterCode`, as before).
+   */
+  @IsUUID()
+  @IsOptional()
+  id?: string;
+
   // Group display
   @IsString()
   @IsOptional()

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   DayOfWeek,
+  OrderStatus,
   Prisma,
   ScheduleStatus,
   TatBand,
@@ -256,11 +257,15 @@ export class TatService {
       where: { id: reportId, tenantId, branchId, deletedAt: null },
       include: {
         orderItem: { include: { branchLabTest: true, branchLabPanel: true } },
+        performingEntry: true,
       },
     });
     if (!report) throw new LabReportNotFoundException(reportId);
 
-    const test = report.orderItem?.branchLabTest ?? null;
+    // The holding branch's own entry (its TAT / processing window) once the report was
+    // sent to it; otherwise the order line's.
+    const test =
+      report.performingEntry ?? report.orderItem?.branchLabTest ?? null;
     const panel = report.orderItem?.branchLabPanel ?? null;
     const maxMinutes = tatUnitToMinutes(
       test?.tatMaxValue ?? panel?.tatMaxValue ?? null,
@@ -307,19 +312,31 @@ export class TatService {
       where: { id: reportId, tenantId, branchId, deletedAt: null },
       include: {
         orderItem: { include: { branchLabTest: true, branchLabPanel: true } },
+        performingEntry: true,
       },
     });
     if (!report) throw new LabReportNotFoundException(reportId);
 
-    // Earliest acceptedAt among the test's (non-deleted) linked samples = start.
+    // Earliest acceptedAt among the test's (non-deleted) linked samples = start - of the
+    // branch that HOLDS the report: after a transfer the sender's original (still Sent)
+    // and the receiver's copy are both live, and the receiver's clock starts when ITS
+    // copy was accepted (and the sender's restarts when it accepts the tube again).
+    // Falls back to every linked sample when the holder has none.
     const links = await this.prisma.orderSampleTest.findMany({
       where: { orderItemId: report.orderItemId, tenantId },
-      include: { sample: { select: { acceptedAt: true, deletedAt: true } } },
+      include: {
+        sample: {
+          select: { acceptedAt: true, deletedAt: true, branchId: true },
+        },
+      },
     });
-    const acceptedMs = links
+    const live = links
       .map((l) => l.sample)
-      .filter((s) => s.deletedAt === null && s.acceptedAt != null)
-      .map((s) => (s.acceptedAt as Date).getTime());
+      .filter((s) => s.deletedAt === null && s.acceptedAt != null);
+    const atHolder = live.filter((s) => s.branchId === report.branchId);
+    const acceptedMs = (atHolder.length > 0 ? atHolder : live).map((s) =>
+      (s.acceptedAt as Date).getTime(),
+    );
     const startRaw = acceptedMs.length
       ? new Date(Math.min(...acceptedMs))
       : null;
@@ -327,7 +344,8 @@ export class TatService {
     const { shifts, scheduleId } = await this.loadCalendar(tenantId, branchId);
     const timezone = await this.loadTimezone(tenantId, branchId);
 
-    const test = report.orderItem?.branchLabTest ?? null;
+    const test =
+      report.performingEntry ?? report.orderItem?.branchLabTest ?? null;
     const panel = report.orderItem?.branchLabPanel ?? null;
 
     return {
@@ -448,9 +466,14 @@ export class TatService {
   ): Promise<TatConfigSnapshot | null> {
     const report = await this.prisma.labReport.findFirst({
       where: { id: reportId, tenantId, branchId, deletedAt: null },
-      include: { orderItem: { include: { branchLabTest: true } } },
+      include: {
+        orderItem: { include: { branchLabTest: true } },
+        performingEntry: true,
+      },
     });
-    return this.toConfigSnapshot(report?.orderItem?.branchLabTest ?? null);
+    return this.toConfigSnapshot(
+      report?.performingEntry ?? report?.orderItem?.branchLabTest ?? null,
+    );
   }
 
   /**
@@ -475,6 +498,7 @@ export class TatService {
       where: { id: reportId, tenantId, branchId, deletedAt: null },
       include: {
         orderItem: { include: { branchLabTest: true } },
+        performingEntry: true,
       },
     });
     if (!report) throw new LabReportNotFoundException(reportId);
@@ -483,7 +507,9 @@ export class TatService {
     // concepts (no equivalent on BranchLabPanel — see LabPanel/BranchLabPanel,
     // which only carry Min/Max TAT) — a panel-backed report has nothing to
     // defer against, same as gather()'s test-only scheduleDays lookup above.
-    const test = report.orderItem?.branchLabTest ?? null;
+    // The holding branch's own entry applies once the report was sent to it.
+    const test =
+      report.performingEntry ?? report.orderItem?.branchLabTest ?? null;
     const reportingTimeFrom = test?.reportingTimeFrom ?? null;
     const reportingTimeTo = test?.reportingTimeTo ?? null;
     const maxApprovalMinutes = tatUnitToMinutes(
@@ -625,24 +651,37 @@ export class TatService {
     const { shifts } = await this.loadCalendar(tenantId, branchId);
     const timezone = await this.loadTimezone(tenantId, branchId);
 
-    // Earliest acceptedAt per order item, batched across the whole page.
+    // Earliest acceptedAt per order item, batched across the whole page - counted per
+    // HOLDING branch first (a transferred tube has the sender's original and the
+    // receiver's copy live at once; each branch's clock starts at its own accept),
+    // falling back to every linked sample when the holder has none (see `gather`).
     const orderItemIds = [...new Set(inflight.map((r) => r.orderItemId))];
     const links = await this.prisma.orderSampleTest.findMany({
       where: { orderItemId: { in: orderItemIds }, tenantId },
-      include: { sample: { select: { acceptedAt: true, deletedAt: true } } },
+      include: {
+        sample: {
+          select: { acceptedAt: true, deletedAt: true, branchId: true },
+        },
+      },
     });
     const earliestByItem = new Map<string, number>();
+    const earliestByItemBranch = new Map<string, number>();
+    const keep = (m: Map<string, number>, key: string, ms: number) => {
+      const prev = m.get(key);
+      if (prev === undefined || ms < prev) m.set(key, ms);
+    };
     for (const l of links) {
       if (l.sample.deletedAt !== null || l.sample.acceptedAt == null) continue;
       const ms = l.sample.acceptedAt.getTime();
-      const prev = earliestByItem.get(l.orderItemId);
-      if (prev === undefined || ms < prev)
-        earliestByItem.set(l.orderItemId, ms);
+      keep(earliestByItem, l.orderItemId, ms);
+      keep(earliestByItemBranch, `${l.orderItemId}|${l.sample.branchId}`, ms);
     }
 
     const nowLocalMs = new Date();
     for (const r of inflight) {
-      const startMs = earliestByItem.get(r.orderItemId);
+      const startMs =
+        earliestByItemBranch.get(`${r.orderItemId}|${r.branchId}`) ??
+        earliestByItem.get(r.orderItemId);
       if (startMs === undefined || shifts.length === 0) {
         result.set(r.id, {
           band: null,
@@ -653,7 +692,7 @@ export class TatService {
         });
         continue;
       }
-      const test = r.orderItem?.branchLabTest ?? null;
+      const test = r.performingEntry ?? r.orderItem?.branchLabTest ?? null;
       const panel = r.orderItem?.branchLabPanel ?? null;
       const evaluation = evaluateTat(
         toBranchLocalInstant(new Date(startMs), timezone),
@@ -703,9 +742,13 @@ export class TatService {
     // B2B Referral Panel isolation: constrain the analytics to the panel's own
     // reports (nested via orderItem.order), same as the worklist.
     const panelId = getReferralPanelId();
-    if (panelId) {
-      where.orderItem = { order: { referralPanelId: panelId } };
-    }
+    // Cancelled orders are not live work: left out of the analytics.
+    where.orderItem = {
+      order: {
+        status: { not: OrderStatus.CANCELLED },
+        ...(panelId ? { referralPanelId: panelId } : {}),
+      },
+    };
 
     const grouped = await this.prisma.labReport.groupBy({
       by: ['tatBand'],

@@ -1,0 +1,54 @@
+meta {
+  name: 10 EMI Submit Result - Lab Test Not Linked
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{emiBaseUrl}}/emi/submitResult
+  body: text
+  auth: none
+}
+
+headers {
+  TOKEN: {{unmappedTestAdapterToken}}
+  Content-Type: text/plain
+}
+
+body:text {
+  {
+    "tube_no": "{{sampleBarcode}}",
+    "original_tube_no": "{{sampleBarcode}}",
+    "result_date": "1668583670356",
+    "status": "-1",
+    "local_db_status": "1",
+    "test_results": [
+      {
+        "test_result": "{{emiResultValue}}",
+        "test_name": "Hemoglobin",
+        "display_name": "Hemoglobin",
+        "universal_test_id": "{{emiParamCode}}",
+        "unit": "{{emiParamUnit}}"
+      }
+    ],
+    "comment": "mapping-gate negative test (lab test not linked)"
+  }
+}
+
+tests {
+  test("rejected with lab-test error (s=400)", function () {
+    expect(res.body.s).to.equal("400");
+    expect(res.body.m).to.equal("The requested lab test is not linked to this lab adapter.");
+  });
+  test("nothing was filled (no test_status count)", function () {
+    expect(res.body.test_status || "").to.not.match(/test updated/);
+  });
+}
+
+docs {
+  **Lab-test gate — `POST /emi/submitResult`.** Submit using the test-unmapped
+  adapter (branch A ok, wrong test). Rejected **before any write** — no result
+  value, no report status change, no `AdapterResult` row:
+
+  `{ "s": "400", "m": "The requested lab test is not linked to this lab adapter." }`
+}

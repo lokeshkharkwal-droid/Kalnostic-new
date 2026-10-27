@@ -1,19 +1,30 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AccessionGroupingMode,
+  AuditAction,
+  AuditModule,
   OrderSample,
   OrderSampleStatusHistory,
   LabTestSample,
+  OrderStatus,
   Prisma,
   SamplePriority,
   SampleStatus,
   TransferKind,
+  TransferStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
+import { barcodeGroupKey } from './utils/barcode-group-key';
 import { timestampRange } from '../../common/utils/date-range.util';
+import {
+  buildCollectionProgressWhere,
+  deriveCollectionProgress,
+  COLLECTION_WORKFLOW_ITEM_WHERE,
+} from '../../common/utils/collection-progress.util';
+import type { CollectionProgress } from '../../common/utils/collection-progress.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
@@ -43,6 +54,10 @@ import {
   tatCreatedAtRange,
 } from './constants/tat.constant';
 import { CONTAINER_TYPE_LABELS } from './constants/container-type.constants';
+import {
+  ORDER_ITEM_REMOVED_REASON,
+  RECALLED_VIA_RETRIEVE_REASON,
+} from './constants/transfer-close-reasons.constant';
 import { AccessionSettingsService } from './accession-settings.service';
 import { BarcodeService } from './barcode.service';
 import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
@@ -77,8 +92,48 @@ import {
   AccessionNumberConflictException,
   OrderSampleNotFoundException,
   InvalidSampleTransitionException,
+  RetrieveBlockedException,
+  TransferWrongBranchException,
+  SampleOrderCancelledException,
+  SampleBarcodeLockedException,
+  SampleItemRemovedException,
+  SampleReturnOrderCancelledException,
+  SampleRepeatBlockedException,
+  SampleReturnBlockedException,
+  SampleRetrieveBlockedByResultException,
+  refusalMessage,
+  SampleSentToBranchException,
+  SendBlockedException,
   NoActiveLabelTemplateException,
 } from './exceptions/accession.exceptions';
+import {
+  PREVIOUS_HOLDER_MESSAGE,
+  isPreviousHolder,
+} from './utils/previous-holders.util';
+import { assertDestinationOffers } from './utils/destination-offers.util';
+import { escapeLike } from './utils/like-escape.util';
+import {
+  findPanelMemberEntryFor,
+  findSampleDefinitionAt,
+  findSetupAtBranch,
+  type PerformingSetup,
+} from './utils/performing-setup.util';
+import { PRE_ACCEPT_SAMPLE_STATUSES } from '../lab-report/utils/sent-out-report.util';
+import {
+  branchMayRead,
+  branchesWithStake,
+} from './utils/branch-read-scope.util';
+import { inLockOrder, inRequestOrder } from './utils/request-order.util';
+import {
+  findItemRemovedSampleIds,
+  isAllItemsRemoved,
+  isSampleItemRemoved,
+} from './utils/item-removed.util';
+import {
+  findReceiverReturns,
+  RETURNED_BY_RECEIVER_ACTION,
+} from './utils/returned-by-receiver.util';
+import { isHiddenFromReceiver } from './utils/receiver-visibility.util';
 
 /** Resolved display fields attached to a history row for the Audit Trail UI. */
 export interface AccessionHistoryActor {
@@ -106,16 +161,6 @@ interface SampleUnit {
   sampleFlow: boolean;
 }
 
-/**
- * The minimal shape needed to bucket a sample for grouping-aware barcode
- * assignment: its id plus the department + sample-name it belongs to.
- */
-interface BarcodeGroupable {
-  id: string;
-  departmentId: string | null;
-  sampleGroupLabel: string | null;
-}
-
 /** The scalar field writes + optional history reason an action applies. */
 interface ActionPatch {
   data: Prisma.OrderSampleUpdateInput;
@@ -140,6 +185,40 @@ interface ActionNote {
    * `FORCE_TARGET` status. `retrieve` is never forced (no forced target).
    */
   force?: boolean;
+  /**
+   * Internal, server-only marker: the transition is driven by the system (the
+   * receiving branch's Reject/Repeat returning a sent sample to its sender), not
+   * by a user action on the sample. It is the only way to move a `SENT_INTERNAL`
+   * sample other than Retrieve. Never set from a request DTO.
+   */
+  system?: boolean;
+  /**
+   * Server-only: the acting user's role (from the JWT), written on the Audit-log
+   * entries a Retrieve of a sent sample records. Never set from a request DTO.
+   */
+  actor?: { roleKey: string | null; roleLabel: string | null };
+}
+
+/** An open INTERNAL transfer a Retrieve takes back, with what its audit entries say. */
+interface RecalledTransfer {
+  id: string;
+  destinationBranchId: string | null;
+  transferStatus: TransferStatus;
+  logisticsType: string | null;
+}
+
+/**
+ * The audit trail of a Retrieve that took a sample back from another branch before
+ * that branch received it: the text added to the sender's history row and the
+ * Audit-log entries (one per branch that should be able to read it).
+ */
+interface RecallAuditInfo {
+  historyNote: string;
+  entries: Array<{
+    branchId: string | null;
+    description: string;
+    metadata: Prisma.InputJsonValue;
+  }>;
 }
 
 /**
@@ -161,6 +240,25 @@ function isTransferredStatus(status: SampleStatus): boolean {
 }
 
 /**
+ * The kind of hand-off a sample in a transferred status is out on (Sent → INTERNAL,
+ * Forwarded → EXTERNAL, Outsourced → OUTSOURCE); `null` for any other status.
+ * A recall unwinds ONLY this kind, so an older, already-closed transfer of another
+ * kind (e.g. an internal A→B rejection) stays on record as history.
+ */
+function transferKindOutFor(status: SampleStatus): TransferKind | null {
+  switch (status) {
+    case SampleStatus.SENT_INTERNAL:
+      return TransferKind.INTERNAL;
+    case SampleStatus.FORWARD_EXTERNAL:
+      return TransferKind.EXTERNAL;
+    case SampleStatus.OUTSOURCED:
+      return TransferKind.OUTSOURCE;
+    default:
+      return null;
+  }
+}
+
+/**
  * Order samples — the core per-(test × sample) entity of the accession module.
  * Tenant-scoped (RLS) + branch-level (CLAUDE.md §4.5/§4.7).
  *
@@ -176,6 +274,8 @@ function isTransferredStatus(status: SampleStatus): boolean {
  */
 @Injectable()
 export class OrderSampleService {
+  private readonly logger = new Logger(OrderSampleService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: AccessionSettingsService,
@@ -313,6 +413,9 @@ export class OrderSampleService {
       // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
+    // Sample-Flow-No samples are auto-collected + auto-accepted below; collect their
+    // ids so their grouping-aware barcodes are assigned in one batch after the loop.
+    const autoCollectedIds: string[] = [];
     for (const unit of units) {
       if (!unit.sample) continue; // labTestSampleId is mandatory
       const tenant = await tx.tenant.update({
@@ -321,15 +424,16 @@ export class OrderSampleService {
         select: { accessionCounter: true },
       });
       const accessionNo = `ACC-${String(tenant.accessionCounter).padStart(5, '0')}`;
-      // Sample Flow = No: skip collection entirely — the sample is born ACCEPTED
-      // so the test proceeds straight to the technician (LabReports created below).
-      // Sample Flow = Yes (default): born NEW and follows the normal collect →
-      // accept workflow. A barcode is still assigned only on collect, so an
-      // auto-accepted sample keeps `barcode = null`.
+      // Sample Flow = No: the sample does NOT bypass the lab workflow — the full
+      // collect → accept lifecycle is run automatically here, at order creation, so
+      // the sample is born ACCEPTED with a real Collection + Acceptance time (and a
+      // barcode, assigned after this loop) and proceeds straight to the technician.
+      // Sample Flow = Yes (default): born NEW and follows the normal MANUAL collect →
+      // accept workflow (barcode assigned when the sample is actually collected).
       const autoAccept = !unit.sampleFlow;
-      // Single timestamp for the auto-accept received+accepted pair (mirrors the
-      // normal `accept` transition, which stamps both receivedAt and acceptedAt).
-      const acceptedNow = autoAccept ? new Date() : null;
+      // One timestamp for the auto collect + accept pair (collectedAt / receivedAt /
+      // acceptedAt), mirroring the manual `collect` then `accept` transitions.
+      const stampNow = autoAccept ? new Date() : null;
       const created = await tx.orderSample.create({
         data: {
           tenantId,
@@ -348,8 +452,13 @@ export class OrderSampleService {
             unit.sample.containerType ??
             'General',
           status: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
-          receivedAt: acceptedNow,
-          acceptedAt: acceptedNow,
+          // The status just before the final (accept) step, so a later Retrieve
+          // reverts an auto-accepted sample to COLLECTED (not NEW).
+          previousStatus: autoAccept ? SampleStatus.COLLECTED : null,
+          collectedAt: stampNow,
+          collectedBy: autoAccept ? personId : null,
+          receivedAt: stampNow,
+          acceptedAt: stampNow,
           originBranchId: branchId,
           processingBranchId: branchId,
           createdBy: personId,
@@ -363,17 +472,48 @@ export class OrderSampleService {
               testName: unit.testName,
             },
           },
+          // Record the real lifecycle so the Sample History reads coherently:
+          // generate → collect → accept for a Sample-Flow-No sample; just generate
+          // for a normal sample still awaiting manual collection.
           statusHistory: {
-            create: {
-              tenantId,
-              branchId,
-              action: 'generate',
-              toStatus: autoAccept ? SampleStatus.ACCEPTED : SampleStatus.NEW,
-              reason: autoAccept
-                ? 'Sample Flow = No: auto-accepted at generation; sample collection skipped'
-                : undefined,
-              changedBy: personId,
-            },
+            create: autoAccept
+              ? [
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'generate',
+                    toStatus: SampleStatus.NEW,
+                    changedBy: personId,
+                  },
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'collect',
+                    fromStatus: SampleStatus.NEW,
+                    toStatus: SampleStatus.COLLECTED,
+                    reason:
+                      'Sample Flow = No: auto-collected at order creation',
+                    changedBy: personId,
+                  },
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'accept',
+                    fromStatus: SampleStatus.COLLECTED,
+                    toStatus: SampleStatus.ACCEPTED,
+                    reason: 'Sample Flow = No: auto-accepted at order creation',
+                    changedBy: personId,
+                  },
+                ]
+              : [
+                  {
+                    tenantId,
+                    branchId,
+                    action: 'generate',
+                    toStatus: SampleStatus.NEW,
+                    changedBy: personId,
+                  },
+                ],
           },
         },
         select: { id: true },
@@ -383,6 +523,7 @@ export class OrderSampleService {
       // `tests.create` above is already persisted, so the OrderSampleTest row
       // this reads exists.
       if (autoAccept) {
+        autoCollectedIds.push(created.id);
         await this.ensureLabReportsForAcceptedSample(
           tx,
           tenantId,
@@ -392,37 +533,30 @@ export class OrderSampleService {
       }
     }
 
-    // Barcodes are no longer assigned at order creation — a sample is barcoded
-    // only when it is actually collected (see `assignBarcodesOnCollectInTx`,
-    // wired into every collect path). Samples are created here with
-    // `barcode = null` and get their sequential, grouping-aware barcode at the
-    // moment of collection. Sample Flow = No samples skip collection, so they
-    // stay `barcode = null`.
-  }
-
-  /**
-   * The barcode-grouping key for a sample under the tenant's grouping mode —
-   * samples sharing a key share one barcode. Mirrors the accession list's
-   * `actionScope`: Sample-wise = unique per row; Order-wise = whole order;
-   * Department-wise = per department; Dept+Sample = per department + sample name.
-   */
-  private barcodeGroupKey(
-    sample: BarcodeGroupable,
-    mode: AccessionGroupingMode,
-  ): string {
-    switch (mode) {
-      case AccessionGroupingMode.ORDER:
-        return 'ORDER';
-      case AccessionGroupingMode.DEPARTMENT:
-        return `DEPT::${sample.departmentId ?? 'none'}`;
-      case AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME:
-        return `DEPT_SAMPLE::${sample.departmentId ?? 'none'}::${
-          sample.sampleGroupLabel ?? 'General'
-        }`;
-      case AccessionGroupingMode.SAMPLE_NAME:
-      default:
-        // Sample-wise = a unique barcode per individual sample row.
-        return `SAMPLE::${sample.id}`;
+    // Assign the sequential, grouping-aware barcodes to the Sample-Flow-No samples
+    // auto-collected above — the SAME collect-time logic the manual collect path
+    // uses (members of one grouping bucket share one barcode). A branchless order
+    // has no barcode counter, so those samples stay unbarcoded for a later manual
+    // Assign Barcode. This runs INSIDE the order-creation transaction, so it is
+    // wrapped: a barcode-IMAGE upload failure (e.g. S3 down/unconfigured) must NEVER
+    // roll back the order — the samples' collect/accept timestamps are already
+    // persisted and the barcode can be assigned later. Sample Flow = Yes samples
+    // stay `barcode = null` until they are actually collected.
+    if (autoCollectedIds.length > 0) {
+      try {
+        await this.assignBarcodesOnCollectInTx(
+          tx,
+          tenantId,
+          personId,
+          autoCollectedIds,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Auto-barcode for Sample-Flow-No samples failed on order ${orderId}; left unbarcoded for manual Assign Barcode: ${String(
+            err,
+          )}`,
+        );
+      }
     }
   }
 
@@ -498,7 +632,7 @@ export class OrderSampleService {
     const existing = new Map<string, { barcode: string; url: string | null }>();
     for (const s of barcoded) {
       if (!s.barcode) continue;
-      const key = `${s.orderId}::${this.barcodeGroupKey(s, mode)}`;
+      const key = `${s.orderId}::${barcodeGroupKey(s, mode)}`;
       if (!existing.has(key)) {
         existing.set(key, { barcode: s.barcode, url: s.orderIdBarcode });
       }
@@ -510,7 +644,7 @@ export class OrderSampleService {
       { branchId: string | null; ids: string[] }
     >();
     for (const t of targets) {
-      const key = `${t.orderId}::${this.barcodeGroupKey(t, mode)}`;
+      const key = `${t.orderId}::${barcodeGroupKey(t, mode)}`;
       const bucket = buckets.get(key);
       if (bucket) bucket.ids.push(t.id);
       else buckets.set(key, { branchId: t.branchId, ids: [t.id] });
@@ -560,9 +694,16 @@ export class OrderSampleService {
    * Reconcile an order's accession samples with an item-set change made during an
    * order update, inside an existing tenant-scoped transaction. Added items get
    * fresh samples; removed items have their exclusively-linked samples voided
-   * (soft-deleted + CANCELLED) while samples shared with a surviving test keep the
-   * sample and drop only the removed test's OrderSampleTest link (soft-delete);
-   * the removed items' LabReports are soft-deleted. Kept items are untouched.
+   * (soft-deleted + CANCELLED, open transfers closed as REJECTED "Order item
+   * removed") while samples shared with a surviving test keep the sample and drop
+   * only the removed test's OrderSampleTest link (soft-delete); the removed items'
+   * LabReports are soft-deleted. EXCEPTION: a removed item with a report whose
+   * work sits at the holder (an in-house accepted sample, or a transfer already
+   * ACCEPTED at the receiving branch) is KEPT - samples, links, transfers and
+   * reports untouched - and frozen by the "test removed from order" guards (the
+   * removal is derived from the item's `deletedAt`). A sample still out in an
+   * IN_TRANSIT / PICKED_UP / RECEIVED transfer is always cleaned up as above.
+   * Kept items are untouched.
    * @param tx active Prisma transaction client (already tenant-scoped)
    * @param tenantId tenant scope
    * @param branchId active branch (from JWT profile; may be null)
@@ -598,12 +739,64 @@ export class OrderSampleService {
         },
         select: {
           id: true,
+          branchId: true,
+          status: true,
+          previousStatus: true,
+          sourceTransferId: true,
           tests: {
             where: { deletedAt: null },
             select: { id: true, orderItemId: true },
           },
         },
       });
+
+      // A removed item with at least one live report (any branch) has work behind
+      // it. Where that work actually sits at the holder - an in-house accepted
+      // sample, or a transfer already ACCEPTED (copy + report at the receiving
+      // branch) - the sample, links, transfers and reports are KEPT, frozen (the
+      // removal is derived from the item's `deletedAt`). A sample still out in a
+      // transfer that the receiver has not accepted (IN_TRANSIT / PICKED_UP /
+      // RECEIVED) has no work at the receiver: it takes the clean-up path below,
+      // report or not, exactly as before. Only an INTERNAL transfer can be "out" in
+      // that sense: an outsourced / forwarded tube never reaches a branch of ours,
+      // its report stays with the sender and is worked there, so its tracking status
+      // (which nobody may ever click through) must not decide anything - it is kept
+      // and frozen like any in-house tube.
+      const reported =
+        samples.length > 0
+          ? await tx.labReport.findMany({
+              where: {
+                orderItemId: { in: removedItemIds },
+                tenantId,
+                deletedAt: null,
+              },
+              select: { orderItemId: true },
+              distinct: ['orderItemId'],
+            })
+          : [];
+      const reportedItemIds = new Set(reported.map((r) => r.orderItemId));
+      const outSampleIds = new Set<string>();
+      if (reportedItemIds.size > 0) {
+        const out = await tx.sampleTransfer.findMany({
+          where: {
+            sampleId: { in: samples.map((s) => s.id) },
+            tenantId,
+            deletedAt: null,
+            kind: TransferKind.INTERNAL,
+            transferStatus: {
+              in: [
+                TransferStatus.IN_TRANSIT,
+                TransferStatus.PICKED_UP,
+                TransferStatus.RECEIVED,
+              ],
+            },
+          },
+          select: { sampleId: true },
+        });
+        for (const t of out) outSampleIds.add(t.sampleId);
+      }
+      // Removed items whose report is kept (so it must not be soft-deleted below).
+      const keptItemIds = new Set<string>();
 
       for (const sample of samples) {
         const removedLinks = sample.tests.filter((l) =>
@@ -613,8 +806,117 @@ export class OrderSampleService {
           (l) => !removedSet.has(l.orderItemId),
         );
 
+        // A RECEIVED COPY (the receiving branch accepted it, so its report and any
+        // typed results sit with that branch) that the branch has passed on to a
+        // third branch which has not accepted it yet: the work is still HERE, at the
+        // branch holding the copy - not at the branch it is travelling to. So the
+        // copy and its report are kept and frozen like any accepted copy; only the
+        // onward hop is called off (that transfer is closed as "Order item
+        // removed") and the copy goes back from Sent to the status it had before,
+        // since nothing is travelling any more. Voiding the copy here would leave
+        // the sender's A -> B transfer "Accepted" with no live copy.
+        if (
+          outSampleIds.has(sample.id) &&
+          !!sample.sourceTransferId &&
+          removedLinks.some((l) => reportedItemIds.has(l.orderItemId))
+        ) {
+          await tx.sampleTransfer.updateMany({
+            where: {
+              sampleId: sample.id,
+              tenantId,
+              deletedAt: null,
+              kind: TransferKind.INTERNAL,
+              transferStatus: {
+                in: [
+                  TransferStatus.IN_TRANSIT,
+                  TransferStatus.PICKED_UP,
+                  TransferStatus.RECEIVED,
+                ],
+              },
+            },
+            data: {
+              transferStatus: TransferStatus.REJECTED,
+              rejectionReason: ORDER_ITEM_REMOVED_REASON,
+              clonedSampleId: null,
+              updatedBy: personId,
+            },
+          });
+          if (sample.status === SampleStatus.SENT_INTERNAL) {
+            const back =
+              sample.previousStatus &&
+              !isTransferredStatus(sample.previousStatus) &&
+              sample.previousStatus !== SampleStatus.CANCELLED &&
+              sample.previousStatus !== SampleStatus.DISCARDED
+                ? sample.previousStatus
+                : SampleStatus.ACCEPTED;
+            await tx.orderSample.update({
+              where: { id: sample.id },
+              data: {
+                status: back,
+                previousStatus: SampleStatus.SENT_INTERNAL,
+                processingBranchId: sample.branchId,
+                dispatchedAt: null,
+                logisticsType: null,
+                logisticsPerson: null,
+                updatedBy: personId,
+                statusHistory: {
+                  create: {
+                    tenantId,
+                    branchId: sample.branchId,
+                    action: 'order-item-removed',
+                    fromStatus: SampleStatus.SENT_INTERNAL,
+                    toStatus: back,
+                    reason: ORDER_ITEM_REMOVED_REASON,
+                    changedBy: personId,
+                  },
+                },
+              },
+            });
+          }
+          for (const l of removedLinks) keptItemIds.add(l.orderItemId);
+          continue;
+        }
+
+        // Work sits here (see above): the tube stays whole, with every removed
+        // link on it (a report-less one too - it is frozen with the rest).
+        if (
+          !outSampleIds.has(sample.id) &&
+          removedLinks.some((l) => reportedItemIds.has(l.orderItemId))
+        ) {
+          for (const l of removedLinks) keptItemIds.add(l.orderItemId);
+          continue;
+        }
+
         if (survivingLinks.length === 0) {
-          // Sample is exclusively tied to removed items — void it.
+          // Sample is exclusively tied to removed items — void it. Any transfer
+          // of it still open is closed too: otherwise the receiving branch keeps a
+          // transfer for a sample that no longer exists (its Accept fails with
+          // "sample not found", or - once ACCEPTED - it stays "Accepted" for ever
+          // with no live copy and its Repeat / Reject fail). An ACCEPTED transfer's
+          // copy at the receiving branch is voided by this same loop (it is linked
+          // to the removed item too), so its link is cleared, as Reject-after-Accept
+          // does.
+          await tx.sampleTransfer.updateMany({
+            where: {
+              sampleId: sample.id,
+              tenantId,
+              deletedAt: null,
+              transferStatus: {
+                in: [
+                  TransferStatus.IN_TRANSIT,
+                  TransferStatus.PICKED_UP,
+                  TransferStatus.RECEIVED,
+                  TransferStatus.ACCEPTED,
+                ],
+              },
+            },
+            data: {
+              transferStatus: TransferStatus.REJECTED,
+              rejectionReason: ORDER_ITEM_REMOVED_REASON,
+              clonedSampleId: null,
+              updatedBy: personId,
+            },
+          });
           await tx.orderSample.update({
             where: { id: sample.id },
             data: {
@@ -641,11 +943,14 @@ export class OrderSampleService {
         }
       }
 
-      // Soft-delete all LabReports belonging to the removed order items.
-      // A deletion guard upstream ensures none are past PENDING/PARTIAL_PENDING.
+      // Soft-delete the LabReports of the removed order items whose work was not
+      // kept above (a report-less item has none; one that was still out in an
+      // unaccepted transfer has its untouched, view-only report removed as before).
       await tx.labReport.updateMany({
         where: {
-          orderItemId: { in: removedItemIds },
+          orderItemId: {
+            in: removedItemIds.filter((id) => !keptItemIds.has(id)),
+          },
           tenantId,
           deletedAt: null,
         },
@@ -680,9 +985,10 @@ export class OrderSampleService {
    * the §A.9 `collect` transition → `COLLECTED` (stamping `collectedAt`/
    * `collectedBy`/`tubeType`, and — at collection time — a sequential,
    * grouping-aware barcode via `assignBarcodesOnCollectInTx`, regardless of
-   * `print`) and appends a history row. Because a sample is
-   * one physical tube shared by several tests, all sibling order items on a
-   * transitioned sample are stamped collected too (a tube is drawn once).
+   * `print`) and appends a history row. Because a sample is one physical tube
+   * shared by several tests, the tests it carries are collected with it; an
+   * order item is stamped collected once all of its own samples are collected
+   * (a multi-tube panel only after its last tube).
    * Idempotent: samples already past `NEW`/`HOLD`/`REPEAT` are skipped, so a
    * repeat click is a no-op. Safe no-op when the order has no samples yet (e.g.
    * a DRAFT / non-diagnostic order): nothing to transition.
@@ -750,8 +1056,16 @@ export class OrderSampleService {
       where: { id: { in: sampleIds }, tenantId, deletedAt: null },
       select: { id: true, status: true },
     });
-    const collectable = samples.filter((s) =>
-      COLLECTABLE_SAMPLE_STATUSES.includes(s.status),
+    // A sample whose test was removed from the order is frozen (kept only for the
+    // tube's wind-down), so a group / order collect passes it by instead of failing.
+    const removed = await findItemRemovedSampleIds(
+      tx,
+      tenantId,
+      samples.map((s) => s.id),
+    );
+    const collectable = samples.filter(
+      (s) =>
+        COLLECTABLE_SAMPLE_STATUSES.includes(s.status) && !removed.has(s.id),
     );
     if (collectable.length === 0) return;
 
@@ -776,10 +1090,10 @@ export class OrderSampleService {
    * Collect one accession sample inside an existing (already tenant-scoped)
    * transaction: apply the §A.9 `collect` transition → `COLLECTED` (stamping
    * `collectedAt`/`collectedBy`/`tubeType`; the barcode is assigned separately,
-   * grouping-aware, by the batch caller `collectSamplesInTx`), then — because a
-   * sample is one
-   * physical tube shared by several tests — stamp every sibling order item on
-   * the sample collected too (a tube is drawn once). The caller must have already
+   * grouping-aware, by the batch caller `collectSamplesInTx`), then stamp each
+   * order item the sample carries as collected — but only once that item has no
+   * OTHER sample still awaiting collection, so a multi-sample panel is not marked
+   * collected after just its first tube. The caller must have already
    * confirmed the sample is in a collectable status. Shared by
    * {@link collectSamplesInTx} (group / per-item collect bridges).
    * @param now the shared collection timestamp for the batch
@@ -822,18 +1136,33 @@ export class OrderSampleService {
       { notes: opts.notes, attachmentUrl: opts.attachmentUrl },
     );
 
-    // A tube is drawn once → every test it carries is collected together.
-    // Stamp all sibling order items on this sample (preserve already-set
-    // timestamps via `collectedAt: null`).
+    // A tube is drawn once → the tests it carries are collected with it. But an
+    // order item (notably a panel) can span SEVERAL tubes, so it is only truly
+    // collected once none of its samples remain to be drawn. Stamp each order
+    // item this sample carries only when it has no OTHER sample still awaiting
+    // collection — otherwise a multi-sample panel would read as collected after
+    // just its first tube. The just-collected sample is already `COLLECTED` (and
+    // carries `collectedAt`) at this point, so it is excluded from the pending
+    // count. (`collectedAt: null` in the update guard preserves an existing stamp.)
     const siblings = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
       select: { orderItemId: true },
     });
-    const siblingIds = siblings.map((t) => t.orderItemId);
-    if (siblingIds.length > 0) {
+    const siblingItemIds = [...new Set(siblings.map((t) => t.orderItemId))];
+    for (const orderItemId of siblingItemIds) {
+      const pendingSamples = await tx.orderSample.count({
+        where: {
+          tenantId,
+          deletedAt: null,
+          collectedAt: null,
+          status: { in: [...COLLECTABLE_SAMPLE_STATUSES] },
+          tests: { some: { orderItemId, tenantId, deletedAt: null } },
+        },
+      });
+      if (pendingSamples > 0) continue;
       await tx.orderItem.updateMany({
         where: {
-          id: { in: siblingIds },
+          id: orderItemId,
           tenantId,
           deletedAt: null,
           collectedAt: null,
@@ -892,9 +1221,16 @@ export class OrderSampleService {
       const count = await tx.orderSample.count({ where });
       return [rows, count] as const;
     });
-    const items: OrderSampleListItem[] = data.map((row) => ({
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      data.map((r) => r.id),
+    );
+    const named = await this.withTransferNames(tenantId, data);
+    const items: OrderSampleListItem[] = named.map((row) => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+      itemRemoved: removedIds.has(row.id),
     }));
     return paginated(items, total, page, limit);
   }
@@ -938,9 +1274,8 @@ export class OrderSampleService {
       scopeIds,
     );
 
-    const { orderIds, total, rows, mode } = await this.prisma.withTenant(
-      tenantId,
-      async (tx) => {
+    const { orderIds, total, rows, mode, collectionByOrderId } =
+      await this.prisma.withTenant(tenantId, async (tx) => {
         const tenant = await tx.tenant.findUnique({
           where: { id: tenantId },
           select: { groupingMode: true },
@@ -967,9 +1302,45 @@ export class OrderSampleService {
           include: SAMPLE_LIST_INCLUDE,
           orderBy: { createdAt: 'desc' },
         });
-        return { orderIds, total: allGroups.length, rows, mode };
-      },
-    );
+
+        // Order-level collection progress for the page's orders — one bounded
+        // query over the workflow items' `collectedAt` (bill-only items excluded),
+        // folded into collected/total per order (§A.6 "Collection Status" column).
+        const itemRows =
+          orderIds.length > 0
+            ? await tx.orderItem.findMany({
+                where: {
+                  orderId: { in: orderIds },
+                  tenantId,
+                  deletedAt: null,
+                  ...COLLECTION_WORKFLOW_ITEM_WHERE,
+                },
+                select: { orderId: true, collectedAt: true },
+              })
+            : [];
+        const counts = new Map<string, { collected: number; total: number }>();
+        for (const it of itemRows) {
+          const c = counts.get(it.orderId) ?? { collected: 0, total: 0 };
+          c.total += 1;
+          if (it.collectedAt) c.collected += 1;
+          counts.set(it.orderId, c);
+        }
+        const collectionByOrderId = new Map<string, CollectionProgress>();
+        for (const [orderId, c] of counts) {
+          collectionByOrderId.set(
+            orderId,
+            deriveCollectionProgress(c.collected, c.total),
+          );
+        }
+
+        return {
+          orderIds,
+          total: allGroups.length,
+          rows,
+          mode,
+          collectionByOrderId,
+        };
+      });
 
     // Batch-resolve department names for the rows in view.
     const deptIds = [
@@ -987,22 +1358,33 @@ export class OrderSampleService {
       );
       depts.forEach((d) => deptNameById.set(d.id, d.name));
     }
+    // Samples whose test was removed from the order (one query for the page).
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      rows.map((r) => r.id),
+    );
+
+    // The destination / center names the "Send details" column shows (one lookup per page).
+    const namedRows = await this.withTransferNames(tenantId, rows);
 
     // Assemble one InHouseOrderGroup per paged order id (order-first).
     const groups: InHouseOrderGroup[] = [];
     for (const orderId of orderIds) {
-      const orderRows = rows.filter((r) => r.orderId === orderId);
+      const orderRows = namedRows.filter((r) => r.orderId === orderId);
       if (orderRows.length === 0) continue;
-      groups.push(
-        this.buildOrderGroup(
+      groups.push({
+        ...this.buildOrderGroup(
           orderId,
           orderRows,
           mode,
           deptNameById,
           tat,
           nowMs,
+          removedIds,
         ),
-      );
+        collectionStatus: collectionByOrderId.get(orderId) ?? 'PENDING',
+      });
     }
 
     return paginated(groups, total, page, limit);
@@ -1015,7 +1397,16 @@ export class OrderSampleService {
    * orders. Powers the Product Overview modal's grouped Test Details, so its
    * groups/barcodes/action-scope match `/accession/inhouse-orders` exactly.
    * Scoped by tenant + order id only (no branch filter): the modal always
-   * targets a specific order the caller just created/opened.
+   * targets a specific order the caller just created/opened, and a user with
+   * access to several branches must be able to see the order across them.
+   *
+   * One physical sample sent between branches has several rows (the sender's
+   * original and each receiving branch's copy). The overview lists the order's
+   * tests, not its sample records, so a sender's original whose transfer was
+   * accepted — and which therefore has a live copy — is left out
+   * ({@link supersededSampleIds}); the row of the branch that currently holds the
+   * sample is the one shown. A transfer still on its way has no copy yet, so the
+   * original stays visible as "Sent".
    * @param tenantId tenant scope (from JWT)
    * @param orderId the order whose samples to group
    * @returns the order's grouped samples, or `null` when it has none yet (e.g. a
@@ -1040,11 +1431,16 @@ export class OrderSampleService {
         });
         const mode =
           tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
-        const rows = await tx.orderSample.findMany({
+        const found = await tx.orderSample.findMany({
           where: { orderId, tenantId, deletedAt: null },
           include: SAMPLE_LIST_INCLUDE,
           orderBy: { createdAt: 'desc' },
         });
+        const superseded = await this.supersededSampleIds(tx, tenantId, found);
+        const rows =
+          superseded.size > 0
+            ? found.filter((r) => !superseded.has(r.id))
+            : found;
         return { rows, mode };
       },
     );
@@ -1068,7 +1464,75 @@ export class OrderSampleService {
       depts.forEach((d) => deptNameById.set(d.id, d.name));
     }
 
-    return this.buildOrderGroup(orderId, rows, mode, deptNameById, tat, nowMs);
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      rows.map((r) => r.id),
+    );
+
+    return this.buildOrderGroup(
+      orderId,
+      rows,
+      mode,
+      deptNameById,
+      tat,
+      nowMs,
+      removedIds,
+    );
+  }
+
+  /**
+   * Ids of samples that an accepted internal transfer has superseded. A
+   * `SENT_INTERNAL` sample with an `ACCEPTED` INTERNAL transfer is superseded
+   * when a live sample of the same order exists at the transfer's destination
+   * branch and carries all of its tests — that is the receiving branch's copy
+   * (made when the transfer was accepted, with the same order items / tests), and
+   * it is now the record of the branch holding the sample. The sender's original
+   * is just history. Matching on the full (order item, test) set keeps the
+   * samples of a panel's different member tests apart, and an accepted transfer
+   * whose copy was since voided supersedes nothing — the original stays.
+   * Needs only the rows already loaded plus one transfer query.
+   */
+  private async supersededSampleIds(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    rows: ReadonlyArray<{
+      id: string;
+      status: SampleStatus;
+      branchId: string | null;
+      tests: ReadonlyArray<{ orderItemId: string; labTestId: string | null }>;
+    }>,
+  ): Promise<Set<string>> {
+    const sent = rows.filter((r) => r.status === SampleStatus.SENT_INTERNAL);
+    if (sent.length === 0) return new Set();
+    const accepted = await tx.sampleTransfer.findMany({
+      where: {
+        tenantId,
+        sampleId: { in: sent.map((r) => r.id) },
+        kind: TransferKind.INTERNAL,
+        transferStatus: TransferStatus.ACCEPTED,
+        deletedAt: null,
+        destinationBranchId: { not: null },
+      },
+      select: { sampleId: true, destinationBranchId: true },
+    });
+    const testKey = (t: { orderItemId: string; labTestId: string | null }) =>
+      `${t.orderItemId}:${t.labTestId ?? ''}`;
+    const superseded = new Set<string>();
+    for (const t of accepted) {
+      const original = sent.find((r) => r.id === t.sampleId);
+      if (!original || original.tests.length === 0) continue;
+      const needed = original.tests.map(testKey);
+      const hasCopy = rows.some((c) => {
+        if (c.id === original.id || c.branchId !== t.destinationBranchId) {
+          return false;
+        }
+        const have = new Set(c.tests.map(testKey));
+        return needed.every((k) => have.has(k));
+      });
+      if (hasCopy) superseded.add(original.id);
+    }
+    return superseded;
   }
 
   /**
@@ -1082,7 +1546,8 @@ export class OrderSampleService {
    * barcode grouping and the action scope always agree with the tenant's current
    * Group Settings — even after the mode is changed, a sample is missing a
    * barcode, or a barcode was edited. Shared by {@link findAllGrouped} (list)
-   * and {@link findOrderGrouped} (single order).
+   * and {@link findOrderGrouped} (single order). `itemRemovedIds` are the samples
+   * whose test was removed from the order (each row's `itemRemoved` flag).
    */
   private buildOrderGroup(
     orderId: string,
@@ -1091,10 +1556,12 @@ export class OrderSampleService {
     deptNameById: Map<string, string>,
     tat: TatThresholds,
     nowMs: number,
+    itemRemovedIds: ReadonlySet<string> = new Set(),
   ): InHouseOrderGroup {
     const toItem = (row: OrderSampleListRow): GroupedSampleItem => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+      itemRemoved: itemRemovedIds.has(row.id),
       departmentName: row.departmentId
         ? (deptNameById.get(row.departmentId) ?? null)
         : null,
@@ -1111,7 +1578,7 @@ export class OrderSampleService {
 
     const buckets = new Map<string, GroupedSampleItem[]>();
     for (const it of items) {
-      const bucketKey = this.barcodeGroupKey(it, mode);
+      const bucketKey = barcodeGroupKey(it, mode);
       const arr = buckets.get(bucketKey);
       if (arr) arr.push(it);
       else buckets.set(bucketKey, [it]);
@@ -1235,9 +1702,19 @@ export class OrderSampleService {
    * order/patient), scoped to the tenant (Sample Overview — PDF §A.10.4).
    * @param id sample id
    * @param tenantId tenant scope
-   * @throws OrderSampleNotFoundException if missing/soft-deleted/other tenant
+   * @param actingBranchId the caller's ACTIVE branch. When given, the sample must
+   *   have a stake in that branch (see {@link branchMayReadSample}), otherwise it
+   *   is reported as not found. Omit (or null, for a tenant-wide caller such as
+   *   the business admin) to read without the branch check - the service's own
+   *   internal reads do.
+   * @throws OrderSampleNotFoundException if missing/soft-deleted/other tenant, or
+   *   if it has no stake in the caller's branch
    */
-  async findById(id: string, tenantId: string): Promise<OrderSampleDetail> {
+  async findById(
+    id: string,
+    tenantId: string,
+    actingBranchId?: string | null,
+  ): Promise<OrderSampleDetail> {
     const sample = await this.prisma.orderSample.findFirst({
       where: { id, tenantId, deletedAt: null },
       include: SAMPLE_INCLUDE,
@@ -1245,7 +1722,61 @@ export class OrderSampleService {
     if (!sample) {
       throw new OrderSampleNotFoundException(id);
     }
+    if (
+      actingBranchId &&
+      !(await this.branchMayReadSample(id, tenantId, actingBranchId))
+    ) {
+      // Same answer as a missing sample: do not confirm that it exists.
+      throw new OrderSampleNotFoundException(id);
+    }
     return this.withDepartments(sample, tenantId);
+  }
+
+  /**
+   * Whether a branch has a stake in a sample - holds it, created it, processes it,
+   * has had it, booked its order, or sent / received a transfer that moved it, its
+   * copy or the transfer that produced it. Reads by id (Sample Overview, History,
+   * the transfer detail) are limited to these branches, so a branch that never
+   * touched a sample cannot open it by guessing or reusing an id.
+   * @param sampleId the sample to check
+   * @param tenantId tenant scope
+   * @param actingBranchId the caller's active branch
+   */
+  async branchMayReadSample(
+    sampleId: string,
+    tenantId: string,
+    actingBranchId: string | null | undefined,
+  ): Promise<boolean> {
+    if (!actingBranchId) return true;
+    const sample = await this.prisma.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      select: {
+        branchId: true,
+        originBranchId: true,
+        processingBranchId: true,
+        heldBranchIds: true,
+        sourceTransferId: true,
+        order: { select: { branchId: true } },
+      },
+    });
+    if (!sample) return false;
+    const transfers = await this.prisma.sampleTransfer.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        OR: [
+          { sampleId },
+          { clonedSampleId: sampleId },
+          ...(sample.sourceTransferId ? [{ id: sample.sourceTransferId }] : []),
+        ],
+      },
+      select: {
+        branchId: true,
+        originBranchId: true,
+        destinationBranchId: true,
+      },
+    });
+    return branchMayRead(actingBranchId, branchesWithStake(sample, transfers));
   }
 
   /**
@@ -1339,6 +1870,9 @@ export class OrderSampleService {
       tests,
       transfers,
       departmentLabel: distinct.length > 0 ? distinct.join(', ') : null,
+      // Derived from the sample's own test links (already loaded): the test was
+      // removed from the order when every live link belongs to a removed item.
+      itemRemoved: isAllItemsRemoved(sample.tests),
     };
   }
 
@@ -1355,22 +1889,86 @@ export class OrderSampleService {
    * correctly has an empty trail.
    * @param id sample id
    * @param tenantId tenant scope
-   * @throws OrderSampleNotFoundException if the sample is missing
+   * @param branchId the caller's active branch: the sample must have a stake in it
+   *   (null for a tenant-wide caller reads without the check)
+   * @throws OrderSampleNotFoundException if the sample is missing, or has no stake
+   *   in the caller's branch
    */
   async findHistory(
     id: string,
     tenantId: string,
     branchId: string | null,
   ): Promise<Array<OrderSampleStatusHistory & AccessionHistoryActor>> {
-    await this.findById(id, tenantId);
+    const sample = await this.findById(id, tenantId, branchId);
     const rows = await this.prisma.orderSampleStatusHistory.findMany({
       where: { sampleId: id, tenantId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
+    // A copy created by an accepted transfer is born ACCEPTED, so its single
+    // `transfer-accept` row has no `fromStatus` - but it is the one fact the
+    // receiving branch's trail has ("accepted from another branch"), so it is kept.
+    // Likewise the sender's `returned-by-receiver` row changes no status, yet it is
+    // how "the receiving branch sent it back, and why" reaches the sender's trail.
     const movements = rows.filter(
-      (r) => r.fromStatus !== null && r.fromStatus !== r.toStatus,
+      (r) =>
+        (r.fromStatus !== null && r.fromStatus !== r.toStatus) ||
+        r.action === 'transfer-accept' ||
+        r.action === RETURNED_BY_RECEIVER_ACTION,
     );
-    return this.enrichHistoryActors(movements, tenantId, branchId);
+    // A cancelled order shows its cancellation in the trail too, at its place in
+    // the timeline (newest first, like every other entry).
+    const cancelled = await this.orderCancelledEntry(tenantId, sample);
+    const trail = cancelled
+      ? [...movements, cancelled].sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        )
+      : movements;
+    return this.enrichHistoryActors(trail, tenantId, branchId);
+  }
+
+  /**
+   * The "Order cancelled" line of a sample's audit trail, read from the order
+   * itself (no history row is written, so orders cancelled before this existed
+   * show it too): who last changed the order and when - the cancel, unless a later
+   * change such as a refund moved it. Null when the order is not cancelled.
+   * Built in the shape of a history row so the trail renders it like the others;
+   * `action = 'order-cancelled'` marks it and its statuses are not a transition.
+   */
+  private async orderCancelledEntry(
+    tenantId: string,
+    sample: {
+      id: string;
+      orderId: string;
+      branchId: string | null;
+      status: SampleStatus;
+    },
+  ): Promise<OrderSampleStatusHistory | null> {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id: sample.orderId,
+        tenantId,
+        status: OrderStatus.CANCELLED,
+        deletedAt: null,
+      },
+      select: { id: true, updatedAt: true, updatedBy: true },
+    });
+    if (!order) return null;
+    return {
+      id: `order-cancelled:${order.id}`,
+      tenantId,
+      branchId: sample.branchId,
+      sampleId: sample.id,
+      action: 'order-cancelled',
+      fromStatus: null,
+      toStatus: sample.status,
+      reason: null,
+      notes: null,
+      attachmentUrl: null,
+      changedBy: order.updatedBy ?? null,
+      createdAt: order.updatedAt,
+      updatedAt: order.updatedAt,
+      deletedAt: null,
+    };
   }
 
   /**
@@ -1779,13 +2377,27 @@ export class OrderSampleService {
     );
   }
 
-  /** Error — Halt → Error. */
+  /**
+   * Error — Halt → Error. A Sent sample may be flagged Error only after the
+   * receiving branch rejected it, and only by the branch that sent it:
+   * `actingBranchId` (the caller's active branch) is then checked against the
+   * sample's own branch, exactly like Retrieve. Omitted by internal callers.
+   */
   async error(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: SampleNoteDto,
+    actingBranchId?: string | null,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    if (actingBranchId !== undefined) {
+      await this.assertRetrieverIsSender(
+        ids,
+        tenantId,
+        actingBranchId,
+        'error',
+      );
+    }
     const result = await this.transitionIds(
       ids,
       tenantId,
@@ -1821,29 +2433,641 @@ export class OrderSampleService {
     );
   }
 
-  /** Repeat — Acquired/Halt/Error → Repeat (records the repeat reason). */
+  /**
+   * Repeat — Acquired/Halt/Error → Repeat (records the repeat reason).
+   *
+   * A receiving-branch COPY of a transferred sample (`sourceTransferId` set) is
+   * not repeated in place: the test goes back to its sender (see
+   * {@link returnCopyToOrigin}) — allowed until its report's result is validated.
+   * Such copies are handled first, in their own transaction; every other id
+   * follows the normal transition path, where a Repeat also resets the report
+   * (see {@link reportsToResetOnRepeat}). A copy is voided, so the sender's
+   * original (still Sent, reading "Sent – Repeated") is reported in its place.
+   *
+   * A Sent sample is never treated as a copy here, even if it is one (a branch that
+   * received a sample and passed it on): for it, Repeat is the SENDER's confirmation
+   * after the next branch sent it back (see `isSentReturnAction`), and the normal
+   * path below applies the guard.
+   */
   async repeat(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: RepeatSampleDto,
+    actingBranchId?: string | null,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
-    const result = await this.transitionIds(
-      ids,
-      tenantId,
-      personId,
-      'repeat',
-      () => ({ data: {}, reason: dto.repeatReason }),
-      dto,
+    // A Sent sample may be repeated only after the receiving branch asked for a
+    // repeat, and only by the branch that sent it (the caller's active branch must
+    // be the sample's own branch, exactly like Retrieve). Omitted by internal callers.
+    if (actingBranchId !== undefined) {
+      await this.assertRetrieverIsSender(
+        ids,
+        tenantId,
+        actingBranchId,
+        'repeat',
+      );
+    }
+    const skippedCopies: BulkSkippedItem[] = [];
+    const skipInvalid = (dto as ActionNote).skipInvalid === true;
+    const copies = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.orderSample.findMany({
+        where: {
+          id: { in: ids },
+          tenantId,
+          deletedAt: null,
+          sourceTransferId: { not: null },
+          status: { not: SampleStatus.SENT_INTERNAL },
+        },
+        // one fixed order (ascending id), see `utils/request-order.util`
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          status: true,
+          sourceTransferId: true,
+          accessionNo: true,
+        },
+      }),
     );
+    const returnedOriginIds: string[] = [];
+    if (copies.length > 0) {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        for (const copy of copies) {
+          try {
+            returnedOriginIds.push(
+              await this.returnCopyToOrigin(
+                tx,
+                tenantId,
+                personId,
+                copy.id,
+                dto.repeatReason,
+              ),
+            );
+            // Keep the transfer row in step (no-op if it is already closed).
+            await tx.sampleTransfer.updateMany({
+              where: {
+                id: copy.sourceTransferId!,
+                tenantId,
+                deletedAt: null,
+                transferStatus: TransferStatus.ACCEPTED,
+              },
+              data: {
+                transferStatus: TransferStatus.REPEAT,
+                repeatReason: dto.repeatReason,
+                updatedBy: personId,
+              },
+            });
+          } catch (e) {
+            if (skipInvalid && e instanceof InvalidSampleTransitionException) {
+              skippedCopies.push({
+                id: copy.id,
+                accessionNo: copy.accessionNo ?? null,
+                reason: refusalMessage(e),
+                code: e.errorCode,
+              });
+              continue;
+            }
+            throw e;
+          }
+        }
+      });
+    }
+    const copyIds = new Set(copies.map((c) => c.id));
+    const restIds = ids.filter((id) => !copyIds.has(id));
+    const rest: BulkActionResult<OrderSampleWithRelations> =
+      restIds.length > 0
+        ? await this.transitionIds(
+            restIds,
+            tenantId,
+            personId,
+            'repeat',
+            () => ({ data: {}, reason: dto.repeatReason }),
+            dto,
+          )
+        : { succeeded: [], skipped: [] };
     // Fire-and-forget: inform the order's referring panel (B2B). Handled by
     // ClinicalEventListener; walk-in orders (no panel) are skipped there.
-    this.emitSampleFlagged(
-      'accession.sample.repeat',
-      tenantId,
-      result.succeeded,
+    this.emitSampleFlagged('accession.sample.repeat', tenantId, rest.succeeded);
+    // A returned copy is voided, so report the sender's original sample (still Sent)
+    // in its place - one entry per processed id (callers compare the count with
+    // what they asked for).
+    const returned = await Promise.all(
+      returnedOriginIds.map((id) => this.findById(id, tenantId)),
     );
-    return result;
+    return {
+      succeeded: [...returned, ...rest.succeeded],
+      skipped: [...skippedCopies, ...rest.skipped],
+    };
+  }
+
+  /**
+   * The user actions that stay allowed on a CANCELLED order's samples so a sample
+   * that is out at another branch can be wound down: Retrieve (the sender pulling
+   * back a sample the receiver has not received yet; the usual window still
+   * applies) and, for the receiving branch's own copy, Store then Discard (Discard
+   * is only legal from Stored, so Store must stay open too - otherwise a copy
+   * whose report was already worked on, which cannot be sent back, would have no
+   * way out).
+   */
+  private isCancelledOrderWindDown(
+    action: SampleAction,
+    sample: { sourceTransferId: string | null; status: SampleStatus },
+  ): boolean {
+    // Retrieve winds down only a sample that is OUT at another branch / partner. A
+    // sample that is back (or never left) is frozen like any other - Retrieve would
+    // otherwise keep stepping it back on a cancelled order.
+    if (action === 'retrieve') return isTransferredStatus(sample.status);
+    return (
+      (action === 'store' || action === 'discard') &&
+      sample.sourceTransferId !== null
+    );
+  }
+
+  /**
+   * Whether the order is CANCELLED - the one question every accession and
+   * transfer action asks before touching a sample, so a cancelled order's samples
+   * stay exactly as they were. Public so the transfer service shares it.
+   * @param tx active Prisma transaction client
+   * @param tenantId tenant scope
+   * @param orderId the sample's order
+   */
+  async isOrderCancelled(
+    tx: Pick<Prisma.TransactionClient, 'order'>,
+    tenantId: string,
+    orderId: string,
+  ): Promise<boolean> {
+    const cancelled = await tx.order.findFirst({
+      where: { id: orderId, tenantId, status: OrderStatus.CANCELLED },
+      select: { id: true },
+    });
+    return cancelled !== null;
+  }
+
+  /**
+   * Pre-checks for sending a sample to another branch (INTERNAL transfer), inside
+   * the caller's transaction. Refuses when:
+   *  - the destination is the sample's own branch;
+   *  - the sample already has an open transfer to another branch (in transit,
+   *    picked up, received or accepted) — no second transfer for the same sample;
+   *  - the report(s) the sample serves at the sending branch have already been
+   *    worked on (not PENDING, or holding results/notes/attachments) — a report
+   *    may only change branch while untouched.
+   * A missing sample is left for `transitionInTx` to report.
+   * @throws ValidationException for a same-branch destination
+   * @throws SendBlockedException for an open transfer or a worked-on report
+   *   (skippable by group "skip invalid" actions)
+   */
+  async assertInternalSendable(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+    destinationBranchId: string | null,
+  ): Promise<void> {
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      include: { tests: { where: { deletedAt: null } } },
+    });
+    if (!sample) return;
+    if (destinationBranchId && destinationBranchId === sample.branchId) {
+      throw new ValidationException(
+        "The destination branch cannot be the sample's own branch.",
+      );
+    }
+    // Never send a sample to a branch that has already held it (A -> B -> A,
+    // A -> B -> C -> B, ...). The way back to an earlier branch is Repeat.
+    if (destinationBranchId && isPreviousHolder(sample, destinationBranchId)) {
+      throw new SendBlockedException(sample.status, PREVIOUS_HOLDER_MESSAGE);
+    }
+    // The destination must offer every test on the tube (an active Lab Test List entry).
+    // Without a destination (centre assigned later) the same check runs at Assign Center.
+    if (destinationBranchId) {
+      await assertDestinationOffers(
+        tx,
+        tenantId,
+        [sampleId],
+        destinationBranchId,
+        'sender',
+        sample.status,
+      );
+    }
+    const open = await tx.sampleTransfer.findFirst({
+      where: {
+        sampleId,
+        tenantId,
+        deletedAt: null,
+        kind: TransferKind.INTERNAL,
+        transferStatus: {
+          in: [
+            TransferStatus.IN_TRANSIT,
+            TransferStatus.PICKED_UP,
+            TransferStatus.RECEIVED,
+            TransferStatus.ACCEPTED,
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    if (open) {
+      throw new SendBlockedException(
+        sample.status,
+        'This sample already has an open transfer to another branch.',
+      );
+    }
+    await this.assertReportsUntouched(tx, tenantId, sample, 'send');
+  }
+
+  /**
+   * Pre-check for Forward (partner lab) and Outsource (outsource center): like a Send
+   * to another branch, the sample may only go out while the report(s) it serves have
+   * not been worked on (still PENDING, no results / notes / attachments, not locked).
+   * Runs inside the caller's transaction, locking the reports first. A missing
+   * sample is left for `transitionInTx` to report.
+   * @throws SendBlockedException for a worked-on report (skippable by group "skip
+   *   invalid" actions); its message says why the sample cannot go out
+   */
+  async assertDispatchable(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+    action: 'forward' | 'outsource',
+  ): Promise<void> {
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      include: { tests: { where: { deletedAt: null } } },
+    });
+    if (!sample) return;
+    await this.assertReportsUntouched(tx, tenantId, sample, action);
+  }
+
+  /**
+   * Locks the reports the sample serves at its branch, then refuses (with a message
+   * naming `action`) when any of them has been worked on. Shared by Send, Forward and
+   * Outsource.
+   */
+  private async assertReportsUntouched(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: {
+      branchId: string | null;
+      status: SampleStatus;
+      tests: Array<{ orderItemId: string; labTestId: string | null }>;
+    },
+    action: 'send' | 'forward' | 'outsource',
+  ): Promise<void> {
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      sample.tests,
+    );
+    // Lock before checking, so a technician write still in flight is seen by the
+    // check (and one that starts later finds the report sent out).
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    const outcome =
+      action === 'send'
+        ? 'sent to another branch'
+        : action === 'forward'
+          ? 'forwarded to a partner lab'
+          : 'outsourced';
+    for (const reportId of reportIds) {
+      if (
+        !(await this.labReportService.isReportUntouched(tx, tenantId, reportId))
+      ) {
+        throw new SendBlockedException(
+          sample.status,
+          `The report for this test has already been worked on (results, notes or attachments exist, or it is past Pending), so the sample cannot be ${outcome}.`,
+          action,
+        );
+      }
+    }
+  }
+
+  /**
+   * Whether the sender may Repeat / flag Error on its Sent sample because the
+   * receiving branch sent it back: Repeat only when the latest INTERNAL transfer
+   * was closed as `REPEAT`, Error only when it was `REJECTED` by the receiving
+   * branch (a rejection the system wrote itself does not count). Every other Sent
+   * sample stays untouchable except for Retrieve.
+   */
+  private async isSentReturnAction(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+    action: 'repeat' | 'error',
+  ): Promise<boolean> {
+    const back = (await findReceiverReturns(tx, tenantId, [sampleId])).get(
+      sampleId,
+    );
+    if (!back) return false;
+    return action === 'repeat'
+      ? back.kind === 'REPEAT'
+      : back.kind === 'REJECTED';
+  }
+
+  /**
+   * Write the sender's trail entry for "the receiving branch sent this sample back"
+   * (Reject / Repeat / Return). The sender's tube does NOT move: it stays Sent and
+   * reads "Sent – Repeated" / "Sent – Rejected" until the sender decides, so this
+   * row (no status change; shown in the history, see {@link findHistory}) is how the
+   * reason reaches the sender's audit trail.
+   * @param originSampleId the sender's original (Sent) sample
+   * @param reason what the receiving branch gave as the reason
+   */
+  async recordReturnedByReceiverInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    originSampleId: string,
+    reason: string,
+  ): Promise<void> {
+    const origin = await tx.orderSample.findFirst({
+      where: { id: originSampleId, tenantId, deletedAt: null },
+      select: { id: true, branchId: true, status: true },
+    });
+    if (!origin) return;
+    await tx.orderSampleStatusHistory.create({
+      data: {
+        tenantId,
+        branchId: origin.branchId,
+        sampleId: origin.id,
+        action: RETURNED_BY_RECEIVER_ACTION,
+        fromStatus: origin.status,
+        toStatus: origin.status,
+        reason,
+        notes: `Returned by the receiving branch: ${reason}`,
+        changedBy: personId,
+      },
+    });
+  }
+
+  /**
+   * What a Retrieve of a sent sample says in the audit trail, for each open INTERNAL
+   * transfer it took back: the note added to the sender's history row, and the
+   * Audit-log entries - one under the SENDER's branch and one under the RECEIVING
+   * branch (so the Audit page's branch filter shows it under both). The receiving
+   * branch's entry is left out when it never saw the transfer: no center assigned
+   * yet, or hidden from it (In-Transit with no logistics type).
+   * Details: accession number, order, transfer id, destination, stage.
+   */
+  private async buildRecallAuditInfo(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+    recalled: RecalledTransfer[],
+  ): Promise<RecallAuditInfo> {
+    const branchIds = [
+      ...new Set(
+        [sample.branchId, ...recalled.map((t) => t.destinationBranchId)].filter(
+          (id): id is string => !!id,
+        ),
+      ),
+    ];
+    const [branches, order] = await Promise.all([
+      tx.branch.findMany({
+        where: { id: { in: branchIds }, tenantId },
+        select: { id: true, name: true },
+      }),
+      tx.order.findFirst({
+        where: { id: sample.orderId, tenantId },
+        select: { orderCode: true },
+      }),
+    ]);
+    const nameOf = (id: string | null): string | null =>
+      id ? (branches.find((b) => b.id === id)?.name ?? null) : null;
+    const senderName = nameOf(sample.branchId) ?? 'the sending branch';
+    const stageOf = (s: TransferStatus): string =>
+      s === TransferStatus.PICKED_UP ? 'Picked Up' : 'In-Transit';
+
+    const notes: string[] = [];
+    const entries: RecallAuditInfo['entries'] = [];
+    for (const t of recalled) {
+      const stage = stageOf(t.transferStatus);
+      const destName = nameOf(t.destinationBranchId);
+      const base = {
+        sampleId: sample.id,
+        accessionNo: sample.accessionNo,
+        orderCode: order?.orderCode ?? null,
+        transferId: t.id,
+        stage,
+        fromBranchId: sample.branchId,
+        fromBranch: senderName,
+        toBranchId: t.destinationBranchId,
+        toBranch: destName,
+      };
+      notes.push(
+        destName
+          ? `Retrieved from ${destName} while ${stage}`
+          : `Retrieved while ${stage} (no center assigned yet)`,
+      );
+      entries.push({
+        branchId: sample.branchId,
+        description: destName
+          ? `Retrieved sample ${sample.accessionNo} from ${destName} while ${stage}`
+          : `Retrieved sample ${sample.accessionNo} while ${stage} (no center assigned yet)`,
+        metadata: { ...base, side: 'sender' },
+      });
+      const receiverSawIt =
+        !!t.destinationBranchId &&
+        !isHiddenFromReceiver({
+          kind: TransferKind.INTERNAL,
+          transferStatus: t.transferStatus,
+          logisticsType: t.logisticsType,
+        });
+      if (receiverSawIt) {
+        entries.push({
+          branchId: t.destinationBranchId,
+          description: `Sample ${sample.accessionNo} was retrieved by ${senderName} before ${destName ?? 'your branch'} received it (it was ${stage})`,
+          metadata: { ...base, side: 'receiver' },
+        });
+      }
+    }
+    return { historyNote: notes.join('; '), entries };
+  }
+
+  /**
+   * Writes the Audit-log entries of {@link buildRecallAuditInfo} inside the caller's
+   * transaction (so they commit or roll back with the retrieve itself). The actor is
+   * the acting user and the role comes from the request. Skipped when there is no
+   * acting person (a system call).
+   */
+  private async writeRecallAuditInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    note: ActionNote,
+    info: RecallAuditInfo,
+  ): Promise<void> {
+    if (!personId) return;
+    for (const e of info.entries) {
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          branchId: e.branchId,
+          module: AuditModule.ACCESSION,
+          action: AuditAction.UPDATE,
+          description: e.description,
+          actorPersonId: personId,
+          actorRoleKey: note.actor?.roleKey ?? null,
+          actorRoleLabel: note.actor?.roleLabel ?? null,
+          resourceId:
+            (e.metadata as { sampleId?: string } | undefined)?.sampleId ?? null,
+          metadata: e.metadata,
+        },
+      });
+    }
+  }
+
+  /**
+   * Return a transferred test to its sender: the receiving branch's Repeat of its
+   * copy of the sample (after it accepted the transfer). Inside the caller's
+   * transaction —
+   *  0. refuses (`SampleSentToBranchException`) when the copy has itself been
+   *     passed on to another branch, a partner or an outsource centre
+   *     (`SENT_INTERNAL` / `FORWARD_EXTERNAL` / `OUTSOURCED`): it is out of this
+   *     branch's hands, so voiding it here would leave that onward transfer open
+   *     at the next branch with a sample and report nobody returned. The branch
+   *     must retrieve it first (possible only before the next branch receives it);
+   *  1. refuses (`SampleReturnBlockedException`) only when a report the copy
+   *     serves already has a validated result (Result Done, Approved, Published);
+   *     anything earlier is work in progress and is reset in step 3;
+   *  2. voids the copy (soft-delete + `CANCELLED` + history row) together with
+   *     its `OrderSampleTest` links, so it drops out of the receiver's lists and
+   *     nothing reads its stale status;
+   *  3. resets the report(s) (values cleared, back to PENDING, lock removed,
+   *     worklist entries dropped; notes/attachments kept) and hands them back to
+   *     the sender (clearing any NABL stopwatch);
+   *  4. leaves the sender's ORIGINAL sample in `SENT_INTERNAL` and records the
+   *     return (with its reason) on that sample's history. The sender then reads
+   *     "Sent – Repeated" / "Sent – Rejected" (from the transfer, which the caller
+   *     closes) and decides: Repeat, Error or Retrieve.
+   * The caller updates the `SampleTransfer` row itself.
+   * @returns the sender's original sample id (still `SENT_INTERNAL`)
+   * @param copyId the receiving branch's copy (must carry `sourceTransferId`)
+   * @param reason the receiver's repeat/reject reason, recorded on the history
+   * @param action which button the receiver pressed; only names the action in the
+   *   "already passed on" refusal (Reject and Repeat otherwise do the same thing)
+   * @throws OrderSampleNotFoundException if the copy, its transfer or the
+   *   original sample cannot be found
+   * @throws SampleSentToBranchException if the copy has been passed on already
+   * @throws SampleReturnBlockedException if a report's result is already validated
+   */
+  async returnCopyToOrigin(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    copyId: string,
+    reason: string,
+    action: 'repeat' | 'reject' = 'repeat',
+  ): Promise<string> {
+    const copy = await tx.orderSample.findFirst({
+      where: { id: copyId, tenantId, deletedAt: null },
+      include: { tests: { where: { deletedAt: null } } },
+    });
+    if (!copy || !copy.sourceTransferId) {
+      throw new OrderSampleNotFoundException(copyId);
+    }
+    // A copy whose test was removed from the order is frozen: it cannot be sent
+    // back (its report stays where it is).
+    if (await isSampleItemRemoved(tx, tenantId, copy.id)) {
+      throw new SampleItemRemovedException(action, copy.status);
+    }
+    // An order that was cancelled is frozen: the accepted copy (and the results
+    // typed on it) stays where it is, so it cannot be sent back - sending it back
+    // resets the report. Store then Discard remain the way to wind the tube down.
+    // This is the one place every road back goes through (the transfer's Reject /
+    // Repeat, the sample's own Repeat and Return).
+    if (await this.isOrderCancelled(tx, tenantId, copy.orderId)) {
+      throw new SampleReturnOrderCancelledException(action, copy.status);
+    }
+    // Checked before anything is read or written: a copy this branch has already
+    // passed on cannot be sent back (see the doc comment, step 0).
+    if (isTransferredStatus(copy.status)) {
+      throw new SampleSentToBranchException(action, copy.status);
+    }
+    const transfer = await tx.sampleTransfer.findFirst({
+      where: { id: copy.sourceTransferId, tenantId, deletedAt: null },
+    });
+    if (!transfer)
+      throw new OrderSampleNotFoundException(copy.sourceTransferId);
+    const origin = await tx.orderSample.findFirst({
+      where: { id: transfer.sampleId, tenantId, deletedAt: null },
+      select: { id: true, branchId: true },
+    });
+    if (!origin) throw new OrderSampleNotFoundException(transfer.sampleId);
+
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      copy.branchId,
+      copy.tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    // Only a validated result (Result Done, Approved, Published) stops the send-back;
+    // earlier work is reset below so the sending branch starts clean.
+    if (
+      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
+    ) {
+      throw new SampleReturnBlockedException(copy.status);
+    }
+
+    const now = new Date();
+    await tx.orderSampleTest.updateMany({
+      where: { sampleId: copy.id, deletedAt: null },
+      data: { deletedAt: now },
+    });
+    await tx.orderSample.update({
+      where: { id: copy.id },
+      data: {
+        deletedAt: now,
+        status: SampleStatus.CANCELLED,
+        previousStatus: copy.status,
+        updatedBy: personId,
+        statusHistory: {
+          create: {
+            tenantId,
+            branchId: copy.branchId,
+            action: 'returned-to-origin',
+            fromStatus: copy.status,
+            toStatus: SampleStatus.CANCELLED,
+            reason,
+            changedBy: personId,
+          },
+        },
+      },
+    });
+
+    await this.labReportService.resetReportsForReturn(
+      tx,
+      tenantId,
+      reportIds,
+      personId,
+    );
+    if (origin.branchId) {
+      await this.labReportService.moveReportsToBranch(
+        tx,
+        tenantId,
+        reportIds,
+        origin.branchId,
+      );
+      // Cleared first (above), now back on the SENDER's own copy of the test: its
+      // parameters, ranges and methods again, not the receiver's.
+      await this.pointReportsAtBranchSetup(
+        tx,
+        tenantId,
+        origin.branchId,
+        reportIds,
+      );
+    }
+    // The sender's original does NOT move: it stays Sent (reading "Sent – Repeated" /
+    // "Sent – Rejected" from the transfer the caller closes) until the sender
+    // chooses Repeat / Error / Retrieve. Only the trail entry is written.
+    await this.recordReturnedByReceiverInTx(
+      tx,
+      tenantId,
+      personId,
+      origin.id,
+      reason,
+    );
+    return origin.id;
   }
 
   /**
@@ -1900,23 +3124,123 @@ export class OrderSampleService {
     );
   }
 
-  /** Return — Accepted/Error/Stored → Returned (records the handover person). */
+  /**
+   * Return — Accepted/Error/Stored → Returned (records the handover person).
+   *
+   * A copy that arrived from another branch (an accepted INTERNAL transfer) is
+   * not simply marked Returned: it goes back to the branch that sent it, exactly
+   * like the receiving branch's Repeat — the copy is voided, the report returns
+   * to the sender and the sender's original sample stays Sent, reading
+   * "Sent – Repeated" until the sender confirms the Repeat. Refused if a report
+   * has a validated result. Without this the report would stay at the receiving
+   * branch with a `RETURNED` copy while the sender's sample has no action left.
+   * @throws SampleReturnBlockedException if the copy's report was worked on
+   */
   async returnSample(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: ReturnSampleDto,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
-    return this.transitionIds(
-      ids,
-      tenantId,
-      personId,
-      'return',
-      () => ({
-        data: dto.handoverPerson ? { logisticsPerson: dto.handoverPerson } : {},
+    const skippedCopies: BulkSkippedItem[] = [];
+    const note = dto as ActionNote;
+    const skipInvalid = note.skipInvalid === true;
+    const copies = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.orderSample.findMany({
+        where: {
+          id: { in: ids },
+          tenantId,
+          deletedAt: null,
+          sourceTransferId: { not: null },
+        },
+        // one fixed order (ascending id), see `utils/request-order.util`
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          status: true,
+          sourceTransferId: true,
+          accessionNo: true,
+        },
       }),
-      dto,
     );
+    const returnedOriginIds: string[] = [];
+    if (copies.length > 0) {
+      const reason = dto.notes
+        ? `Sample returned by the receiving branch: ${dto.notes}`
+        : 'Sample returned by the receiving branch';
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        for (const copy of copies) {
+          try {
+            // Same legality as a normal Return. A group action never forces a
+            // Return (`return` is not a FORCE_TARGET), so a copy that is not in a
+            // returnable status is refused (or skipped) like any other sample.
+            if (!nextSampleStatus('return', copy.status)) {
+              throw new InvalidSampleTransitionException('return', copy.status);
+            }
+            returnedOriginIds.push(
+              await this.returnCopyToOrigin(
+                tx,
+                tenantId,
+                personId,
+                copy.id,
+                reason,
+              ),
+            );
+            // Keep the transfer row in step (no-op if it is already closed).
+            await tx.sampleTransfer.updateMany({
+              where: {
+                id: copy.sourceTransferId!,
+                tenantId,
+                deletedAt: null,
+                transferStatus: TransferStatus.ACCEPTED,
+              },
+              data: {
+                transferStatus: TransferStatus.REPEAT,
+                repeatReason: reason,
+                updatedBy: personId,
+              },
+            });
+          } catch (e) {
+            if (skipInvalid && e instanceof InvalidSampleTransitionException) {
+              skippedCopies.push({
+                id: copy.id,
+                accessionNo: copy.accessionNo ?? null,
+                reason: refusalMessage(e),
+                code: e.errorCode,
+              });
+              continue;
+            }
+            throw e;
+          }
+        }
+      });
+    }
+    const copyIds = new Set(copies.map((c) => c.id));
+    const restIds = ids.filter((id) => !copyIds.has(id));
+    const rest: BulkActionResult<OrderSampleWithRelations> =
+      restIds.length > 0
+        ? await this.transitionIds(
+            restIds,
+            tenantId,
+            personId,
+            'return',
+            () => ({
+              data: dto.handoverPerson
+                ? { logisticsPerson: dto.handoverPerson }
+                : {},
+            }),
+            dto,
+          )
+        : { succeeded: [], skipped: [] };
+    // A returned copy is voided, so report the sender's original sample (still Sent)
+    // in its place — one entry per processed id.
+    const returned = await Promise.all(
+      returnedOriginIds.map((id) => this.findById(id, tenantId)),
+    );
+    return {
+      succeeded: [...returned, ...rest.succeeded],
+      skipped: [...skippedCopies, ...rest.skipped],
+    };
   }
 
   /** Cancel — New/Collected/Hold → Cancelled (records the cancellation reason). */
@@ -1945,8 +3269,12 @@ export class OrderSampleService {
     ids: string[],
     tenantId: string,
     personId: string | null,
+    actingBranchId: string | null,
     dto: RetrieveSampleDto,
+    /** The acting user's role (for the Audit-log entries of a recall); optional. */
+    actor?: ActionNote['actor'],
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    await this.assertRetrieverIsSender(ids, tenantId, actingBranchId);
     return this.transitionIds(
       ids,
       tenantId,
@@ -1958,8 +3286,80 @@ export class OrderSampleService {
         data: {},
         ...(dto.retrievedFrom ? { reason: dto.retrievedFrom } : {}),
       }),
-      dto,
+      actor ? { ...dto, actor } : dto,
     );
+  }
+
+  /**
+   * Retrieve ONE sample inside the caller's transaction (used by the all-or-nothing
+   * "apply center changes"): the sender check (only the branch that sent it), then the
+   * normal Retrieve transition - which soft-deletes the open internal transfer and
+   * writes the audit trail. Strict: any refusal is thrown to the caller, whose
+   * transaction then rolls back.
+   * @param actor the acting user's role, for the Audit-log entries
+   */
+  async retrieveOneInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    actingBranchId: string | null,
+    sampleId: string,
+    note: { notes?: string; attachmentUrl?: string },
+    actor?: ActionNote['actor'],
+  ): Promise<void> {
+    const sent = await tx.orderSample.findFirst({
+      where: {
+        id: sampleId,
+        tenantId,
+        deletedAt: null,
+        status: SampleStatus.SENT_INTERNAL,
+      },
+      select: { id: true, branchId: true },
+    });
+    if (sent && sent.branchId !== actingBranchId) {
+      throw new TransferWrongBranchException(sent.id, 'retrieve', 'sender');
+    }
+    await this.transitionInTx(
+      tx,
+      tenantId,
+      personId,
+      sampleId,
+      'retrieve',
+      () => ({ data: {} }),
+      { ...note, ...(actor ? { actor } : {}) },
+    );
+  }
+
+  /**
+   * Only the SENDING branch can pull back a sample it sent to another branch - or,
+   * once the receiving branch sent it back, Repeat / flag Error on it. A sample that
+   * is out at another branch (SENT_INTERNAL) is held by the branch that sent it, so
+   * the caller's active branch must be that branch. Always an error, never a
+   * "skip", so a group action cannot touch another branch's samples. Other samples
+   * are unaffected.
+   * @throws TransferWrongBranchException
+   */
+  private async assertRetrieverIsSender(
+    ids: string[],
+    tenantId: string,
+    actingBranchId: string | null,
+    action: 'retrieve' | 'repeat' | 'error' = 'retrieve',
+  ): Promise<void> {
+    const sent = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.orderSample.findMany({
+        where: {
+          id: { in: ids },
+          tenantId,
+          deletedAt: null,
+          status: SampleStatus.SENT_INTERNAL,
+        },
+        select: { id: true, branchId: true },
+      }),
+    );
+    const foreign = sent.find((s) => s.branchId !== actingBranchId);
+    if (foreign) {
+      throw new TransferWrongBranchException(foreign.id, action, 'sender');
+    }
   }
 
   // ── No-status-change mutations (§A.10.2 / §A.10.3) ─────────────────────────
@@ -1975,6 +3375,9 @@ export class OrderSampleService {
    * transaction (all-or-none). A failed render/upload rolls the whole assignment
    * back (fail-together).
    * @throws OrderSampleNotFoundException if any id is missing / other-tenant
+   * @throws SampleOrderCancelledException if a sample's order is cancelled
+   * @throws SampleBarcodeLockedException if a sample is out at another
+   *   branch / partner / centre, or is a copy received from another branch
    * @throws ValidationException if a manual barcode is already in use
    */
   async assignBarcode(
@@ -1987,27 +3390,57 @@ export class OrderSampleService {
     const changed = await this.prisma.withTenant(tenantId, async (tx) => {
       const samples = await tx.orderSample.findMany({
         where: { id: { in: ids }, tenantId, deletedAt: null },
-        select: { id: true, status: true, branchId: true },
+        select: {
+          id: true,
+          status: true,
+          branchId: true,
+          barcode: true,
+          orderId: true,
+          sourceTransferId: true,
+        },
       });
       const found = new Set(samples.map((s) => s.id));
       const missing = ids.find((id) => !found.has(id));
       if (missing) throw new OrderSampleNotFoundException(missing);
+      // A cancelled order's samples are frozen - the barcode stays as it is.
+      for (const s of samples) {
+        if (await this.isOrderCancelled(tx, tenantId, s.orderId)) {
+          throw new SampleOrderCancelledException('assign-barcode', s.status);
+        }
+      }
+      // The barcode belongs to the physical tube that travels: a sample that is out
+      // at another branch / partner / centre, and a copy received from another
+      // branch, keep the number they have (editing one side would leave the tube
+      // with two numbers). All-or-nothing, like the rest of this action.
+      for (const s of samples) {
+        if (isTransferredStatus(s.status) || s.sourceTransferId) {
+          throw new SampleBarcodeLockedException(s.status);
+        }
+      }
 
       const branchId = samples[0]?.branchId ?? null;
       let value: string;
+      // A transferred copy inherits its sender's barcode (same physical tube), so
+      // that value legitimately exists on another sample. Saving it again changes
+      // nothing, so it is not a clash — only a value the selection does not
+      // already carry is checked for availability.
+      const unchanged =
+        !!dto.barcode && samples.every((s) => s.barcode === dto.barcode);
       if (dto.barcode) {
         // A manually-entered barcode must be free across the tenant: reject when
         // any sample OUTSIDE the current group already carries it. Re-assigning
         // the same value to this same group stays allowed (idempotent edit).
-        const clash = await tx.orderSample.findFirst({
-          where: {
-            tenantId,
-            barcode: dto.barcode,
-            deletedAt: null,
-            id: { notIn: ids },
-          },
-          select: { id: true },
-        });
+        const clash = unchanged
+          ? null
+          : await tx.orderSample.findFirst({
+              where: {
+                tenantId,
+                barcode: dto.barcode,
+                deletedAt: null,
+                id: { notIn: ids },
+              },
+              select: { id: true },
+            });
         if (clash) {
           throw new ValidationException(
             `Barcode "${dto.barcode}" is already in use.`,
@@ -2092,7 +3525,13 @@ export class OrderSampleService {
     });
   }
 
-  /** Update Sample (§A.10.3) — records a note/attachment with no status change. */
+  /**
+   * Update Sample (§A.10.3) — records a note/attachment with no status change.
+   * Refused on a cancelled order (its samples are frozen; the legacy system had no
+   * way to add a sample note after a cancel either). Share & Inform is NOT refused:
+   * telling the patient about a cancelled order is a real use, as in legacy.
+   * @throws SampleOrderCancelledException if a sample's order is cancelled
+   */
   async updateNotes(
     ids: string[],
     tenantId: string,
@@ -2106,6 +3545,11 @@ export class OrderSampleService {
       'update',
       () => ({ data: {} }),
       dto,
+      async (tx, sample) => {
+        if (await this.isOrderCancelled(tx, tenantId, sample.orderId)) {
+          throw new SampleOrderCancelledException('update', sample.status);
+        }
+      },
     );
   }
 
@@ -2160,14 +3604,97 @@ export class OrderSampleService {
     });
     if (!sample) throw new OrderSampleNotFoundException(sampleId);
 
+    // A cancelled order's samples are frozen - except the wind-down of a sample
+    // that is out at another branch: the sender's Retrieve, the receiving branch's
+    // Store / Discard of its own copy, and the system-driven moves that the receiving
+    // branch's Reject / Repeat / Return trigger (`note.system`). Everything else is
+    // refused.
+    if (
+      !note.system &&
+      !this.isCancelledOrderWindDown(action, sample) &&
+      (await this.isOrderCancelled(tx, tenantId, sample.orderId))
+    ) {
+      throw new SampleOrderCancelledException(action, sample.status);
+    }
+
+    // A sample whose test was removed from the order is kept for the physical
+    // tube's wind-down only: Store and Discard stay open, and so does the sender's
+    // Retrieve of a sample that is OUT at another branch / partner (otherwise it
+    // could never be pulled back; Retrieve keeps its own guards below). Every other
+    // user action (Send, Return, Repeat, Forward, Outsource, collect, accept, ...)
+    // is refused. The system-driven moves (`note.system`) are not user actions and
+    // pass.
+    if (
+      !note.system &&
+      action !== 'store' &&
+      action !== 'discard' &&
+      !(action === 'retrieve' && isTransferredStatus(sample.status)) &&
+      (await isSampleItemRemoved(tx, tenantId, sample.id))
+    ) {
+      throw new SampleItemRemovedException(action, sample.status);
+    }
+
+    // A sample sent to another branch of the tenant is out of this branch's
+    // hands: the user action that may touch it is Retrieve (and only before the
+    // receiving branch has received it — checked below). The one other way out is
+    // after the receiving branch SENT IT BACK (its transfer is closed): Repeat when
+    // it asked for a Repeat, Error when it rejected the sample (see
+    // `isSentReturnAction`). This guard runs before the `force` override, so a group
+    // "force" action cannot bypass it.
+    const sentReturnAction =
+      sample.status === SampleStatus.SENT_INTERNAL &&
+      (action === 'repeat' || action === 'error') &&
+      !note.system &&
+      (await this.isSentReturnAction(tx, tenantId, sample.id, action));
+    if (
+      sample.status === SampleStatus.SENT_INTERNAL &&
+      action !== 'retrieve' &&
+      !note.system &&
+      !sentReturnAction
+    ) {
+      throw new SampleSentToBranchException(action, sample.status);
+    }
+
     // Group status actions force a direct override: the sample is moved to the
     // action's fixed target status regardless of its current status (no legality
     // check). `retrieve` and `return` have no forced target (see FORCE_TARGET), so
     // they keep the normal legality check — a Collected sample can never be Returned.
     const forced = note.force ? FORCE_TARGET[action] : undefined;
+
+    // The receiving branch sent this sample back (REPEAT with a SENT_INTERNAL
+    // previous status): nothing to pull back — the sender collects it again. Checked
+    // before the target is worked out, so it is reported as such instead of as a
+    // generic invalid transition.
+    if (
+      action === 'retrieve' &&
+      sample.status !== SampleStatus.SENT_INTERNAL &&
+      sample.previousStatus === SampleStatus.SENT_INTERNAL &&
+      nextSampleStatus('retrieve', sample.status) === null
+    ) {
+      throw new RetrieveBlockedException(sample.status, 'RETURNED');
+    }
+
+    // The receiving branch sent this sample back (it stays Sent - Repeated / Sent -
+    // Rejected): Retrieve would only put it back to Accepted at the sender as if
+    // nothing had happened, so it is refused. The sender Repeats (after a repeat) or
+    // flags Error (after a rejection) instead.
+    if (
+      action === 'retrieve' &&
+      sample.status === SampleStatus.SENT_INTERNAL &&
+      !note.system &&
+      (await findReceiverReturns(tx, tenantId, [sample.id])).has(sample.id)
+    ) {
+      throw new RetrieveBlockedException(sample.status, 'SENT_BACK');
+    }
+
     let toStatus: SampleStatus | null;
     if (forced) {
       toStatus = forced;
+    } else if (action === 'retrieve' && isTransferredStatus(sample.status)) {
+      // A sample that is out at another branch / partner goes back to the status it
+      // had before it was sent (a group "force" send can leave a NEW / COLLECTED
+      // sample at the other branch - pulling it back must not skip its steps).
+      toStatus = this.retrieveTarget(sample);
     } else if (action === 'retrieve') {
       // Revert to the sample's immediately-previous status from its OWN history:
       // the `fromStatus` of the most recent NON-retrieve transition INTO the
@@ -2197,8 +3724,19 @@ export class OrderSampleService {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: { fromStatus: true },
       });
-      toStatus =
+      const walkedTo =
         prevRow?.fromStatus ?? nextSampleStatus('retrieve', sample.status);
+      // A sample is in Sent / Forwarded / Outsourced only through a real, open
+      // transfer. Once it has come back (the receiving branch returned it) and been
+      // collected again, the history still says "Sent → Repeat": stepping back must
+      // stop there. Landing on a transferred status with no open transfer is an
+      // impossible state (the report would turn view-only and the sample could not be
+      // repeated or re-sent). A sample that really is out is retrieved by the branch
+      // above (`retrieveTarget`), never by this walk-back.
+      if (walkedTo && isTransferredStatus(walkedTo)) {
+        throw new RetrieveBlockedException(sample.status, 'RETURNED');
+      }
+      toStatus = walkedTo;
     } else {
       toStatus = nextSampleStatus(action, sample.status);
     }
@@ -2206,16 +3744,148 @@ export class OrderSampleService {
       throw new InvalidSampleTransitionException(action, sample.status);
     }
 
-    // Recall: this action moves the sample OUT of a transferred status (Retrieve /
-    // Repeat on a Sent / Forwarded / Outsourced sample). Unwind the transfer fully
-    // so no stale record is left in the receiving branch — soft-delete the open
-    // transfer(s) (they vanish from both branches' referral/outsource queues, which
-    // filter deletedAt: null) and, for an accepted INTERNAL transfer, soft-delete
-    // the clone it created in the receiving branch's In-House list and move its lab
-    // report(s) back to the origin. (See recallTransfersForSampleInTx.)
+    // Retrieve is the universal undo, but it may not pull a sample (that is at this
+    // branch) back to BEFORE its acceptance while a test on it already has a
+    // validated result: the sample would say "not accepted yet" next to a result
+    // that is done. Same rule as Repeat. A sample that is out at another branch
+    // keeps its own transfer rules below, and an undo that stays at or after
+    // acceptance (Stored -> Accepted, Halted -> Accepted, ...) is not affected.
+    if (
+      action === 'retrieve' &&
+      !note.system &&
+      !isTransferredStatus(sample.status) &&
+      PRE_ACCEPT_SAMPLE_STATUSES.includes(toStatus)
+    ) {
+      await this.assertNoValidatedResultForRetrieve(tx, tenantId, sample);
+    }
+
+    // The open INTERNAL transfers a Retrieve takes back (soft-deleted below); what the
+    // audit entries need to say about them.
+    let recalledTransfers: RecalledTransfer[] = [];
+    if (action === 'retrieve') {
+      // Internal transfers can be recalled only until the receiving branch has
+      // received them. Checked before AND after the recall so a concurrent
+      // receive/accept cannot slip through (the receive/accept update is
+      // conditional on the transfer status — see SampleTransferService).
+      const assertNotReceived = async (): Promise<void> => {
+        const progressed = await tx.sampleTransfer.findFirst({
+          where: {
+            sampleId: sample.id,
+            tenantId,
+            deletedAt: null,
+            kind: TransferKind.INTERNAL,
+            transferStatus: {
+              in: [TransferStatus.RECEIVED, TransferStatus.ACCEPTED],
+            },
+          },
+          select: { id: true },
+        });
+        if (progressed) {
+          throw new RetrieveBlockedException(sample.status, 'RECEIVED');
+        }
+      };
+      await assertNotReceived();
+      // INTERNAL transfer: remove only the OPEN transfer (never an earlier cycle's
+      // finished one). It is SOFT-DELETED, so the row leaves the receiving branch's
+      // Internal Transfer page and counts; what happened is kept in the audit trail
+      // (the sample's history row and the Audit log, written below with the stage,
+      // destination, who and when). A Forwarded / Outsourced sample is different: its
+      // transfer is unwound by the recall below (main's cleanup), not here.
+      const openInternal = await tx.sampleTransfer.findMany({
+        where: {
+          sampleId: sample.id,
+          tenantId,
+          deletedAt: null,
+          kind: TransferKind.INTERNAL,
+          transferStatus: {
+            in: [TransferStatus.IN_TRANSIT, TransferStatus.PICKED_UP],
+          },
+        },
+        select: {
+          id: true,
+          destinationBranchId: true,
+          transferStatus: true,
+          logisticsType: true,
+        },
+      });
+      if (openInternal.length > 0) {
+        // Conditional on the status we read: a Receive that committed since the read
+        // matches nothing here, so the row is neither deleted nor counted, and the
+        // refusal below fires (the second assertNotReceived cannot see a deleted row,
+        // so this condition is what makes the recall race-safe).
+        const recalled = await tx.sampleTransfer.updateMany({
+          where: {
+            id: { in: openInternal.map((t) => t.id) },
+            deletedAt: null,
+            transferStatus: {
+              in: [TransferStatus.IN_TRANSIT, TransferStatus.PICKED_UP],
+            },
+          },
+          data: {
+            deletedAt: new Date(),
+            rejectionReason: RECALLED_VIA_RETRIEVE_REASON,
+            updatedBy: personId,
+          },
+        });
+        if (recalled.count !== openInternal.length) {
+          throw new RetrieveBlockedException(sample.status, 'RECEIVED');
+        }
+        recalledTransfers = openInternal;
+      }
+      await assertNotReceived();
+    }
+
+    // A user's Repeat starts the report over: the new tube must not inherit the
+    // old tube's values. Refused first when the result is already validated.
+    // (The system-driven Repeat from a receiving branch's return resets the
+    // report itself, in returnCopyToOrigin.)
+    // A Repeat confirmed by the sender after the receiving branch sent the sample
+    // back (`sentReturnAction`) resets nothing: the report was already reset and
+    // handed back when the receiving branch acted, and has been view-only since.
+    const repeatReportIds =
+      action === 'repeat' && !note.system && !sentReturnAction
+        ? await this.reportsToResetOnRepeat(tx, tenantId, sample)
+        : [];
+
+    // Claim the row on the status we validated against. Two concurrent requests
+    // (double-click Send / Accept / Retrieve) both read the same status; the
+    // second blocks on this row lock until the first commits, then re-checks the
+    // status and matches nothing — so exactly one wins and the other is refused
+    // instead of repeating the transition (a second transfer / history row).
+    const claimed = await tx.orderSample.updateMany({
+      where: {
+        id: sample.id,
+        tenantId,
+        status: sample.status,
+        deletedAt: null,
+      },
+      data: { updatedBy: personId },
+    });
+    if (claimed.count !== 1) {
+      throw new InvalidSampleTransitionException(action, sample.status);
+    }
+
+    // Leaving a transferred status (Retrieve, the sender's Repeat, or the system
+    // move a receiving branch's Reject / Repeat / Return triggers) puts the sample
+    // back at its origin: the processing branch and dispatch fields are reset below.
     const recalling =
       isTransferredStatus(sample.status) && !isTransferredStatus(toStatus);
-    if (recalling) {
+    // The sender pulling a Forwarded / Outsourced sample back (Retrieve or Repeat):
+    // unwind the transfer fully so no stale record is left (see
+    // recallTransfersForSampleInTx). A Retrieve of a Sent (INTERNAL) sample is NOT
+    // recalled this way: it closes its own open transfer above (kept as REJECTED
+    // history), and the system-driven moves must NOT run this either - a receiving
+    // branch's Reject / Repeat / Return closes the transfer itself
+    // (SampleTransferService.transferAction / returnCopyToOrigin) right after.
+    // The sender's own Repeat / Error after the receiving branch sent the sample back
+    // is NOT a recall either: the receiving branch's closed transfer (REPEAT /
+    // REJECTED) is the record of what it did and must stay for both branches.
+    if (
+      recalling &&
+      !note.system &&
+      !sentReturnAction &&
+      (action !== 'retrieve' || sample.status !== SampleStatus.SENT_INTERNAL)
+    ) {
       await this.recallTransfersForSampleInTx(tx, tenantId, personId, sample);
     }
 
@@ -2241,6 +3911,18 @@ export class OrderSampleService {
         updatedBy: personId,
       },
     });
+    // A Retrieve that took the sample back from another branch: say so (stage,
+    // destination) on the sender's history row and in the Audit log (below), in this
+    // same transaction so the entries can never be lost.
+    const recallInfo =
+      recalledTransfers.length > 0
+        ? await this.buildRecallAuditInfo(
+            tx,
+            tenantId,
+            sample,
+            recalledTransfers,
+          )
+        : null;
     await tx.orderSampleStatusHistory.create({
       data: {
         tenantId,
@@ -2250,17 +3932,127 @@ export class OrderSampleService {
         toStatus,
         fromStatus: sample.status,
         reason: built.reason ?? null,
-        notes: note.notes ?? null,
+        notes:
+          [note.notes, recallInfo?.historyNote].filter(Boolean).join(' · ') ||
+          null,
         attachmentUrl: note.attachmentUrl ?? null,
         changedBy: personId,
       },
     });
+    if (recallInfo) {
+      await this.writeRecallAuditInTx(tx, tenantId, personId, note, recallInfo);
+    }
+    if (repeatReportIds.length > 0) {
+      await this.labReportService.resetReportsForReturn(
+        tx,
+        tenantId,
+        repeatReportIds,
+        personId,
+      );
+    }
     return updated;
   }
 
   /**
-   * Recall every outstanding transfer of a sample that is being pulled back from a
-   * transferred status (Retrieve / Repeat). For each non-deleted transfer:
+   * Refuses a Retrieve that would take this sample back to before its acceptance
+   * while a report it serves has a validated result (Result Done, Approved or
+   * Published). The reports are locked first (the same fixed-order lock Repeat
+   * takes), so a validation in flight cannot slip in after the answer. Nothing is
+   * changed or deleted: results that are not validated yet stay saved (and are
+   * write-locked while the sample waits to be accepted again).
+   * @throws SampleRetrieveBlockedByResultException if a report's result is validated
+   */
+  private async assertNoValidatedResultForRetrieve(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<void> {
+    const tests = await tx.orderSampleTest.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    if (
+      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
+    ) {
+      throw new SampleRetrieveBlockedByResultException(sample.status);
+    }
+  }
+
+  /**
+   * The reports a Repeat of this sample (at its own branch) starts over, checked
+   * and locked before the sample changes. A report whose result is already
+   * validated (Result Done, Approved, Published) refuses the Repeat — it would wipe
+   * a validated result; the lab uses Re-run for that. The reports are locked first
+   * so a validation in flight cannot slip in after the answer.
+   * @throws SampleRepeatBlockedException if a report's result is validated
+   */
+  private async reportsToResetOnRepeat(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<string[]> {
+    const tests = await tx.orderSampleTest.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    if (
+      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
+    ) {
+      throw new SampleRepeatBlockedException(sample.status);
+    }
+    return reportIds;
+  }
+
+  /**
+   * Where Retrieve puts a transferred sample back: the status it had before it
+   * was sent (a group "force" send can leave a NEW / COLLECTED sample at the
+   * other branch — pulling it back must not skip its collect / accept steps).
+   * Falls back to the transition table (ACCEPTED) when there is no usable
+   * previous status.
+   */
+  private retrieveTarget(sample: OrderSample): SampleStatus | null {
+    const tableTarget = nextSampleStatus('retrieve', sample.status);
+    const transferred: SampleStatus[] = [
+      SampleStatus.SENT_INTERNAL,
+      SampleStatus.FORWARD_EXTERNAL,
+      SampleStatus.OUTSOURCED,
+    ];
+    const prev = sample.previousStatus;
+    if (
+      tableTarget &&
+      transferred.includes(sample.status) &&
+      prev &&
+      !transferred.includes(prev) &&
+      prev !== SampleStatus.CANCELLED &&
+      prev !== SampleStatus.DISCARDED
+    ) {
+      return prev;
+    }
+    return tableTarget ?? prev;
+  }
+
+  /**
+   * Recall the hand-off a sample is being pulled back from (Retrieve / Repeat).
+   * Only transfers of the kind the sample is out on are recalled (see
+   * {@link transferKindOutFor}): an older transfer of another kind that is already
+   * closed (e.g. an internal A→B rejection before the sample was Forwarded) is
+   * history and is left untouched. A sample whose status maps to no kind (a passed-on
+   * clone being unwound) keeps the old behaviour and recalls all its transfers.
+   * For each matching non-deleted transfer:
    *  - if it was an accepted INTERNAL transfer (a clone exists in the receiving
    *    branch's In-House list), soft-delete that clone and move its lab report(s)
    *    back to the origin branch (see {@link removeTransferCloneInTx}); then
@@ -2280,8 +4072,14 @@ export class OrderSampleService {
     sample: OrderSample,
   ): Promise<void> {
     const originBranch = sample.originBranchId ?? sample.branchId;
+    const kindOut = transferKindOutFor(sample.status);
     const transfers = await tx.sampleTransfer.findMany({
-      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      where: {
+        sampleId: sample.id,
+        tenantId,
+        deletedAt: null,
+        ...(kindOut ? { kind: kindOut } : {}),
+      },
     });
     const now = new Date();
     for (const transfer of transfers) {
@@ -2298,7 +4096,8 @@ export class OrderSampleService {
         where: { id: transfer.id },
         data: {
           deletedAt: now,
-          rejectionReason: transfer.rejectionReason ?? 'Recalled via Retrieve',
+          rejectionReason:
+            transfer.rejectionReason ?? RECALLED_VIA_RETRIEVE_REASON,
           updatedBy: personId,
         },
       });
@@ -2345,7 +4144,25 @@ export class OrderSampleService {
     // Move the clone's report(s) back to the origin before soft-deleting the tests
     // they're resolved from (rehome reads the clone's OrderSampleTest rows).
     if (originBranch) {
+      const cloneTests = await tx.orderSampleTest.findMany({
+        where: { sampleId: cloneId, tenantId, deletedAt: null },
+        select: { orderItemId: true, labTestId: true },
+      });
+      const movedReportIds =
+        await this.labReportService.findReportIdsForSampleTests(
+          tx,
+          tenantId,
+          clone.branchId,
+          cloneTests,
+        );
       await this.rehomeLabReportsForSample(tx, tenantId, cloneId, originBranch);
+      // back on the origin's own copy of the test
+      await this.pointReportsAtBranchSetup(
+        tx,
+        tenantId,
+        originBranch,
+        movedReportIds,
+      );
     }
 
     const now = new Date();
@@ -2405,7 +4222,9 @@ export class OrderSampleService {
           for (const r of metaRows) metaById.set(r.id, r);
         }
         const done: string[] = [];
-        for (const id of ids) {
+        // One fixed order (ascending id) so overlapping group requests cannot deadlock;
+        // `done` and `skipped` are put back in the request's order below.
+        for (const id of inLockOrder(ids)) {
           let updated: OrderSample;
           try {
             updated = await this.transitionInTx(
@@ -2429,9 +4248,13 @@ export class OrderSampleService {
               skipped.push({
                 id,
                 accessionNo: meta?.accessionNo ?? null,
-                reason: `Action "${action}" is not allowed from status ${
-                  meta?.status ?? 'UNKNOWN'
-                }`,
+                code: e.errorCode,
+                // A refusal that carries its own explanation (a validated result)
+                // is shown as such, not as the generic "not allowed from status".
+                // The refusal's own sentence (cancelled order, nothing to retrieve,
+                // result already done ...); a plain refusal's sentence is the
+                // generic "not allowed from status X".
+                reason: refusalMessage(e),
               });
               continue;
             }
@@ -2447,8 +4270,9 @@ export class OrderSampleService {
             );
           }
         }
-        if (afterInTx) await afterInTx(tx, done);
-        return done;
+        const inAskedOrder = inRequestOrder(done, ids, (x) => x);
+        if (afterInTx) await afterInTx(tx, inAskedOrder);
+        return inAskedOrder;
       });
     } catch (e) {
       this.rethrowConflict(e);
@@ -2457,7 +4281,7 @@ export class OrderSampleService {
     const succeeded = await Promise.all(
       changed.map((id) => this.findById(id, tenantId)),
     );
-    return { succeeded, skipped };
+    return { succeeded, skipped: inRequestOrder(skipped, ids, (x) => x.id) };
   }
 
   /**
@@ -2525,12 +4349,14 @@ export class OrderSampleService {
    * @param tenantId the current tenant
    * @param sampleId the cloned (destination-branch) sample
    * @param destBranchId the receiving branch to move the report(s) to
+   * @param fromBranchId the sending branch (only reports it still holds move)
    */
   async rehomeLabReportsForSample(
     tx: Prisma.TransactionClient,
     tenantId: string,
     sampleId: string,
     destBranchId: string,
+    fromBranchId?: string | null,
   ): Promise<void> {
     const sampleTests = await tx.orderSampleTest.findMany({
       where: { sampleId, tenantId, deletedAt: null },
@@ -2543,13 +4369,190 @@ export class OrderSampleService {
         orderItemId,
         destBranchId,
         labTestId,
+        fromBranchId,
       );
     }
   }
 
   /**
-   * Apply a no-status-change mutation (assign-barcode / update notes) to each id
-   * in one transaction, appending a history row that keeps the current status.
+   * Point these reports at the test setup `branchId` uses for each test, while that branch HOLDS the tube
+   * (see `performing-setup.util`). A report's parameters, ranges, values and methods are all read through
+   * `LabReport.labTestId`, so moving the pointer is what makes the holding branch's technician work with
+   * that branch's own copy of the test:
+   *  - on Accept the reports move to the receiver, which then uses ITS copy;
+   *  - on a return (Reject / Repeat, or unwinding a clone) they move back to the sender's copy.
+   * A panel-member report also carries `memberBranchLabTestId` (the Lab Test List entry of the member); it
+   * follows: the panel's own member entry where the panel belongs to `branchId`, else the branch's entry.
+   * A test with no tenant link, or one the branch has no active entry for, is left as it is (nothing is
+   * refused: Phase 1 already blocks a destination that does not offer the test).
+   * Run AFTER the reports changed branch (and, on a return, after they were cleared), inside the caller's
+   * transaction.
+   * @param branchId the branch that now holds the reports
+   * @param reportIds the reports that moved
+   */
+  async pointReportsAtBranchSetup(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string,
+    reportIds: string[],
+  ): Promise<void> {
+    if (reportIds.length === 0) return;
+    const reports = await tx.labReport.findMany({
+      where: {
+        id: { in: reportIds },
+        tenantId,
+        deletedAt: null,
+        labTestId: { not: null },
+      },
+      select: {
+        id: true,
+        labTestId: true,
+        memberBranchLabTestId: true,
+        performingBranchLabTestId: true,
+        orderItem: { select: { branchLabPanelId: true, branchId: true } },
+      },
+    });
+    const setups = new Map<string, PerformingSetup | null>();
+    for (const r of reports) {
+      const from = r.labTestId!;
+      if (!setups.has(from)) {
+        setups.set(from, await findSetupAtBranch(tx, tenantId, branchId, from));
+      }
+      const setup = setups.get(from);
+      if (!setup) {
+        // nothing to point at, but back at the order's own branch the order line's
+        // entry applies again
+        if (
+          r.orderItem?.branchId === branchId &&
+          r.performingBranchLabTestId !== null
+        ) {
+          await tx.labReport.update({
+            where: { id: r.id },
+            data: { performingBranchLabTestId: null },
+          });
+        }
+        continue;
+      }
+      let member = r.memberBranchLabTestId;
+      if (r.memberBranchLabTestId) {
+        const panelId = r.orderItem?.branchLabPanelId ?? null;
+        const own = panelId
+          ? await findPanelMemberEntryFor(tx, panelId, setup.labTestId)
+          : null;
+        member =
+          own && own.branchId === branchId ? own.id : setup.branchLabTestId;
+      }
+      // The Lab Test List entry the holding branch works with (template / PDF, TAT,
+      // department). At the order's OWN branch that is the order line's entry (null =
+      // "use the order line"); anywhere else it is that branch's entry.
+      const performing =
+        r.orderItem?.branchId === branchId ? null : setup.branchLabTestId;
+      if (
+        setup.labTestId === from &&
+        member === r.memberBranchLabTestId &&
+        performing === r.performingBranchLabTestId
+      ) {
+        continue;
+      }
+      await tx.labReport.update({
+        where: { id: r.id },
+        data: {
+          labTestId: setup.labTestId,
+          performingBranchLabTestId: performing,
+          ...(r.memberBranchLabTestId ? { memberBranchLabTestId: member } : {}),
+        },
+      });
+    }
+  }
+
+  /**
+   * Accept of an INTERNAL transfer, last step: the receiving branch's copy of the tube and the reports it
+   * now holds use the RECEIVER's own test setup. The copy was created with the sender's ids (so the report
+   * creation / re-homing steps before this one still match the existing report), and is switched here:
+   *  - the reports point at the receiver's Branch Master Data copy (see {@link pointReportsAtBranchSetup});
+   *  - each `OrderSampleTest` points at the same copy, so every "which report does this tube serve" match
+   *    (Send, Return, the write-locks) keeps lining up with the report;
+   *  - the sample's own test, sample definition and department become the receiver's.
+   * A test the receiver has no setup for keeps the sender's ids.
+   * @param copyId the receiving branch's copy, just created at ACCEPTED
+   * @param destBranchId the receiving branch
+   */
+  async retargetCopyToReceivingSetup(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    copyId: string,
+    destBranchId: string,
+  ): Promise<void> {
+    const copy = await tx.orderSample.findFirst({
+      where: { id: copyId, tenantId, deletedAt: null },
+      include: { tests: { where: { deletedAt: null } } },
+    });
+    if (!copy) return;
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      destBranchId,
+      copy.tests,
+    );
+    await this.pointReportsAtBranchSetup(tx, tenantId, destBranchId, reportIds);
+    // The receiver's TAT clock is its own: a NABL stopwatch the sender had started on the
+    // report must not carry over (the same reset a return gives the sender, see
+    // `LabReportService.moveReportsToBranch`). The report is untouched at this point.
+    if (reportIds.length > 0) {
+      await tx.labReport.updateMany({
+        where: { id: { in: reportIds }, tenantId, deletedAt: null },
+        data: {
+          isNablTat: false,
+          tatIsRunning: false,
+          tatStartAt: null,
+          tatLastTickAt: null,
+          tatNetMinutes: null,
+          tatEndAt: null,
+        },
+      });
+    }
+    for (const t of copy.tests) {
+      if (!t.labTestId) continue;
+      const setup = await findSetupAtBranch(
+        tx,
+        tenantId,
+        destBranchId,
+        t.labTestId,
+      );
+      if (!setup || setup.labTestId === t.labTestId) continue;
+      await tx.orderSampleTest.update({
+        where: { id: t.id },
+        data: { labTestId: setup.labTestId },
+      });
+    }
+    if (!copy.labTestId) return;
+    const own = await findSetupAtBranch(
+      tx,
+      tenantId,
+      destBranchId,
+      copy.labTestId,
+    );
+    if (!own || own.labTestId === copy.labTestId) return;
+    const definition = await findSampleDefinitionAt(
+      tx,
+      tenantId,
+      copy.labTestSampleId,
+      own.labTestId,
+    );
+    await tx.orderSample.update({
+      where: { id: copy.id },
+      data: {
+        labTestId: own.labTestId,
+        labTestSampleId: definition ?? copy.labTestSampleId,
+        departmentId: own.departmentId,
+      },
+    });
+  }
+
+  /**
+   * Apply a no-status-change mutation (update notes / share) to each id in one
+   * transaction, appending a history row that keeps the current status.
+   * @param guard optional per-sample refusal, run before anything is written
    * @throws OrderSampleNotFoundException / AccessionNumberConflictException
    */
   private async mutateIds(
@@ -2559,16 +4562,24 @@ export class OrderSampleService {
     action: string,
     build: (sample: OrderSample) => ActionPatch,
     note: ActionNote,
+    guard?: (
+      tx: Prisma.TransactionClient,
+      sample: OrderSample,
+    ) => Promise<void>,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     let changed: string[];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         const done: string[] = [];
-        for (const id of ids) {
+        // One fixed order (ascending id): see `transitionIds`.
+        for (const id of inLockOrder(ids)) {
           const sample = await tx.orderSample.findFirst({
             where: { id, tenantId, deletedAt: null },
           });
           if (!sample) throw new OrderSampleNotFoundException(id);
+          // A caller's refusal (e.g. a cancelled order), before anything is written;
+          // it aborts the whole transaction, so a group is all-or-nothing.
+          if (guard) await guard(tx, sample);
           const built = build(sample);
           await tx.orderSample.update({
             where: { id: sample.id },
@@ -2590,7 +4601,7 @@ export class OrderSampleService {
           });
           done.push(sample.id);
         }
-        return done;
+        return inRequestOrder(done, ids, (x) => x);
       });
     } catch (e) {
       this.rethrowConflict(e);
@@ -2633,7 +4644,6 @@ export class OrderSampleService {
     if (query.processingBranchId) {
       where.processingBranchId = query.processingBranchId;
     }
-    if (query.logisticsType) where.logisticsType = query.logisticsType;
     if (query.reportStatus) where.reportStatus = query.reportStatus;
     if (query.tatStatus) {
       where.createdAt = tatCreatedAtRange(query.tatStatus, tat, nowMs);
@@ -2694,6 +4704,19 @@ export class OrderSampleService {
         },
       };
     }
+    if (query.collectionStatus) {
+      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived from
+      // the order's workflow items — the same rule as the Order Console's
+      // `sampleStatus`, applied here through the sample's to-one `order` relation.
+      order.AND = [
+        ...(Array.isArray(order.AND)
+          ? order.AND
+          : order.AND
+            ? [order.AND]
+            : []),
+        buildCollectionProgressWhere(query.collectionStatus),
+      ];
+    }
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     if (query.search) {
@@ -2723,6 +4746,47 @@ export class OrderSampleService {
       });
     }
     if (query.isOutsource) and.push({ status: SampleStatus.OUTSOURCED });
+    // Logistics: how a sample TRAVELS is recorded on its transfer (a Send / Forward / Outsource
+    // writes it there, never on the sample), so match the transfer of a sample that is out
+    // now; the sample's own column is kept as an alternative for older rows.
+    if (query.logisticsType) {
+      and.push({
+        OR: [
+          { logisticsType: query.logisticsType },
+          {
+            status: { in: [...TRANSFERRED_STATUSES] },
+            transfers: {
+              some: { deletedAt: null, logisticsType: query.logisticsType },
+            },
+          },
+        ],
+      });
+    }
+    // "Sent to": the sample is Sent right now and its transfer is addressed to that branch.
+    if (query.destinationBranchId) {
+      and.push(
+        this.heldTransfer(SampleStatus.SENT_INTERNAL, TransferKind.INTERNAL, {
+          destinationBranchId: query.destinationBranchId,
+        }),
+      );
+    }
+    // "Forward partner": the sample is Forwarded right now to a partner with this name.
+    const partner = query.externalPartnerName?.trim();
+    if (partner) {
+      and.push(
+        this.heldTransfer(
+          SampleStatus.FORWARD_EXTERNAL,
+          TransferKind.EXTERNAL,
+          {
+            // literal text: `%` and `_` typed by the user are not wildcards
+            externalPartnerName: {
+              contains: escapeLike(partner),
+              mode: 'insensitive',
+            },
+          },
+        ),
+      );
+    }
     if (query.outsourceCenterId) {
       and.push({
         transfers: {
@@ -2762,6 +4826,75 @@ export class OrderSampleService {
     if (Object.keys(order).length > 0) where.order = order;
     if (and.length > 0) where.AND = and;
     return where;
+  }
+
+  /**
+   * Add the names the list's "Send details" column shows to each row's latest transfer: the
+   * destination branch and the outsource center are logical refs (ids only), so one batched,
+   * tenant-scoped lookup per page resolves them - WITHOUT a deletedAt filter, so a
+   * since-deactivated branch or center still shows its name. Rows with no transfer cost nothing.
+   */
+  private async withTransferNames(
+    tenantId: string,
+    rows: OrderSampleListRow[],
+  ): Promise<OrderSampleListRow[]> {
+    const branchIds = new Set<string>();
+    const centerIds = new Set<string>();
+    for (const r of rows) {
+      for (const t of r.transfers) {
+        if (t.destinationBranchId) branchIds.add(t.destinationBranchId);
+        if (t.outsourceCenterId) centerIds.add(t.outsourceCenterId);
+      }
+    }
+    if (branchIds.size === 0 && centerIds.size === 0) return rows;
+    const names = await this.prisma.withTenant(tenantId, async (tx) => ({
+      branches:
+        branchIds.size > 0
+          ? await tx.branch.findMany({
+              where: { id: { in: [...branchIds] }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [],
+      centers:
+        centerIds.size > 0
+          ? await tx.outsourceCenter.findMany({
+              where: { id: { in: [...centerIds] }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [],
+    }));
+    const branchName = new Map(names.branches.map((b) => [b.id, b.name]));
+    const centerName = new Map(names.centers.map((c) => [c.id, c.name]));
+    return rows.map((r) => ({
+      ...r,
+      transfers: r.transfers.map((t) => ({
+        ...t,
+        destinationBranchName: t.destinationBranchId
+          ? (branchName.get(t.destinationBranchId) ?? null)
+          : null,
+        outsourceCenterName: t.outsourceCenterId
+          ? (centerName.get(t.outsourceCenterId) ?? null)
+          : null,
+      })),
+    }));
+  }
+
+  /**
+   * "The sample is out on a `kind` transfer right now": its status is the matching
+   * transferred one (`status`) and it has a live (not recalled) transfer of that kind
+   * matching `transfer`. A transfer the other side closed as repeated / rejected stays live, so
+   * a sample that is still "Sent - Repeated" is found; once the sender repeats or retrieves it,
+   * its status changes and it is not.
+   */
+  private heldTransfer(
+    status: SampleStatus,
+    kind: TransferKind,
+    transfer: Prisma.SampleTransferWhereInput,
+  ): Prisma.OrderSampleWhereInput {
+    return {
+      status,
+      transfers: { some: { deletedAt: null, kind, ...transfer } },
+    };
   }
 
   /**

@@ -1,6 +1,11 @@
+import {
+  worklistRowBranchWhere,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
 import { ReRunStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseReRunDto } from './dto/re-run.dto';
 import { UpdateReRunStatusDto } from './dto/update-worklist-status.dto';
@@ -56,6 +61,7 @@ export class ReRunService {
       },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     await this.labReportService.resetForRerun(
       labReportId,
@@ -86,10 +92,14 @@ export class ReRunService {
     return created;
   }
 
-  async findAll(tenantId: string, branchId: string | null) {
-    const activeBranchId = this.requireBranch(branchId);
+  /**
+   * The worklist's entries for the branches in `scope` (the caller's own branch by
+   * default; several branches for "All Branches" — see
+   * `TechnicianBranchAccessService.resolveScope`).
+   */
+  async findAll(tenantId: string, scope: WorklistBranchScope) {
     const rows = await this.prisma.reRunRequest.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
       include: WORKLIST_REPORT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -122,9 +132,17 @@ export class ReRunService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.reRunRequest.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        // Tied to the REPORT's branch, not the branch stamped on this row when it
+        // was raised: the row keeps that branch after the report is re-homed.
+        labReport: { is: { branchId: activeBranchId, deletedAt: null } },
+      },
     });
     if (!entry) throw new WorklistEntryNotFoundException('re_run_request', id);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
     const updated = await this.prisma.reRunRequest.update({
       where: { id },

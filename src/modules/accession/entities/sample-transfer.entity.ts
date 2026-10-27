@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { AccessionGroupingMode, Prisma } from '@prisma/client';
 
 /**
  * Relations included on a sample transfer — the linked sample plus its order /
@@ -27,6 +27,8 @@ export const TRANSFER_INCLUDE = {
           orderDate: true,
           orderTime: true,
           createdAt: true,
+          // CANCELLED here tags the row "Order cancelled" and hides the forward steps.
+          status: true,
           billId: true,
           patient: true,
           referredByDoctor: true,
@@ -56,13 +58,39 @@ export type SampleTransferDeptRow = Omit<
 };
 
 /**
- * A referral-queue list row — the dept-labelled transfer plus the resolved
- * `outsourceCenterName`. `outsourceCenterId` is a logical ref with no Prisma
- * relation, so the name is resolved separately — and deliberately WITHOUT a
- * `deletedAt` filter, so a historical transfer to a since-deactivated center
- * still shows the center's name instead of surfacing its raw id. Null when the
- * transfer has no center (not yet assigned) or the center no longer exists.
+ * A dept-labelled transfer plus the resolved `outsourceCenterName`.
+ * `outsourceCenterId` is a logical ref with no Prisma relation, so the name is
+ * resolved separately — and deliberately WITHOUT a `deletedAt` filter, so a
+ * historical transfer to a since-deactivated center still shows the center's
+ * name instead of surfacing its raw id. Null when the transfer has no center
+ * (not yet assigned) or the center no longer exists.
  */
-export type SampleTransferListRow = SampleTransferDeptRow & {
+export type SampleTransferCenterRow = SampleTransferDeptRow & {
   outsourceCenterName: string | null;
+  /** True when the test(s) on this transfer's sample were removed from the order (frozen). */
+  itemRemoved: boolean;
+};
+
+/**
+ * A transfer with its sample + order context and the `itemRemoved` flag: true
+ * when the test(s) on its sample (or on the receiving branch's copy) were removed
+ * from the order. Such a transfer is kept but frozen (all five receiving actions
+ * and Assign Center are refused) and shown tagged "Test removed from order".
+ */
+export type SampleTransferWithFlag = SampleTransferWithRelations & {
+  itemRemoved: boolean;
+};
+
+/**
+ * A referral-queue list row — a center-labelled transfer plus its grouping
+ * metadata. `groupKey` is the sample's final-group key under the tenant's
+ * current grouping mode (`${orderId}::${barcodeGroupKey}`), so the referral
+ * queue buckets transfers into the SAME Order → final-group groups the In-House
+ * list uses — the one `barcodeGroupKey` rule drives both (no drift).
+ * `groupingMode` is echoed as a FE layout hint (as on the in-house grouped
+ * list), so the UI knows when to surface the per-group department label.
+ */
+export type SampleTransferListRow = SampleTransferCenterRow & {
+  groupKey: string;
+  groupingMode: AccessionGroupingMode;
 };

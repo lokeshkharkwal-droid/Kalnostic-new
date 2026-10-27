@@ -47,4 +47,12 @@ docs {
   S3, and stores the URL in `orderIdBarcode` for **every** sample in the group.
   All samples in one group share the same barcode value + image.
 
+  **Locked samples:** the barcode belongs to the physical tube that travels, so
+  it cannot be changed (422 `SAMPLE_BARCODE_LOCKED`, nothing written) for a sample
+  that is out at another branch / partner / centre (Sent, Forwarded, Outsourced)
+  or that is a copy received from another branch. It becomes editable again once
+  the sample is back in-house (Retrieve). The action is all-or-nothing: a group
+  that includes such a sample is refused as a whole. A cancelled order's samples
+  are refused too (422 `SAMPLE_ORDER_CANCELLED`).
+
 }

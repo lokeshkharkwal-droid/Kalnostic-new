@@ -51,6 +51,13 @@ docs {
     this request, else the persisted ones. So changing the equipment, the branches,
     or both and sending `labTestIds: []` re-derives the mapping exactly like create.
     Omit `labTestIds` entirely to leave the existing mappings untouched.
+    A pick stands for the **test**, not one branch's copy: every copy of the same
+    test (same Test Name + Test Code) at the adapter's branches is linked, so
+    picking "CBC" once links it at each branch that has it, and a test that exists
+    at only some branches links just those. Copies at branches the adapter is not
+    assigned to are never linked; a pick with no copy at any of the adapter's
+    branches → 422 `LAB_ADAPTER_LAB_TEST_BRANCH_MISMATCH`. The stored rows are
+    still one per branch copy.
   - `status` — one of `ONLINE` | `REPORT_ONLY` | `INACTIVE`. Only `ONLINE`
     passes the EMI/LIS token gate; `REPORT_ONLY` and `INACTIVE` both reject an
     EMI call identically (401).

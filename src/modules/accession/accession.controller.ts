@@ -44,6 +44,8 @@ import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/types/jwt-payload.type';
+import { auditActorOf } from './utils/actor.util';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /** `@Audit` metadata shared by every accession write route. */
@@ -260,9 +262,16 @@ export class AccessionController {
   bulkError(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkSampleNoteDto,
   ) {
-    return this.sampleService.error(dto.ids, tenantId, personId, dto);
+    return this.sampleService.error(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      profile.branchId,
+    );
   }
 
   /** Bulk Hold. */
@@ -283,9 +292,16 @@ export class AccessionController {
   bulkRepeat(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Body() dto: BulkRepeatDto,
   ) {
-    return this.sampleService.repeat(dto.ids, tenantId, personId, dto);
+    return this.sampleService.repeat(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+      profile.branchId,
+    );
   }
 
   /** Bulk Store. */
@@ -343,9 +359,18 @@ export class AccessionController {
   bulkRetrieve(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: BulkRetrieveDto,
   ) {
-    return this.sampleService.retrieve(dto.ids, tenantId, personId, dto);
+    return this.sampleService.retrieve(
+      dto.ids,
+      tenantId,
+      personId,
+      profile.branchId,
+      dto,
+      auditActorOf(user),
+    );
   }
 
   /**
@@ -383,13 +408,23 @@ export class AccessionController {
 
   // ── Single-sample reads ────────────────────────────────────────────────────
 
-  /** Fetch one sample fully composed (Sample Overview — §A.10.4). */
+  /**
+   * Fetch one sample fully composed (Sample Overview — §A.10.4). Limited to the
+   * branches with a stake in it (404 otherwise); a tenant-wide caller is not limited.
+   */
   @Get(':id')
-  findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.sampleService.findById(id, tenantId);
+  findOne(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.sampleService.findById(id, tenantId, profile.branchId);
   }
 
-  /** Fetch a sample's status-change history (§A.10.5, newest first). */
+  /**
+   * Fetch a sample's status-change history (§A.10.5, newest first). Same branch
+   * limit as the sample itself.
+   */
   @Get(':id/history')
   findHistory(
     @CurrentTenant() tenantId: string,
@@ -479,11 +514,19 @@ export class AccessionController {
   async error(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: SampleNoteDto,
   ) {
-    return (await this.sampleService.error([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.sampleService.error(
+        [id],
+        tenantId,
+        personId,
+        dto,
+        profile.branchId,
+      )
+    ).succeeded[0];
   }
 
   /** Hold. */
@@ -506,11 +549,19 @@ export class AccessionController {
   async repeat(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
     @Param('id') id: string,
     @Body() dto: RepeatSampleDto,
   ) {
-    return (await this.sampleService.repeat([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.sampleService.repeat(
+        [id],
+        tenantId,
+        personId,
+        dto,
+        profile.branchId,
+      )
+    ).succeeded[0];
   }
 
   /** Store. */
@@ -577,11 +628,21 @@ export class AccessionController {
   async retrieve(
     @CurrentTenant() tenantId: string,
     @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
     @Body() dto: RetrieveSampleDto,
   ) {
-    return (await this.sampleService.retrieve([id], tenantId, personId, dto))
-      .succeeded[0];
+    return (
+      await this.sampleService.retrieve(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+        auditActorOf(user),
+      )
+    ).succeeded[0];
   }
 
   /** Assign Barcode & Print (§A.10.2). */

@@ -34,4 +34,17 @@ tests {
 docs {
   Return — **Accepted / Error / Stored → Returned**. Records `handoverPerson`
   (stored as the sample's `logisticsPerson`).
+
+  Return of a receiving branch's accepted COPY sends the test back to its sender.
+  **Cancelled order:** once the receiving branch has ACCEPTED its copy, the copy
+  holds typed results, so it can no longer be sent back to the sender - refused
+  with 422 `SAMPLE_ORDER_CANCELLED` (a group call with `skipInvalid` skips it with
+  that reason) and nothing changes; Store then Discard stay open. Before Accept
+  (transfer only Received) the receiving branch can still Reject / Repeat.
+
+  **Back on the sender's own copy (Phase 2).** After the existing clear-down (values, notes, attachments and flags removed,
+  report back to Pending) and the move back, the report points at the SENDER's Branch Master Data copy of the test again
+  (`labTestId`) and `performingBranchLabTestId` is cleared (the order line's entry applies). A panel member's
+  `memberBranchLabTestId` returns to the member entry it had. The sender's TAT clock restarts when it accepts the
+  tube again. Still allowed only until a report has a validated result (Result Done, Approved, Published).
 }

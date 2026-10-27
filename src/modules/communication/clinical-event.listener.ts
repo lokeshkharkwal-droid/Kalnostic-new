@@ -479,7 +479,13 @@ export class ClinicalEventListener {
         tenantId,
         async (tx) => {
           const reports = await tx.labReport.findMany({
-            where: { tenantId, deletedAt: null, orderItem: { orderId } },
+            // A test removed from the order keeps a frozen report that can never
+            // reach PUBLISHED - it must not hold the order's completion hostage.
+            where: {
+              tenantId,
+              deletedAt: null,
+              orderItem: { orderId, deletedAt: null },
+            },
             select: { status: true },
           });
           if (reports.length === 0) return false;

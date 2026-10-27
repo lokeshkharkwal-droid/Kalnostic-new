@@ -1,0 +1,48 @@
+meta {
+  name: 02 Create Branch-Unmapped Adapter
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lab-adapters
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAdminToken}}
+}
+
+body:json {
+  {
+    "name": "EMI Gate Branch-Unmapped {{tatRunId}}",
+    "equipmentId": "{{equipmentId}}",
+    "branchIds": ["{{branchBId}}"],
+    "labTestIds": []
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.token) bru.setVar("unlinkedBranchAdapterToken", data.token);
+}
+
+tests {
+  test("adapter created with a token", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.body.data.token).to.be.a("string").and.not.empty;
+  });
+}
+
+docs {
+  **An adapter mapped ONLY to branch B.** Same equipment as the valid adapter, but
+  assigned to **`branchBId`** (branch B), not the order's branch A. `labTestIds` is
+  empty (the equipment has no SITE_ADMIN tests, so nothing auto-maps) — which is
+  fine: the branch gate rejects before the test gate is even reached. Captures its
+  token as **`unlinkedBranchAdapterToken`**.
+}

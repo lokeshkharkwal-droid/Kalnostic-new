@@ -32,6 +32,10 @@ tests {
 }
 
 docs {
+  Cancelled order: refused 422 SAMPLE_ORDER_CANCELLED ("This order has been cancelled, so notes
+  can no longer be added to its samples."), nothing is written; a bulk call is all-or-nothing.
+  Share & Inform is NOT refused on a cancelled order (telling the patient is a real use).
+
   Update Sample (§A.10.3) — records a note/attachment on the history log with **no
   status change**. Available at any status.
 }

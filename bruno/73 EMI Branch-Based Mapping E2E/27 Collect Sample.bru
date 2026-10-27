@@ -1,0 +1,32 @@
+meta {
+  name: 27 Collect Sample
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/collect
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+body:json {
+  {
+    "tubeType": "EDTA (Purple)",
+    "notes": "Collected at the collection center"
+  }
+}
+
+docs {
+  **Accession - collect the sample** (NEW -> COLLECTED) at the Collection Center.
+  Accept (next step) is only allowed from COLLECTED. Requires the
+  `accession:in_house_order__collect_the_sample` permission granted in step 08.
+}

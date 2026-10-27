@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
+import type { CollectionProgress } from '../../../common/utils';
 import { TAT_STATUSES } from '../constants/tat.constant';
 import type { TatStatus } from '../constants/tat.constant';
 
@@ -57,6 +58,17 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(SamplePriority)
   priority?: SamplePriority;
+
+  /**
+   * Filter by the order-level sample **collection progress** — derived from the
+   * order's workflow items' `collectedAt`: `PENDING` (none collected), `PARTIAL`
+   * (some collected), `COLLECTED` (all collected). Distinct from `status` (the
+   * 15-stage sample lifecycle). Shares `buildCollectionProgressWhere` with the
+   * Order Console's `sampleStatus` filter.
+   */
+  @IsOptional()
+  @IsIn(['PENDING', 'PARTIAL', 'COLLECTED'])
+  collectionStatus?: CollectionProgress;
 
   /** Filter by derived TAT band (§A.4). */
   @IsOptional()
@@ -199,4 +211,22 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsDateString({ strict: true })
   @Matches(DATE_ONLY, { message: 'outsourceDate must be YYYY-MM-DD' })
   outsourceDate?: string;
+
+  /**
+   * Only samples currently Sent (INTERNAL transfer) to this branch - the sender's "where did I
+   * send it" filter. A sample the receiving branch sent back ("Sent - Repeated") still counts,
+   * because it stays Sent until the sender decides; one that was retrieved or repeated does not.
+   */
+  @IsOptional()
+  @IsUUID()
+  destinationBranchId?: string;
+
+  /**
+   * Only samples currently Forwarded (EXTERNAL transfer) to a partner whose name contains this
+   * text (case-insensitive).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  externalPartnerName?: string;
 }

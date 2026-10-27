@@ -1,0 +1,41 @@
+meta {
+  name: 26 List Accession Samples (capture barcode)
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/accession/order-samples?orderId={{orderId}}&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  orderId: {{orderId}}
+  page: 1
+  limit: 20
+}
+
+auth:bearer {
+  token: {{ccOperatorToken}}
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.length && data[0].id) {
+    bru.setVar("sampleId", data[0].id);
+    if (data[0].accessionNo) bru.setVar("accessionNo", data[0].accessionNo);
+    // The barcode auto-assigned at order creation - the specimen id the analyzer
+    // scans in every EMI step, before AND after the transfer (the clone is barcode-
+    // less, so this origin barcode is what always resolves the order).
+    if (data[0].barcode) bru.setVar("sampleBarcode", data[0].barcode);
+  }
+}
+
+docs {
+  **Accession - find the generated sample** (status `NEW`). Captures **`sampleId`**
+  and **`sampleBarcode`** (`OrderSample.barcode`) - the single specimen id scanned by
+  the machine throughout. The barcode lives on this origin (Collection Center) sample
+  and never moves; after the transfer it still resolves the order, and the per-report
+  branch gate decides what the adapter may see.
+}

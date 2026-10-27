@@ -1,0 +1,68 @@
+meta {
+  name: Send Sample (Internal Transfer)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/{{sampleId}}/send
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{destinationBranchId}}",
+    "logisticsType": "Courier",
+    "notes": "Handover at 10:30"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Send an ACCEPTED sample to another branch of the tenant (INTERNAL transfer).
+  The sample becomes SENT_INTERNAL and a SampleTransfer is created at IN_TRANSIT.
+
+  Refused (422 SAMPLE_SEND_BLOCKED / VALIDATION_ERROR) when:
+  - the destination is the sample's own branch;
+  - the sample already has an open transfer (in transit, picked up, received, accepted);
+  - the report for this test at the sending branch has been worked on (status is not
+    PENDING, or it has results, notes, attachments, overall-result entries or
+    Notes-section overrides) - a report may only change branch while untouched.
+
+  Group sends pass `force`/`skipInvalid` on the bulk route; a sample that is not
+  sendable is skipped when `skipInvalid` is true.
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+
+  **The destination must OFFER every test on the tube (Phase 1).** A tube can only go to a branch that has an
+  ACTIVE Lab Test List entry for each of its tests. The match goes through the tenant test both branches copied
+  (the sender's Branch Master Data test -> `sourceMasterLabTestId` -> the destination's Branch Master Data test
+  with the same tenant test -> an active, not deleted list entry); any of the destination's lists counts. A test
+  with no tenant link (hand-created at the branch) cannot be matched and counts as NOT offered. A free-text tube
+  test (no catalogue test) is skipped. Otherwise: 422 `DESTINATION_LACKS_TEST`, "<Branch> does not offer: <tests>.
+  Choose another branch." (at most five test names, then "and N more"); nothing is changed.
+  Where it applies: here (only when a `destinationBranchId` is given - Send without a destination stays allowed and
+  is checked when the centre is assigned), Assign / Edit Center, `apply-center-changes` and Accept. In a group send
+  with `skipInvalid` the tube is skipped with this reason and code; a strict group send is refused as a whole.
+  Forward / Outsource are not affected. `GET /branches/options?forSampleIds=` tells the picker which branches
+  qualify.
+}

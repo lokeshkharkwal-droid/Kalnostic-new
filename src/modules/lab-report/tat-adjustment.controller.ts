@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
+import {
+  ReportBranchScope,
+  ReportBranchScopeGuard,
+} from './access/report-branch-scope.guard';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { TatAdjustmentService } from './tat-adjustment.service';
 import { CreateTatAdjustmentDto } from './dto/tat-adjustment.dto';
@@ -14,6 +26,8 @@ import { Audit } from '../../common/decorators/audit.decorator';
  * Technician/Reporting.
  */
 @Controller('lab-reports/:id/tat-adjustments')
+@UseGuards(ReportBranchScopeGuard)
+@ReportBranchScope({ entity: 'report' })
 export class TatAdjustmentController {
   constructor(private readonly tatAdjustmentService: TatAdjustmentService) {}
 

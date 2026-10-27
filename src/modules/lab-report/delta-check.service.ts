@@ -1,6 +1,11 @@
+import {
+  worklistRowBranchWhere,
+  type WorklistBranchScope,
+} from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
 import { AlertReviewStatus, WorklistTrigger } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertReportWritable } from './utils/sent-out-report.util';
 import { LabReportService } from './lab-report.service';
 import { RaiseWorklistEntryDto } from './dto/raise-worklist-entry.dto';
 import { UpdateAlertReviewStatusDto } from './dto/update-worklist-status.dto';
@@ -81,6 +86,7 @@ export class DeltaCheckService {
       include: { orderItem: { include: { order: true } } },
     });
     if (!report) throw new LabReportNotFoundException(labReportId);
+    await assertReportWritable(this.prisma, tenantId, labReportId);
 
     let previousResultValueId: string | undefined;
     if (dto.resultParamId) {
@@ -94,7 +100,7 @@ export class DeltaCheckService {
     }
 
     return this.prisma
-      .$transaction(async (tx) => {
+      .withTenant(tenantId, async (tx) => {
         const delta = await tx.deltaCheck.create({
           data: {
             tenantId,
@@ -130,10 +136,14 @@ export class DeltaCheckService {
       });
   }
 
-  async findAll(tenantId: string, branchId: string | null) {
-    const activeBranchId = this.requireBranch(branchId);
+  /**
+   * The worklist's entries for the branches in `scope` (the caller's own branch by
+   * default; several branches for "All Branches" — see
+   * `TechnicianBranchAccessService.resolveScope`).
+   */
+  async findAll(tenantId: string, scope: WorklistBranchScope) {
     const rows = await this.prisma.deltaCheck.findMany({
-      where: { tenantId, branchId: activeBranchId, deletedAt: null },
+      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
       include: DELTA_CHECK_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -160,11 +170,19 @@ export class DeltaCheckService {
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const entry = await this.prisma.deltaCheck.findFirst({
-      where: { id, tenantId, branchId: activeBranchId, deletedAt: null },
+      where: {
+        id,
+        tenantId,
+        deletedAt: null,
+        // Tied to the REPORT's branch, not the branch stamped on this row when it
+        // was raised: the row keeps that branch after the report is re-homed.
+        labReport: { is: { branchId: activeBranchId, deletedAt: null } },
+      },
     });
     if (!entry) throw new WorklistEntryNotFoundException('delta_check', id);
+    await assertReportWritable(this.prisma, tenantId, entry.labReportId);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
       const updatedEntry = await tx.deltaCheck.update({
         where: { id },
         data: { status: dto.status },

@@ -39,11 +39,14 @@ describe('EmiService — panel-member barcode', () => {
         .mockResolvedValue([{ id: 'blt-hb', testName: 'Hemoglobin Test' }]),
     },
     // The scanned barcode carries the panel item's member test (labTestId = the
-    // member's sourceLabTestId, as accession records it on OrderSampleTest).
+    // member's sourceLabTestId, as accession records it on OrderSampleTest). The
+    // sample is ACCEPTED (reportable) and lives in the adapter's branch.
     orderSample: {
       findMany: jest.fn().mockResolvedValue([
         {
           orderId: 'ord1',
+          branchId: 'br1',
+          status: 'ACCEPTED',
           tests: [{ orderItemId: 'oi1', labTestId: 'lt-hb' }],
         },
       ]),
@@ -76,6 +79,7 @@ describe('EmiService — panel-member barcode', () => {
                 id: 'rep1',
                 status: 'PENDING',
                 isLocked: false,
+                branchId: 'br1',
                 labTestId: 'lt-hb',
                 memberBranchLabTestId: 'blt-hb',
               },
@@ -96,6 +100,9 @@ describe('EmiService — panel-member barcode', () => {
       ]),
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
+    labTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // Not sent out (no pending internal transfer) → the fill path proceeds.
+    orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },
@@ -177,6 +184,8 @@ describe('EmiService — standalone-test barcode', () => {
       findMany: jest.fn().mockResolvedValue([
         {
           orderId: 'ord1',
+          branchId: 'br1',
+          status: 'ACCEPTED',
           tests: [{ orderItemId: 'oi1', labTestId: 'lt-glu' }],
         },
       ]),
@@ -214,6 +223,7 @@ describe('EmiService — standalone-test barcode', () => {
                 id: 'rep1',
                 status: 'PENDING',
                 isLocked: false,
+                branchId: 'br1',
                 labTestId: 'lt-glu',
                 memberBranchLabTestId: null,
               },
@@ -234,6 +244,9 @@ describe('EmiService — standalone-test barcode', () => {
       ]),
     },
     branchLabPanelTest: { findMany: jest.fn().mockResolvedValue([]) },
+    labTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // Not sent out (no pending internal transfer) → the fill path proceeds.
+    orderSampleTest: { findFirst: jest.fn().mockResolvedValue(null) },
     adapterResult: { create: jest.fn().mockResolvedValue({}) },
     labReportResultValue: { upsert: jest.fn().mockResolvedValue({}) },
     labReport: { update: jest.fn().mockResolvedValue({}) },

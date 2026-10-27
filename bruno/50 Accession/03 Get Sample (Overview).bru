@@ -39,6 +39,12 @@ tests {
 }
 
 docs {
+  Branch scope: opens only for a branch with a stake in it - the branch holding the
+  sample, the branch it was created in or is processed at, any branch it has been
+  with, the order's own branch, or the sender / holder / receiver of a transfer that
+  moved it. Any other branch gets 404 (the same answer as a missing id). A caller with
+  no active branch (business admin) is not limited.
+
   Fetch one sample fully composed for the Sample Overview panel (§A.10.4): its
   `tests` (with snapshot test names + each test's resolved `department` name),
   `statusHistory` (newest first), `transfers`, and the linked `order` (patient /

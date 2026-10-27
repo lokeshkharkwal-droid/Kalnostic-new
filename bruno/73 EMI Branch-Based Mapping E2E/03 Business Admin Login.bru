@@ -1,0 +1,32 @@
+meta {
+  name: 03 Business Admin Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{adminIdentifier}}",
+    "password": "{{adminPassword}}"
+  }
+}
+
+script:post-response {
+  const data = res.body && res.body.success && res.body.data;
+  if (data && data.accessToken) bru.setVar("businessAdminToken", data.accessToken);
+}
+
+docs {
+  **Bootstrap 3 - Business Admin login.** Captures **`businessAdminToken`** for the
+  tenant-level setup (branches, users, catalogue, adapters).
+}

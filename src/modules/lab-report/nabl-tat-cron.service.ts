@@ -133,7 +133,12 @@ export class NablTatCronService {
               orderItem: {
                 include: {
                   branchLabTest: true,
-                  labReports: { where: { deletedAt: null } },
+                  labReports: {
+                    where: { deletedAt: null },
+                    // the entry the holding branch works the test with, when it is
+                    // not the order line's own
+                    include: { performingEntry: true },
+                  },
                 },
               },
             },
@@ -150,18 +155,28 @@ export class NablTatCronService {
           : undefined;
         if (!branch) continue;
         for (const t of sample.tests) {
+          // A test removed from the order keeps a frozen report: nobody can work
+          // it, so its stopwatch must not keep running into a breach.
+          if (t.orderItem?.deletedAt) continue;
           const cfg = t.orderItem?.branchLabTest;
           // `cfg` (branchLabTest) is only ever set for a non-panel item — a
           // panel OrderItem has branchLabTest null, so this loop already only
           // ever processes non-panel items, which have at most one report.
           // Still iterate `labReports` rather than assume a single entry, in
           // case that invariant ever changes.
-          if (!cfg || !cfg.processingTimeFrom || !cfg.processingTimeTo) {
-            continue;
-          }
+          if (!cfg) continue;
           for (const report of t.orderItem?.labReports ?? []) {
             if (report.status === LabReportStatus.APPROVED) continue;
             if (candidates.has(report.id)) continue;
+            // The processing window / schedule / Max TAT of the branch that HOLDS the
+            // report: its own entry once the report was sent to it, else the order line's.
+            const cfgOfHolder = report.performingEntry ?? cfg;
+            if (
+              !cfgOfHolder.processingTimeFrom ||
+              !cfgOfHolder.processingTimeTo
+            ) {
+              continue;
+            }
             candidates.set(report.id, {
               reportId: report.id,
               report: {
@@ -172,11 +187,11 @@ export class NablTatCronService {
                 tatNetMinutes: report.tatNetMinutes,
               },
               cfg: {
-                processingTimeFrom: cfg.processingTimeFrom,
-                processingTimeTo: cfg.processingTimeTo,
-                scheduleDays: cfg.scheduleDays,
-                tatMaxValue: cfg.tatMaxValue,
-                tatMaxUnit: cfg.tatMaxUnit,
+                processingTimeFrom: cfgOfHolder.processingTimeFrom,
+                processingTimeTo: cfgOfHolder.processingTimeTo,
+                scheduleDays: cfgOfHolder.scheduleDays,
+                tatMaxValue: cfgOfHolder.tatMaxValue,
+                tatMaxUnit: cfgOfHolder.tatMaxUnit,
               },
               branchOpen: openByBranch.get(branch.id) ?? false,
               timezone: branch.timezone,

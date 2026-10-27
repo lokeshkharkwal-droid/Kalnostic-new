@@ -1,0 +1,94 @@
+meta {
+  name: Transfer - Assign Center
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/assign-center
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "destinationBranchId": "{{destinationBranchId}}"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Set or change the destination of a transfer created without one.
+
+  For an INTERNAL transfer this is allowed only while it is IN_TRANSIT or PICKED_UP;
+  from RECEIVED onward (or once closed) it is refused with 422 TRANSFER_NOT_EDITABLE.
+  Who may act (INTERNAL transfer): only the SENDING branch. The caller's active branch
+  (the profile they switched to) must be the branch that sent the sample, otherwise
+  403 TRANSFER_WRONG_BRANCH and nothing changes. A caller with no active branch
+  (business admin) is refused too. A group Retrieve is refused as a whole, never
+  skipped, when any sent sample belongs to another branch.
+  Internal branch transfer rules (manager flow 2026-09-29):
+  - Once a sample is SENT_INTERNAL to another branch, the SENDER's Technician
+    worklist hides its report (list, counts, detail, history, every write, the five
+    secondary worklists, attachments, inventory usage, analyser results). It behaves
+    as "Lab report not found" (404 LAB_REPORT_NOT_FOUND) for the sender.
+  - A sent sample accepts ONLY Retrieve from the sender, and only until the
+    receiving branch has received it (transfer IN_TRANSIT / PICKED_UP).
+  - The receiving branch's Reject / Repeat returns the test to the sender: the
+    sender's original sample goes SENT_INTERNAL -> REPEAT automatically.
+
+  **Assign Center vs Edit Center.** The same endpoint serves both: with no destination
+  yet it is "Assign Center" (permission group ASSIGN_CENTER); with a destination already
+  set it is "Edit Center" (UPDATE_CENTER). Allowed while the transfer is IN_TRANSIT or
+  PICKED_UP, refused once the receiving branch has received it. Editing the destination
+  changes the SAME transfer (nothing is deleted): it drops out of the old branch's
+  Internal Transfer list and appears in the new branch's.
+  `logisticsType` is optional here, but while the transfer is In-Transit with no logistics
+  type the receiving branch does not see it and cannot pick it up; setting it (now or
+  through a later Edit Center) makes it appear. `sendDate` / `sendTime` are written only
+  when sent (the screen pre-fills the current date and time).
+
+  **Dialog (INTERNAL).** The screen now opens a per-tube dialog: each tube has its own center,
+  un-ticking a tube retrieves it, and Confirm sends one all-or-nothing request to
+  `POST transfers/apply-center-changes` (see `50 Accession/45`). This single-transfer endpoint stays
+  for other callers and for External / Outsource transfers.
+
+  **Re-addressing a transfer the first branch already Picked Up.** Changing the destination of
+  an INTERNAL transfer to a DIFFERENT branch while it is Picked Up starts it over: it goes back
+  to IN_TRANSIT and the old pick-up (`pickedUpBy` / `pickedUpAt`) is cleared, because the new
+  branch has not picked it up (it must Pick Up before it can Receive; the old branch can do
+  nothing with it). Every change of destination (also a first assignment) is recorded in the same
+  transaction: a row on the sender sample's history (action `assign-center`, "Center changed from
+  X to Y while <stage>", plus "it had been picked up, so it starts over at In-Transit" when reset)
+  and Audit-log entries (module ACCESSION, `metadata.side`): `sender` under the sending branch
+  always; `old-receiver` under the old destination when it had been able to see the transfer (it
+  now loses it); `new-receiver` under the new destination once it can see it (an In-Transit
+  transfer needs a logistics type first). Saving the same destination again (a logistics-only
+  edit) is not a re-address and writes none of this.
+
+  **The destination must OFFER every test on the tube (Phase 1).** A tube can only go to a branch that has an
+  ACTIVE Lab Test List entry for each of its tests. The match goes through the tenant test both branches copied
+  (the sender's Branch Master Data test -> `sourceMasterLabTestId` -> the destination's Branch Master Data test
+  with the same tenant test -> an active, not deleted list entry); any of the destination's lists counts. A test
+  with no tenant link (hand-created at the branch) cannot be matched and counts as NOT offered. A free-text tube
+  test (no catalogue test) is skipped. Otherwise: 422 `DESTINATION_LACKS_TEST`, "<Branch> does not offer: <tests>.
+  Choose another branch." (at most five test names, then "and N more"); nothing is changed.
+  Checked when the destination CHANGES (first centre or Edit Center), not on a logistics-only save that keeps the
+  destination it already had. `apply-center-changes` refuses the whole batch naming the tube
+  (`CENTER_CHANGES_REFUSED`, "Nothing was changed. Tube ACC-...: <Branch> does not offer: ...").
+
+  **Outsource transfers:** the center and the logistics type set here are what unlock Pick Up (center + logistics type)
+  and Receive / Accept (center) - see `TRANSFER_OUTSOURCE_NOT_ASSIGNED` on those steps. Send `logisticsType` together
+  with `outsourceCenterId` (a logistics-only change needs the center again, as for the other kinds).
+}

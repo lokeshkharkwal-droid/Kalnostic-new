@@ -32,6 +32,12 @@ export interface JwtPayload {
    * B2B data-isolation guard.
    */
   referral_panel_id: string | null;
+  /**
+   * Request-scoped, never in the token: set by `ReportBranchScopeGuard` when the
+   * caller only holds the look-only "I sent this report" link, so the request
+   * was re-pointed at the report's branch without any role there.
+   */
+  sender_link_read?: boolean;
   /** Standard JWT — issued at (Unix seconds). */
   iat?: number;
   /** Standard JWT — expiry (Unix seconds). */

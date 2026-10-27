@@ -4735,9 +4735,15 @@ export class LabTestService {
   ): Promise<void> {
     for (const p of params ?? []) {
       // `reflexTests` is stored as a JSON snapshot of { id, name } objects,
-      // exactly as sent (no FK extraction).
-      const { referenceRanges, referenceValues, reflexTests, ...paramScalars } =
-        p;
+      // exactly as sent (no FK extraction). A client-sent `id` is dropped: a new
+      // row always gets its own generated id.
+      const {
+        id: _clientId,
+        referenceRanges,
+        referenceValues,
+        reflexTests,
+        ...paramScalars
+      } = p;
       const param = await tx.labTestResultParam.create({
         data: {
           ...paramScalars,
@@ -4774,19 +4780,29 @@ export class LabTestService {
 
   /**
    * Shared update-path helper (used by both `LabTestService.update()` and the
-   * xlsx-import update path): replace a test's result parameters while
-   * preserving the DB `id` of any parameter whose `parameterCode` (case-
-   * insensitive) matches one that's already active on this test. Other
+   * xlsx-import update path): replace a test's result parameters while keeping
+   * the DB `id` of every parameter that is already active on this test. Other
    * modules hold logical (non-FK) references to `LabTestResultParam.id` —
    * `LabReportResultValue.resultParamId`, `CriticalAlert.resultParamId`,
    * `OutOfRangeFlag.resultParamId` — so a blind delete-and-recreate on every
-   * save (what `createParams` does, and what this replaced in `update()`)
-   * would silently orphan any existing lab report tied to that parameter. A
-   * matched parameter's scalars are patched in place and its reference
-   * ranges/values are fully replaced (neither DTO carries a natural key for
-   * ranges/values, so full-replace is the existing, unchanged contract); an
-   * unmatched incoming code creates a new parameter; an existing active
-   * parameter whose code no longer appears in the payload is soft-deleted.
+   * save would silently orphan any existing lab report tied to that parameter.
+   *
+   * Which existing parameter an incoming one updates (`matchParamsToExisting`):
+   * first by the `id` the editor echoes back (so a rename keeps the parameter and
+   * every result entered for it), then by `parameterCode` (case-insensitive).
+   * A matched parameter's scalars are patched in place; an unmatched incoming one
+   * is created; an existing active parameter that nothing matched is soft-deleted.
+   * Matched parameters are updated BEFORE new ones are created, so a code that one
+   * parameter gives up can be taken by a new one in the same save.
+   *
+   * Reference ranges of a matched parameter:
+   *  - edit (`fromImport` false): `syncRangesKeepingIds` — a range whose meaning is
+   *    unchanged keeps its row and id, so a report that already picked it still
+   *    points at a live range; only changed/removed ranges are soft-deleted and
+   *    changed/added ones created;
+   *  - xlsx import (`fromImport` true): fully replaced, unchanged contract (the
+   *    sheet carries no natural key for a range).
+   * Reference values are always fully replaced (neither DTO carries a natural key).
    *
    * `options.fromImport` (the xlsx-import update path only) protects what the
    * sheet cannot carry, so a re-import never erases it:
@@ -4812,36 +4828,49 @@ export class LabTestService {
       where: { labTestId, tenantId, deletedAt: null },
       select: { id: true, parameterCode: true },
     });
-    const existingByCode = new Map(
-      existing.map((p) => [p.parameterCode.toLowerCase(), p.id]),
-    );
+    const incoming = params ?? [];
+    const matches = this.matchParamsToExisting(existing, incoming);
     const matchedIds = new Set<string>();
+    const toCreate: LabTestResultParamDto[] = [];
 
-    for (const p of params ?? []) {
-      const { referenceRanges, referenceValues, reflexTests, ...paramScalars } =
-        p;
-      const existingId = existingByCode.get(p.parameterCode.toLowerCase());
+    // 1. Matched parameters first (a rename frees its old code before any create).
+    for (const [i, p] of incoming.entries()) {
+      const existingId = matches[i];
+      if (!existingId) {
+        toCreate.push(p);
+        continue;
+      }
+      matchedIds.add(existingId);
+      const {
+        id: _clientId,
+        referenceRanges,
+        referenceValues,
+        reflexTests,
+        ...paramScalars
+      } = p;
+      await tx.labTestResultParam.update({
+        where: { id: existingId },
+        data: {
+          ...paramScalars,
+          ...(fromImport && reflexTests === undefined
+            ? {}
+            : {
+                reflexTests: (reflexTests ??
+                  []) as unknown as Prisma.InputJsonValue,
+              }),
+        },
+      });
+      const scope = { tenantId, branchId, labTestId, paramId: existingId };
 
-      let paramId: string;
-      let previousRanges: PreviousRangeSettings[] = [];
-      if (existingId) {
-        matchedIds.add(existingId);
-        await tx.labTestResultParam.update({
-          where: { id: existingId },
-          data: {
-            ...paramScalars,
-            ...(fromImport && reflexTests === undefined
-              ? {}
-              : {
-                  reflexTests: (reflexTests ??
-                    []) as unknown as Prisma.InputJsonValue,
-                }),
-          },
-        });
-        paramId = existingId;
-        if (fromImport) {
-          previousRanges = await tx.labTestReferenceRange.findMany({
-            where: { paramId, tenantId, deletedAt: null, labAdapterId: null },
+      if (fromImport) {
+        const previousRanges: PreviousRangeSettings[] =
+          await tx.labTestReferenceRange.findMany({
+            where: {
+              paramId: existingId,
+              tenantId,
+              deletedAt: null,
+              labAdapterId: null,
+            },
             select: {
               method: true,
               gender: true,
@@ -4853,55 +4882,66 @@ export class LabTestService {
               isDefault: true,
             },
           });
-        }
+        // An import keeps the ranges tied to an analyzer (the sheet cannot carry them).
         await tx.labTestReferenceRange.updateMany({
           where: {
-            paramId,
+            paramId: existingId,
             tenantId,
             deletedAt: null,
-            // An import keeps the ranges tied to an analyzer (the sheet cannot carry them).
-            ...(fromImport ? { labAdapterId: null } : {}),
+            labAdapterId: null,
           },
           data: { deletedAt: now },
         });
-        await tx.labTestReferenceValue.updateMany({
-          where: { paramId, tenantId, deletedAt: null },
-          data: { deletedAt: now },
-        });
+        if (referenceRanges?.length) {
+          await tx.labTestReferenceRange.createMany({
+            data: referenceRanges.map((r) => ({
+              ...this.carryOverRangeSettings(r, previousRanges),
+              ...scope,
+            })),
+          });
+        }
       } else {
-        const created = await tx.labTestResultParam.create({
-          data: {
-            ...paramScalars,
-            reflexTests: (reflexTests ??
-              []) as unknown as Prisma.InputJsonValue,
-            tenantId,
-            branchId,
-            labTestId,
-          },
-        });
-        paramId = created.id;
+        await this.syncRangesKeepingIds(tx, scope, referenceRanges ?? [], now);
       }
 
+      await tx.labTestReferenceValue.updateMany({
+        where: { paramId: existingId, tenantId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      if (referenceValues?.length) {
+        await tx.labTestReferenceValue.createMany({
+          data: referenceValues.map((v) => ({ ...v, ...scope })),
+        });
+      }
+    }
+
+    // 2. New parameters.
+    for (const p of toCreate) {
+      const {
+        id: _clientId,
+        referenceRanges,
+        referenceValues,
+        reflexTests,
+        ...paramScalars
+      } = p;
+      const created = await tx.labTestResultParam.create({
+        data: {
+          ...paramScalars,
+          reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
+          tenantId,
+          branchId,
+          labTestId,
+        },
+      });
+      const scope = { tenantId, branchId, labTestId, paramId: created.id };
       if (referenceRanges?.length) {
         await tx.labTestReferenceRange.createMany({
-          data: referenceRanges.map((r) => ({
-            ...this.carryOverRangeSettings(r, previousRanges),
-            tenantId,
-            branchId,
-            labTestId,
-            paramId,
-          })),
+          data: referenceRanges.map((r) => ({ ...r, ...scope })),
         });
       }
       if (referenceValues?.length) {
         await tx.labTestReferenceValue.createMany({
-          data: referenceValues.map((v) => ({
-            ...v,
-            tenantId,
-            branchId,
-            labTestId,
-            paramId,
-          })),
+          data: referenceValues.map((v) => ({ ...v, ...scope })),
         });
       }
     }
@@ -4923,6 +4963,179 @@ export class LabTestService {
         data: { deletedAt: now },
       });
     }
+  }
+
+  /**
+   * Decide, for each incoming parameter, which EXISTING active parameter of the
+   * test it updates (`undefined` = none, so it is created). A parameter that
+   * carries the `id` of a live parameter of this test claims that parameter first
+   * (this is what lets a rename keep the parameter and its entered results); every
+   * other incoming parameter then matches by `parameterCode` (case-insensitive)
+   * among the parameters no `id` claimed. An `id` that is not a live parameter of
+   * this test is ignored (the parameter falls back to its code).
+   *
+   * @param existing the test's active parameters
+   * @param incoming the parameters sent by the client, in order
+   * @returns one entry per incoming parameter: the matched existing id or `undefined`
+   * @throws ValidationException when two incoming parameters carry the same `id`
+   */
+  private matchParamsToExisting(
+    existing: Array<{ id: string; parameterCode: string }>,
+    incoming: LabTestResultParamDto[],
+  ): Array<string | undefined> {
+    const existingIds = new Set(existing.map((p) => p.id));
+    const claimedById = new Set<string>();
+    const result: Array<string | undefined> = incoming.map(() => undefined);
+    for (const [i, p] of incoming.entries()) {
+      if (!p.id || !existingIds.has(p.id)) continue;
+      if (claimedById.has(p.id)) {
+        throw new ValidationException(
+          'The same parameter was sent more than once',
+          { parameterCode: p.parameterCode },
+        );
+      }
+      claimedById.add(p.id);
+      result[i] = p.id;
+    }
+    const byCode = new Map(
+      existing
+        .filter((p) => !claimedById.has(p.id))
+        .map((p) => [p.parameterCode.toLowerCase(), p.id]),
+    );
+    for (const [i, p] of incoming.entries()) {
+      if (result[i]) continue;
+      result[i] = byCode.get(p.parameterCode.toLowerCase());
+    }
+    return result;
+  }
+
+  /**
+   * Make a parameter's live reference ranges equal the incoming set WITHOUT
+   * touching a range that did not change. A range is identified by what decides
+   * how a result is judged against it (see `rangeIdentityKey`); an incoming range
+   * with the same identity as a live one keeps that row — so its id never changes
+   * and a report that picked it still points at a live range. A live range that
+   * nothing matches is soft-deleted; an incoming range nothing matches is created
+   * (a changed limit is therefore a new row, and the old row stays frozen for the
+   * reports that used it). Each live row is matched at most once, so duplicates in
+   * the payload can never share one row.
+   *
+   * Only two things on a kept row are patched in place — the Default flag and the
+   * Display text — because neither takes part in judging a result (print shows the
+   * Display text saved on the result value, and Default only decides which range
+   * the technician screen pre-selects).
+   *
+   * @param tx caller's transaction client (already in `withTenant`)
+   * @param scope tenant / branch / test / parameter the ranges belong to
+   * @param incoming the ranges the client sent for this parameter
+   * @param now timestamp used for every soft delete
+   */
+  private async syncRangesKeepingIds(
+    tx: Prisma.TransactionClient,
+    scope: {
+      tenantId: string | null;
+      branchId: string | null;
+      labTestId: string;
+      paramId: string;
+    },
+    incoming: LabTestReferenceRangeDto[],
+    now: Date,
+  ): Promise<void> {
+    const live = await tx.labTestReferenceRange.findMany({
+      where: {
+        paramId: scope.paramId,
+        tenantId: scope.tenantId,
+        deletedAt: null,
+      },
+    });
+    const pool = new Map<string, typeof live>();
+    for (const row of live) {
+      const key = this.rangeIdentityKey(row);
+      pool.set(key, [...(pool.get(key) ?? []), row]);
+    }
+
+    const toCreate: LabTestReferenceRangeDto[] = [];
+    for (const r of incoming) {
+      const kept = pool.get(this.rangeIdentityKey(r))?.shift();
+      if (!kept) {
+        toCreate.push(r);
+        continue;
+      }
+      const isDefault = r.isDefault ?? false;
+      const display = r.displayOfReferenceRange ?? null;
+      if (
+        kept.isDefault !== isDefault ||
+        (kept.displayOfReferenceRange ?? null) !== display
+      ) {
+        await tx.labTestReferenceRange.update({
+          where: { id: kept.id },
+          data: { isDefault, displayOfReferenceRange: display },
+        });
+      }
+    }
+
+    const leftoverIds = [...pool.values()].flat().map((row) => row.id);
+    if (leftoverIds.length) {
+      await tx.labTestReferenceRange.updateMany({
+        where: { id: { in: leftoverIds }, deletedAt: null },
+        data: { deletedAt: now },
+      });
+    }
+    if (toCreate.length) {
+      await tx.labTestReferenceRange.createMany({
+        data: toCreate.map((r) => ({ ...r, ...scope })),
+      });
+    }
+  }
+
+  /**
+   * The identity of a reference range: every field that decides how a result is
+   * judged against it — analyzer, method, unit, gender, age band, lower/upper limit,
+   * critical limits and abnormal-flag style. Two ranges with the same identity are
+   * the same range. The Default flag and the Display text are deliberately NOT part
+   * of it (see `syncRangesKeepingIds`).
+   *
+   * Works on both an incoming DTO and a stored row: a missing value is normalised to
+   * the database default (gender ALL, age 0–999 Years, flag BOLD_AND_RED), a number to
+   * the 4 decimals the database stores, and the method/unit are compared trimmed. Any
+   * mismatch here is harmless: it only makes a range look "changed", which creates a
+   * new row (the previous behaviour).
+   *
+   * @param r a range DTO or a stored range row
+   * @returns a string that is equal for two ranges with the same identity
+   */
+  private rangeIdentityKey(r: {
+    labAdapterId?: string | null;
+    method?: string | null;
+    unit?: string | null;
+    gender?: ReferenceGender | null;
+    ageFrom?: number | null;
+    ageFromUnit?: AgeUnit | null;
+    ageTo?: number | null;
+    ageToUnit?: AgeUnit | null;
+    lowerLimit?: number | Prisma.Decimal | null;
+    upperLimit?: number | Prisma.Decimal | null;
+    criticalMin?: number | Prisma.Decimal | null;
+    criticalMax?: number | Prisma.Decimal | null;
+    abnormalFlagLogic?: AbnormalFlag | null;
+  }): string {
+    const num = (v: number | Prisma.Decimal | null | undefined): string =>
+      v === null || v === undefined ? '' : Number(v).toFixed(4);
+    return [
+      r.labAdapterId ?? '',
+      (r.method ?? '').trim(),
+      (r.unit ?? '').trim(),
+      r.gender ?? ReferenceGender.ALL,
+      r.ageFrom ?? 0,
+      r.ageFromUnit ?? AgeUnit.YEARS,
+      r.ageTo ?? 999,
+      r.ageToUnit ?? AgeUnit.YEARS,
+      num(r.lowerLimit),
+      num(r.upperLimit),
+      num(r.criticalMin),
+      num(r.criticalMax),
+      r.abnormalFlagLogic ?? AbnormalFlag.BOLD_AND_RED,
+    ].join('\u0000');
   }
 
   /**
@@ -5185,7 +5398,7 @@ export class LabTestService {
     }
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
     (p.referenceValues ?? []).forEach((v) => this.assertAgeBounds(v));
-    this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode);
+    this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode, true);
     this.assertAdapterDefaultsPresent(p.referenceRanges ?? [], p.parameterCode);
   }
 
@@ -5423,6 +5636,14 @@ export class LabTestService {
    * group. This holds for a range with an analyzer AND for a range without one (its
    * `labAdapterId` is then null, which is its own value): a range without an
    * analyzer is never compared against a real adapter's group.
+   *
+   * `allowSameKeyDifferentLimits` (the Add/Edit Test save; false for the xlsx import):
+   * two ranges that share the exact same analyzer, method, unit, gender and age band
+   * are NOT a conflict when their lower or upper limit differs — the user copied a
+   * range and changed only its limits. Such a set is then a Default group of two or
+   * more, so `assertAdapterDefaultsPresent` requires exactly one Default among them.
+   * Identical limits are still "a similar range", and a partial Gender/Age overlap is
+   * still "overlapping".
    */
   private assertNoRangeOverlap(
     ranges: Array<{
@@ -5434,8 +5655,11 @@ export class LabTestService {
       ageFromUnit?: AgeUnit;
       ageTo?: number;
       ageToUnit?: AgeUnit;
+      lowerLimit?: number;
+      upperLimit?: number;
     }>,
     parameterCode: string,
+    allowSameKeyDifferentLimits = false,
   ): void {
     const groups = new Map<string, typeof ranges>();
     for (const r of ranges) {
@@ -5446,7 +5670,11 @@ export class LabTestService {
       else groups.set(key, [r]);
     }
     for (const group of groups.values()) {
-      this.assertNoRangeOverlapWithinGroup(group, parameterCode);
+      this.assertNoRangeOverlapWithinGroup(
+        group,
+        parameterCode,
+        allowSameKeyDifferentLimits,
+      );
     }
   }
 
@@ -5460,8 +5688,11 @@ export class LabTestService {
       ageFromUnit?: AgeUnit;
       ageTo?: number;
       ageToUnit?: AgeUnit;
+      lowerLimit?: number;
+      upperLimit?: number;
     }>,
     parameterCode: string,
+    allowSameKeyDifferentLimits: boolean,
   ): void {
     for (let i = 0; i < group.length; i++) {
       const a = group[i]!;
@@ -5481,6 +5712,16 @@ export class LabTestService {
         const isExactDuplicate =
           aGender === bGender &&
           ageRangeKey(aFrom, aTo) === ageRangeKey(bFrom, bTo);
+        // Same key but a different lower/upper limit: a copy whose limits were
+        // changed (Add/Edit Test only). Limits are compared to the 4 decimals the
+        // database stores, so 10 and 10.00001 are still the same range.
+        if (
+          isExactDuplicate &&
+          allowSameKeyDifferentLimits &&
+          !this.sameLimits(a, b)
+        ) {
+          continue;
+        }
         throw new ValidationException(
           isExactDuplicate
             ? `A similar reference range already exists for parameter '${parameterCode}'`
@@ -5489,6 +5730,25 @@ export class LabTestService {
         );
       }
     }
+  }
+
+  /**
+   * Whether two ranges carry the same lower AND upper limit (an absent limit equals
+   * an absent limit). Compared to the 4 decimals the database stores.
+   *
+   * @param a one range
+   * @param b another range
+   */
+  private sameLimits(
+    a: { lowerLimit?: number | null; upperLimit?: number | null },
+    b: { lowerLimit?: number | null; upperLimit?: number | null },
+  ): boolean {
+    const num = (v: number | null | undefined): string =>
+      v === null || v === undefined ? '' : v.toFixed(4);
+    return (
+      num(a.lowerLimit) === num(b.lowerLimit) &&
+      num(a.upperLimit) === num(b.upperLimit)
+    );
   }
 
   /**

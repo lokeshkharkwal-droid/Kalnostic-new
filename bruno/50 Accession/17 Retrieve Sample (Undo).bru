@@ -33,6 +33,26 @@ tests {
 }
 
 docs {
+  Cancelled order: Retrieve is a wind-down and is allowed ONLY for a sample that is out at
+  another branch / partner (Sent, Forwarded, Outsourced). Any other sample of a cancelled
+  order is refused 422 SAMPLE_ORDER_CANCELLED ("This order has been cancelled, so Retrieve
+  is not allowed on this sample ..."), which wins over any other Retrieve refusal. In a
+  bulk call with `skipInvalid` that sentence is the skipped `reason`.
+
+  Bulk answer: each entry of `skipped` carries `reason` (readable) and `code` (the same
+  error code the strict call answers with, e.g. SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE,
+  INVALID_SAMPLE_TRANSITION), so a screen can tell the reasons apart. The HTTP status of a
+  group call with `skipInvalid` stays 2xx: the call itself was valid.
+
+  Validated result: a sample that is at this branch is NOT retrieved back to BEFORE its
+  acceptance (New / Collected / Halt / Hold / Repeat ...) while any test on it has a
+  validated result (Result Done, Approved or Published) - the sample would say "not
+  accepted yet" next to a done result. Refused 422 SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE
+  (skipped with that reason in a bulk call with `skipInvalid`); use Re-run to redo a
+  validated result. An undo that stays at / after acceptance (Stored -> Accepted ...),
+  a result that is not validated yet (it stays saved) and a sample that is out at
+  another branch (its transfer rules apply) are not affected. Nothing is deleted.
+
   Retrieve / Retry (§A.7/§A.10.19) — the **universal undo**. Moves the sample back
   to its **immediately-previous status from its own history**: the `fromStatus` of
   the most recent NON-retrieve transition INTO the current status. Repeated
@@ -44,13 +64,29 @@ docs {
   sample (Sent / Forward / Outsourced / Returned) reverts to **Accepted** via the
   §A.9 send/forward/outsource history row.
 
-  **Cross-branch recall** — pulling a Sent / Forwarded / Outsourced sample back
-  (Retrieve, or Repeat) unwinds the whole transfer so no stale record is left in the
-  receiving branch: every open transfer is **soft-deleted** (deletedAt) so it leaves
-  both branches' Referral / Outsource queues (which filter `deletedAt IS NULL`), and
-  for an **accepted INTERNAL** transfer the destination clone it created (RULE 1) is
-  soft-deleted and its lab report(s) moved back to the origin branch. The source
-  sample's `processingBranchId` is reset to its origin and the dispatch fields cleared.
+  **Cross-branch recall** — pulling a **Forwarded / Outsourced** sample back (Retrieve,
+  or Repeat) unwinds the whole transfer so no stale record is left: every open
+  transfer is **soft-deleted** (deletedAt) so it leaves the Referral / Outsource
+  queues (which filter `deletedAt IS NULL`). The source sample's `processingBranchId`
+  is reset to its origin and the dispatch fields cleared. (A partner / outsource
+  centre has no branch copy, so there is no clone to remove.)
+
+  **Sent (INTERNAL) samples are different:** the sender can Retrieve only until the
+  receiving branch has received the sample (transfer IN_TRANSIT / PICKED_UP). The open
+  INTERNAL transfer is then closed as **REJECTED** (reason "Recalled via Retrieve") AND
+  **soft-deleted** (`deletedAt`), so it leaves the receiving branch's Internal Transfer
+  list, dashboard counts and open-transfer checks; the sample returns to its previous
+  status (Accepted). The row is kept in the database, and the recall is recorded in the
+  **Audit log** (module ACCESSION, written in the same transaction as the Retrieve, so it
+  never exists without it): one entry for the sending branch ("Retrieved sample ACC-... from
+  <Branch B> while In-Transit|Picked Up", or "... (no center assigned yet)") and, when the
+  receiving branch had been able to see the transfer, one for the receiving branch ("Sample
+  ACC-... was retrieved by <Branch A> before <Branch B> received it (it was ...)"), each with
+  sample, order, transfer, stage and both branches in `metadata`. The sender's sample history
+  row carries the same sentence in its notes. The Audit page is in Business Admin. Once the
+  receiver has received or accepted it, Retrieve is refused (422 SAMPLE_RETRIEVE_BLOCKED);
+  the receiving branch sends it back with its own Reject / Repeat. The sender cannot
+  Repeat a Sent sample (422 SAMPLE_SENT_TO_BRANCH).
 
   Body (all optional): `retrievedFrom` (station / lab the sample is retrieved from —
   stored on the retrieve history row's `reason`), `notes`, `attachmentUrl`.
@@ -59,4 +95,21 @@ docs {
   "retrievedFrom"?, "notes"?, "attachmentUrl"?, "skipInvalid"? }` — the grouped
   in-house page's "Retrieve All" stepping modal sends each group's `sampleIds` with
   `skipInvalid: true` (samples not in a retrievable state are skipped).
+
+  **Sent – Repeated / Sent – Rejected (sender's tube after the receiving branch sends it back).**
+  When the receiving branch Repeats or Rejects an INTERNAL transfer (before or after
+  Accept), the SENDER's original tube is NOT moved to Repeat any more: it stays
+  `SENT_INTERNAL`, its transfer is closed as `REPEAT` / `REJECTED` (with the receiving
+  branch's reason), and the sender's list reads "Sent – Repeated" / "Sent – Rejected"
+  (the reason is the tooltip; the sender's history also gets a "returned by the
+  receiving branch" row, no status change). The report is already reset and back at the
+  sender, view-only until the sender decides. The sender then chooses:
+    - **Sent – Repeated:** `POST order-samples/:id/repeat` (tube -> Repeat);
+    - **Sent – Rejected:** `POST order-samples/:id/error` (tube -> Error, then Repeat).
+  Repeat is refused (422 `SAMPLE_SENT_TO_BRANCH`) on a Sent tube whose transfer is still
+  open or was rejected, and Error on one whose transfer is open or was repeated - even for a
+  forced group call. Only the SENDING branch may do it (403 `TRANSFER_WRONG_BRANCH`),
+  like Retrieve. Retrieve itself is REFUSED on a sent-back tube (422 `SAMPLE_RETRIEVE_BLOCKED`: it would only put the tube back to Accepted as if nothing had happened). The sender's Repeat / Error does NOT delete the receiving branch's
+  closed transfer; the referring panel is notified at this point (not when the receiving
+  branch clicked). On a cancelled order the tube stays frozen: Repeat, Error and Retrieve are all refused.
 }
