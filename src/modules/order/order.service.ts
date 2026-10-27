@@ -66,6 +66,7 @@ import {
   resolveOrderLocalDateTime,
   classifyOrderDate,
   buildCollectionProgressWhere,
+  COLLECTION_WORKFLOW_ITEM_WHERE,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -3685,6 +3686,24 @@ export class OrderService {
       // "Collection Status" filter via `buildCollectionProgressWhere` so the two
       // can never drift (bill-only items are excluded there).
       and.push(buildCollectionProgressWhere(query.sampleStatus));
+    }
+    if (query.labReportStatus) {
+      // Per-report status (Order Console "Report Status"): the order has at
+      // least one live report currently in this status — the same reports
+      // `deriveReportStatusCounts` counts for the column (bill-only items
+      // excluded, items with no report yet never match). Pushed before the
+      // `reportStatus` candidate scan below so that scan sees the narrowed set.
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            ...COLLECTION_WORKFLOW_ITEM_WHERE,
+            labReports: {
+              some: { deletedAt: null, status: query.labReportStatus },
+            },
+          },
+        },
+      });
     }
     if (query.reportStatus) {
       // Reuses `deriveReportStatus` — the same function that computes the

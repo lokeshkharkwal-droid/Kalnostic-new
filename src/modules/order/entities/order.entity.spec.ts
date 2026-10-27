@@ -131,4 +131,64 @@ describe('deriveReportStatus', () => {
     const panelMemberCounts = new Map([['panel-1', 4]]);
     expect(deriveReportStatus(items, panelMemberCounts)).toBe('APPROVED');
   });
+
+  it('reads PUBLISHED once every report on the order is published', () => {
+    const items = [
+      {
+        branchLabPanel: null,
+        labReports: [report(LabReportStatus.PUBLISHED)],
+      },
+      {
+        branchLabPanel: { id: 'panel-1' },
+        labReports: [
+          report(LabReportStatus.PUBLISHED, 'member-1'),
+          report(LabReportStatus.PUBLISHED, 'member-2'),
+        ],
+      },
+    ];
+    const panelMemberCounts = new Map([['panel-1', 2]]);
+    expect(deriveReportStatus(items, panelMemberCounts)).toBe('PUBLISHED');
+  });
+
+  it('stays APPROVED — not PUBLISHED — while any report is only approved', () => {
+    const items = [
+      {
+        branchLabPanel: null,
+        labReports: [report(LabReportStatus.PUBLISHED)],
+      },
+      {
+        branchLabPanel: null,
+        labReports: [report(LabReportStatus.APPROVED)],
+      },
+    ];
+    expect(deriveReportStatus(items, new Map())).toBe('APPROVED');
+  });
+
+  it("is not PUBLISHED while a panel item's member reports are still missing", () => {
+    const items = [
+      {
+        // Panel with 3 true member tests; only 2 accepted so far, both published.
+        branchLabPanel: { id: 'panel-1' },
+        labReports: [
+          report(LabReportStatus.PUBLISHED, 'member-1'),
+          report(LabReportStatus.PUBLISHED, 'member-2'),
+        ],
+      },
+    ];
+    const panelMemberCounts = new Map([['panel-1', 3]]);
+    expect(deriveReportStatus(items, panelMemberCounts)).toBe(
+      'PARTIALLY_COMPLETED',
+    );
+  });
+
+  it('is not PUBLISHED while another item has no report yet', () => {
+    const items = [
+      {
+        branchLabPanel: null,
+        labReports: [report(LabReportStatus.PUBLISHED)],
+      },
+      { branchLabPanel: null, labReports: [] },
+    ];
+    expect(deriveReportStatus(items, new Map())).toBe('PARTIALLY_COMPLETED');
+  });
 });

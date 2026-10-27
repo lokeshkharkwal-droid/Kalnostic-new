@@ -2,6 +2,7 @@ import {
   AppointmentStatus,
   BillStatus,
   BillingType,
+  LabReportStatus,
   OrderDateType,
   OrderStatus,
   OrderType,
@@ -297,12 +298,34 @@ export class ListOrdersDto extends PaginationQueryDto {
   /**
    * Order-level reporting progress, derived per-test from each item's LabReport
    * (Order Console "Order Status"): `PENDING` (no test reported), `COMPLETED`
-   * (all reported, not all approved), `APPROVED` (all approved),
-   * `PARTIALLY_COMPLETED` (some but not all reported).
+   * (all reported, not all approved), `APPROVED` (all approved, not all
+   * published), `PUBLISHED` (all published), `PARTIALLY_COMPLETED` (some but
+   * not all reported).
    */
   @IsOptional()
-  @IsIn(['PENDING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'APPROVED'])
-  reportStatus?: 'PENDING' | 'PARTIALLY_COMPLETED' | 'COMPLETED' | 'APPROVED';
+  @IsIn([
+    'PENDING',
+    'PARTIALLY_COMPLETED',
+    'COMPLETED',
+    'APPROVED',
+    'PUBLISHED',
+  ])
+  reportStatus?:
+    | 'PENDING'
+    | 'PARTIALLY_COMPLETED'
+    | 'COMPLETED'
+    | 'APPROVED'
+    | 'PUBLISHED';
+
+  /**
+   * Per-report status (Order Console "Report Status"): matches orders with at
+   * least one live lab report currently in this status — the same reports the
+   * row's `reportStatusCounts` counts. Independent of the order-level
+   * `reportStatus` above; the two AND together.
+   */
+  @IsOptional()
+  @IsEnum(LabReportStatus)
+  labReportStatus?: LabReportStatus;
 
   /** Home-visit filter (`OrderDiagnostics.isHomeVisit`). */
   @IsOptional()
