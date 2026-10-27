@@ -415,6 +415,69 @@ export class PartialRefundNotAllowedException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — a combined pay-all / refund-all was requested for an order that is not a
+ * combined order (it has no CHILD sub-orders). Only a PARENT order (or one of its
+ * children) can be settled/refunded across sub-orders in one call.
+ */
+export class NotACombinedOrderException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'NOT_A_COMBINED_ORDER',
+      'This order has no sub-orders to settle together',
+      { id },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a combined pay-all / refund-all body is malformed: a pay-all must supply
+ * exactly one of `totalAmount` or `allocations` and a positive amount to collect;
+ * a refund-all must supply at least one positive refund amount.
+ */
+export class CombinedPaymentInvalidException extends KaltrosException {
+  constructor(reason: string) {
+    super(
+      'COMBINED_PAYMENT_INVALID',
+      reason,
+      { reason },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — an allocation in a combined pay-all / refund-all references an `orderId`
+ * that is not an eligible CHILD sub-order of the target parent (wrong order, a
+ * cancelled sub-order, or not under this parent).
+ */
+export class SubOrderNotInParentException extends KaltrosException {
+  constructor(parentId: string, orderId: string) {
+    super(
+      'SUB_ORDER_NOT_IN_PARENT',
+      'One of the selected sub-orders does not belong to this order',
+      { parentId, orderId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — a sub-order's allocated payment in a combined pay-all exceeds that
+ * sub-order's pending balance (no sub-order may be overpaid).
+ */
+export class SubOrderOverpaymentException extends KaltrosException {
+  constructor(orderId: string, pending: number, attempted: number) {
+    super(
+      'SUB_ORDER_OVERPAYMENT',
+      'A sub-order payment exceeds its pending balance',
+      { orderId, pending, attempted },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 404 — the order item does not exist on this order within the tenant. */
 export class OrderItemNotFoundException extends KaltrosException {
   constructor(orderId: string, itemId: string) {

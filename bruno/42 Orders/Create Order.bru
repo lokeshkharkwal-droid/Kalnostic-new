@@ -155,7 +155,29 @@ docs {
   sections plus any `payments`. The whole graph is created in one transaction and
   the response is the fully-composed order. Captures `orderId` (and the first
   `paymentId`).
-  
+
+  ## Combined (diagnostic + radiology) orders → parent + two sub-orders
+
+  When `items` carry BOTH lab/direct items AND radiology items, the order is
+  stored as a PARENT order (identity + main `orderCode`, no items/payments) plus
+  two CHILD sub-orders — one `DIAGNOSTICS`, one `RADIOLOGY` — each with that
+  section's items, its own suffixed `orderCode` (`ORD-00001-D` / `-R`), section
+  row, split payment ledger, and (for a finalized order) its own accession
+  samples / radiology studies. The response is the **PARENT** (with `orderKind`
+  `PARENT`, `paymentStatus`/`billStatus` aggregated from the children, and
+  `childOrders`). Fetch the fully-composed sub-orders via
+  `GET /orders/:id/sub-orders`.
+
+  The whole-order money you submit (payable, order-level discount, each `payments`
+  row) is **split** across the two children proportionally by each section's share
+  of `gross − lineDiscount`; the radiology (last) section absorbs each field's
+  rounding remainder so the parts sum back to the whole. Validation (overpayment,
+  partial-billing, discount/TDS, appointment gates) still runs once against the
+  whole order before the split. A SINGLE-section order (only lab OR only
+  radiology) is unaffected — it stays a STANDALONE order exactly as before.
+  PARENT orders are excluded from `GET /orders` (console/billing/appointments);
+  the two CHILD rows appear instead, each in its own section/tab.
+
   ## Basic fields
   
   - `status` — `DRAFT` | `QUOTE` | `APPOINTMENT` | `ORDER` (defaults to `DRAFT`).
@@ -389,4 +411,13 @@ docs {
     the full `netAmount` must be collected (422 `FULL_PAYMENT_REQUIRED` otherwise);
     when true, at least `MinimumPercentOfNetAmountToProceed`% of the net must be
     collected (422 `PARTIAL_PAYMENT_BELOW_MINIMUM` otherwise).
+
+  - `subOrderPaidSplit` (optional, COMBINED orders only) —
+    `{ "diagnostics": <rupees>, "radiology": <rupees> }`. By default a combined
+    (diagnostic + radiology) order's collected payment is auto-split across the two
+    sub-orders proportionally. Send this to control how a **partial** payment lands
+    on each sub-order: the `paidAmount` is recorded as exactly these amounts while
+    every other field (payable, discount, net) still splits proportionally. The two
+    values must sum to the total `paidAmount` across `payments`, else 422
+    `COMBINED_PAYMENT_INVALID`. Ignored for a single-section order.
 }

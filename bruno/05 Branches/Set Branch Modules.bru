@@ -42,4 +42,10 @@ docs {
   user's default module and which appear in the per-user permission modal for
   the branch. `isEnabled` defaults to true when omitted. `moduleKey` must be one
   of the 12 master modules (see Users → User Management v2 → List Modules).
+
+  **Center Type restriction:** a module being *enabled* must belong to the
+  branch type's catalogue (`GET /modules?branch_type=…`). Enabling a module the
+  type doesn't offer — e.g. `radiology` on a `COLLECTION_CENTER` / `FRANCHISE`
+  (diagnostic-only) branch — returns **400 `VALIDATION_ERROR`**. Disabling an
+  out-of-catalogue module is always allowed.
 }

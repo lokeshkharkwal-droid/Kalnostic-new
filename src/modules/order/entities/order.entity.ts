@@ -1,11 +1,13 @@
 import {
   LabReportStatus,
   OrderStatus,
+  OrderSection as PrismaOrderSection,
   PaymentStatus,
   Prisma,
   QuotationStatus,
   RadiologyStudyStatus,
   RefundStatus,
+  TatUnit,
 } from '@prisma/client';
 import { roundToTwoDecimalPlaces } from '../../../common/utils';
 
@@ -303,6 +305,269 @@ export function orderItemNames(
   );
 }
 
+/** Join a staff/doctor's name parts into a single display string, or null. */
+function joinName(
+  p: { firstName?: string | null; lastName?: string | null } | null | undefined,
+): string | null {
+  if (!p) return null;
+  const name = [p.firstName, p.lastName].filter(Boolean).join(' ').trim();
+  return name || null;
+}
+
+/**
+ * The order's "Consultant / Radiologist" for the combined Order Console: the
+ * radiologist (a staff Person) when the order has a radiology relation, else the
+ * OPD consultant (a Doctor), else null. `designation` is the parenthesised label
+ * shown next to the name — the radiologist's `designation`/department/category, or
+ * the OPD doctor's `signatoryDesignation`. A pure diagnostics order has neither, so
+ * both are null.
+ * @param order the order with its optional `opd` / `radiology` relation refs
+ */
+export function deriveConsultant(order: {
+  opd?: {
+    doctor?: {
+      firstName?: string | null;
+      lastName?: string | null;
+      signatoryDesignation?: string | null;
+    } | null;
+  } | null;
+  radiology?: {
+    radiologist?: {
+      firstName?: string | null;
+      lastName?: string | null;
+      designation?: string | null;
+    } | null;
+    radiologistDepartment?: { name?: string | null } | null;
+    radiologistCategory?: { name?: string | null } | null;
+  } | null;
+}): { name: string | null; designation: string | null } {
+  const rad = order.radiology;
+  const radName = joinName(rad?.radiologist);
+  if (radName) {
+    const designation =
+      rad?.radiologist?.designation ??
+      rad?.radiologistCategory?.name ??
+      rad?.radiologistDepartment?.name ??
+      null;
+    return { name: radName, designation };
+  }
+  const doc = order.opd?.doctor;
+  const docName = joinName(doc);
+  if (docName) {
+    return { name: docName, designation: doc?.signatoryDesignation ?? null };
+  }
+  return { name: null, designation: null };
+}
+
+/** One item's TAT value + unit pair (min or max end), carried from its catalogue ref. */
+type TatPair = { value: number | null; unit: TatUnit | null };
+/** Aggregated TAT for an order: the shortest minimum and the longest maximum. */
+export interface OrderTat {
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
+}
+
+/** Normalise a TAT value+unit to whole minutes for comparison (null = unknown). */
+function tatToMinutes(
+  value: number | null,
+  unit: TatUnit | null,
+): number | null {
+  if (value == null) return null;
+  switch (unit) {
+    case 'DAYS':
+      return value * 1440;
+    case 'HOURS':
+      return value * 60;
+    case 'MINUTES':
+    case null:
+    default:
+      return value;
+  }
+}
+
+/**
+ * Aggregate a representative TAT across an order's workflow items: the shortest
+ * `tatMin` and the longest `tatMax` found on any item's catalogue ref (lab or
+ * radiology test/panel). Each end keeps its own original value+unit so the
+ * frontend renders it with the same `formatTat` logic used in create-order /
+ * add-tests. Returns all-null when no item carries TAT.
+ * @param items the order's active items, each with its resolved test/panel ref
+ */
+export function deriveOrderTat(
+  items: Array<{
+    branchLabTest?: {
+      tatMinValue?: number | null;
+      tatMinUnit?: TatUnit | null;
+      tatMaxValue?: number | null;
+      tatMaxUnit?: TatUnit | null;
+    } | null;
+    branchLabPanel?: {
+      tatMinValue?: number | null;
+      tatMinUnit?: TatUnit | null;
+      tatMaxValue?: number | null;
+      tatMaxUnit?: TatUnit | null;
+    } | null;
+    branchRadiologyTest?: {
+      tatMinValue?: number | null;
+      tatMinUnit?: TatUnit | null;
+      tatMaxValue?: number | null;
+      tatMaxUnit?: TatUnit | null;
+    } | null;
+    branchRadiologyPanel?: {
+      tatMinValue?: number | null;
+      tatMinUnit?: TatUnit | null;
+      tatMaxValue?: number | null;
+      tatMaxUnit?: TatUnit | null;
+    } | null;
+  }>,
+): OrderTat {
+  const refs = items
+    .map(
+      (it) =>
+        it.branchLabPanel ??
+        it.branchLabTest ??
+        it.branchRadiologyPanel ??
+        it.branchRadiologyTest ??
+        null,
+    )
+    .filter((r): r is NonNullable<typeof r> => r != null);
+
+  let min: TatPair | null = null;
+  let max: TatPair | null = null;
+  for (const r of refs) {
+    const rMin: TatPair = {
+      value: r.tatMinValue ?? null,
+      unit: r.tatMinUnit ?? null,
+    };
+    const rMax: TatPair = {
+      value: r.tatMaxValue ?? null,
+      unit: r.tatMaxUnit ?? null,
+    };
+    const rMinM = tatToMinutes(rMin.value, rMin.unit);
+    const rMaxM = tatToMinutes(rMax.value, rMax.unit);
+    if (
+      rMinM != null &&
+      (min == null || rMinM < (tatToMinutes(min.value, min.unit) ?? Infinity))
+    ) {
+      min = rMin;
+    }
+    if (
+      rMaxM != null &&
+      (max == null || rMaxM > (tatToMinutes(max.value, max.unit) ?? -Infinity))
+    ) {
+      max = rMax;
+    }
+  }
+  return {
+    tatMinValue: min?.value ?? null,
+    tatMinUnit: min?.unit ?? null,
+    tatMaxValue: max?.value ?? null,
+    tatMaxUnit: max?.unit ?? null,
+  };
+}
+
+/**
+ * One sub-order row of a grouped ("All" console) order — a single service line
+ * (Diagnostics / Radiology / OPD) with its own items, consultant, status and TaT.
+ * A standalone order has exactly one; a combined order has one per CHILD.
+ */
+export interface OrderSubRow {
+  /** The sub-order's own order id — used by the row's per-service print/share actions. */
+  id: string;
+  section: OrderSection | null;
+  itemNames: string[];
+  consultantName: string | null;
+  consultantDesignation: string | null;
+  /** Diagnostics "Order Status" (per-test reporting progress) for this sub-order. */
+  reportStatus: OrderReportStatus;
+  /** Radiology "Order Status" (aggregated study stage); null for non-radiology. */
+  radiologyStatus: RadiologyStudyStatus | null;
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
+}
+
+/**
+ * Build one {@link OrderSubRow} from a standalone order row or a CHILD sub-order.
+ * Reuses the shared structural helpers ({@link orderItemNames},
+ * {@link deriveConsultant}, {@link deriveOrderTat}, {@link deriveReportStatus},
+ * {@link deriveOrderSections}) so a sub-row is classified identically to a full
+ * row. `radiologyStatusById` must cover `src.id`; `panelMemberCounts` every panel.
+ */
+export function buildSubRow(
+  src: {
+    id: string;
+    section?: OrderSection | null;
+    items: Array<{
+      direct: string | null;
+      branchLabTest: {
+        testName: string;
+        isBillOnlyTest?: boolean;
+        tatMinValue?: number | null;
+        tatMinUnit?: TatUnit | null;
+        tatMaxValue?: number | null;
+        tatMaxUnit?: TatUnit | null;
+      } | null;
+      branchLabPanel: {
+        id: string;
+        panelName: string;
+        isBillOnlyTest?: boolean;
+        tatMinValue?: number | null;
+        tatMinUnit?: TatUnit | null;
+        tatMaxValue?: number | null;
+        tatMaxUnit?: TatUnit | null;
+      } | null;
+      branchRadiologyTest?: {
+        testName: string;
+        isBillOnlyTest?: boolean;
+        tatMinValue?: number | null;
+        tatMinUnit?: TatUnit | null;
+        tatMaxValue?: number | null;
+        tatMaxUnit?: TatUnit | null;
+      } | null;
+      branchRadiologyPanel?: {
+        panelName: string;
+        isBillOnlyTest?: boolean;
+        tatMinValue?: number | null;
+        tatMinUnit?: TatUnit | null;
+        tatMaxValue?: number | null;
+        tatMaxUnit?: TatUnit | null;
+      } | null;
+      branchRadiologyTestId?: string | null;
+      branchRadiologyPanelId?: string | null;
+      labReports: {
+        status: LabReportStatus;
+        memberBranchLabTestId: string | null;
+      }[];
+    }>;
+    opd?: Parameters<typeof deriveConsultant>[0]['opd'];
+    radiology?: Parameters<typeof deriveConsultant>[0]['radiology'];
+  },
+  radiologyStatusById: Map<string, RadiologyStudyStatus>,
+  panelMemberCounts: Map<string, number>,
+): OrderSubRow {
+  const workflowItems = src.items.filter(
+    (it) =>
+      !it.branchLabTest?.isBillOnlyTest && !it.branchLabPanel?.isBillOnlyTest,
+  );
+  const consultant = deriveConsultant(src);
+  const tat = deriveOrderTat(src.items);
+  const sections = deriveOrderSections(src.items, src.opd != null);
+  return {
+    id: src.id,
+    section: src.section ?? sections[0] ?? null,
+    itemNames: orderItemNames(workflowItems),
+    consultantName: consultant.name,
+    consultantDesignation: consultant.designation,
+    reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
+    radiologyStatus: radiologyStatusById.get(src.id) ?? null,
+    ...tat,
+  };
+}
+
 /**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
  * refs (referral doctor / panel and internal / external referral records),
@@ -509,6 +774,25 @@ export const ORDER_INCLUDE = {
     orderBy: { createdAt: 'desc' },
     select: { id: true, orderCode: true, externalOrderId: true },
   },
+  // Parent/child sub-order links (combined diagnostic + radiology orders). A
+  // PARENT order lists its two CHILD sub-orders (section + code + per-sub-order
+  // status) so the combined Order Overview can render each section; a CHILD
+  // carries a light ref back to its parent for the Main Order ID.
+  parentOrder: {
+    select: { id: true, orderCode: true, externalOrderId: true },
+  },
+  childOrders: {
+    where: { deletedAt: null },
+    select: {
+      id: true,
+      section: true,
+      orderCode: true,
+      billId: true,
+      billStatus: true,
+      paymentStatus: true,
+      refundStatus: true,
+    },
+  },
 } satisfies Prisma.OrderInclude;
 
 /** A fully-composed order (the get-one / create / update response shape). */
@@ -695,6 +979,12 @@ export const ORDER_LIST_INCLUDE = {
           testName: true,
           testCode: true,
           isBillOnlyTest: true,
+          // TAT metadata — aggregated per order for the combined Order Console's
+          // "TaT" column (same source + display logic as create-order/add-tests).
+          tatMinValue: true,
+          tatMinUnit: true,
+          tatMaxValue: true,
+          tatMaxUnit: true,
         },
       },
       branchLabPanel: {
@@ -703,6 +993,10 @@ export const ORDER_LIST_INCLUDE = {
           panelName: true,
           panelCode: true,
           isBillOnlyTest: true,
+          tatMinValue: true,
+          tatMinUnit: true,
+          tatMaxValue: true,
+          tatMaxUnit: true,
         },
       },
       // Radiology item refs (radiology orders) — resolved names for the Radiology
@@ -716,6 +1010,10 @@ export const ORDER_LIST_INCLUDE = {
           testName: true,
           testCode: true,
           isBillOnlyTest: true,
+          tatMinValue: true,
+          tatMinUnit: true,
+          tatMaxValue: true,
+          tatMaxUnit: true,
         },
       },
       branchRadiologyPanel: {
@@ -724,6 +1022,10 @@ export const ORDER_LIST_INCLUDE = {
           panelName: true,
           panelCode: true,
           isBillOnlyTest: true,
+          tatMinValue: true,
+          tatMinUnit: true,
+          tatMaxValue: true,
+          tatMaxUnit: true,
         },
       },
       // Reporting progress of this test's report(s) — one LabReport for a
@@ -760,14 +1062,35 @@ export const ORDER_LIST_INCLUDE = {
       consultantType: true,
       visitType: true,
       department: { select: { id: true, name: true } },
-      doctor: { select: { id: true, firstName: true, lastName: true } },
+      // Consultant (OPD doctor, a Doctor master) for the combined Order Console's
+      // "Consultant / Radiologist" column — `signatoryDesignation` is the
+      // parenthesised designation shown next to the name.
+      doctor: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          signatoryDesignation: true,
+        },
+      },
     },
   },
   radiology: {
     select: {
       id: true,
       appointmentAt: true,
-      radiologist: { select: { id: true, firstName: true, lastName: true } },
+      // Radiologist (a staff Person) + designation / department / category — the
+      // combined Order Console's "Consultant / Radiologist" column.
+      radiologist: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          designation: true,
+        },
+      },
+      radiologistDepartment: { select: { id: true, name: true } },
+      radiologistCategory: { select: { id: true, name: true } },
       radiologyTechnician: {
         select: { id: true, firstName: true, lastName: true },
       },
@@ -802,6 +1125,127 @@ export const ORDER_LIST_INCLUDE = {
     where: { deletedAt: null },
     orderBy: { createdAt: 'desc' },
     select: { id: true, orderCode: true, externalOrderId: true },
+  },
+  // Parent (main) order of a combined sub-order row — lets a CHILD billing/console
+  // row display the Main Order ID it belongs to. Null for STANDALONE orders.
+  parentOrder: {
+    select: { id: true, orderCode: true, externalOrderId: true },
+  },
+  // CHILD sub-orders of a combined (PARENT) order, with the item + payment fields
+  // needed to aggregate the parent's billing figures for the grouped Billings
+  // "All" row (a PARENT carries no items/payments of its own). Empty for
+  // STANDALONE / CHILD rows, so this adds no weight to section-scoped lists.
+  childOrders: {
+    where: { deletedAt: null },
+    select: {
+      id: true,
+      section: true,
+      status: true,
+      cancellationCharge: true,
+      items: {
+        where: { deletedAt: null },
+        select: {
+          id: true,
+          direct: true,
+          unitPrice: true,
+          discount: true,
+          branchLabTest: {
+            select: {
+              id: true,
+              testName: true,
+              isBillOnlyTest: true,
+              // TAT + reports so a combined PARENT's per-section sub-row (the "All"
+              // console grouping) can show its own TaT and Order Status.
+              tatMinValue: true,
+              tatMinUnit: true,
+              tatMaxValue: true,
+              tatMaxUnit: true,
+            },
+          },
+          branchLabPanel: {
+            select: {
+              id: true,
+              panelName: true,
+              isBillOnlyTest: true,
+              tatMinValue: true,
+              tatMinUnit: true,
+              tatMaxValue: true,
+              tatMaxUnit: true,
+            },
+          },
+          branchRadiologyTestId: true,
+          branchRadiologyPanelId: true,
+          branchRadiologyTest: {
+            select: {
+              id: true,
+              testName: true,
+              isBillOnlyTest: true,
+              tatMinValue: true,
+              tatMinUnit: true,
+              tatMaxValue: true,
+              tatMaxUnit: true,
+            },
+          },
+          branchRadiologyPanel: {
+            select: {
+              id: true,
+              panelName: true,
+              isBillOnlyTest: true,
+              tatMinValue: true,
+              tatMinUnit: true,
+              tatMaxValue: true,
+              tatMaxUnit: true,
+            },
+          },
+          // Per-item reports → the child's own "Order Status" (diagnostics).
+          labReports: {
+            where: { deletedAt: null },
+            select: { status: true, memberBranchLabTestId: true },
+          },
+        },
+      },
+      // Consultant / Radiologist per child sub-order (for the grouped sub-row).
+      opd: {
+        select: {
+          doctor: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              signatoryDesignation: true,
+            },
+          },
+        },
+      },
+      radiology: {
+        select: {
+          radiologist: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              designation: true,
+            },
+          },
+          radiologistDepartment: { select: { id: true, name: true } },
+          radiologistCategory: { select: { id: true, name: true } },
+        },
+      },
+      payments: {
+        where: { deletedAt: null },
+        select: {
+          totalAmount: true,
+          orderDiscount: true,
+          orderDiscountMode: true,
+          orderDiscountValue: true,
+          netAmount: true,
+          paidAmount: true,
+          tdsDeduction: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      },
+    },
   },
 } satisfies Prisma.OrderInclude;
 
@@ -1016,6 +1460,34 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    */
   radiologyDepartments: string[];
   /**
+   * The order's "Consultant / Radiologist" for the combined Order Console: the
+   * radiologist's name (radiology orders) else the OPD consultant's name, else
+   * null (a pure diagnostics order has neither). See {@link deriveConsultant}.
+   */
+  consultantName: string | null;
+  /** The consultant/radiologist's designation (parenthesised next to the name). */
+  consultantDesignation: string | null;
+  /**
+   * Aggregated turnaround time across the order's items — the shortest `tatMin`
+   * and the longest `tatMax`, each keeping its own value+unit so the frontend
+   * formats it with the same logic as create-order/add-tests. All null when no
+   * item carries TAT. Drives the combined Order Console's "TaT" column.
+   * See {@link deriveOrderTat}.
+   */
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
+  /**
+   * The order's per-section sub-orders for the combined ("All") Order Console,
+   * where each logical order is ONE grouped row stacking its sub-orders. A
+   * standalone order yields a single entry (itself); a combined PARENT yields one
+   * per CHILD sub-order (Diagnostics / Radiology / OPD). Only populated in grouped
+   * mode (`groupCombined=true`); absent/undefined otherwise. See
+   * {@link buildOrderSubRows}.
+   */
+  subOrders?: OrderSubRow[];
+  /**
    * The module sections this order spans, derived from its items (and the OPD
    * relation): `DIAGNOSTICS` when it has any lab test/panel or free-text item,
    * `RADIOLOGY` when it has any radiology test/panel item, `OPD` when it has an OPD
@@ -1033,8 +1505,13 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   cancelBlockedReason: 'RESULT_DONE' | null;
 };
 
-/** A module section an order can belong to, derived from its items/relations. */
-export type OrderSection = 'DIAGNOSTICS' | 'RADIOLOGY' | 'OPD';
+/**
+ * A module section an order can belong to, derived from its items/relations.
+ * Re-exports the Prisma `OrderSection` enum (DIAGNOSTICS / RADIOLOGY / OPD) so
+ * the derived `sections` arrays and the stored child-order `section` column
+ * share one type.
+ */
+export type OrderSection = PrismaOrderSection;
 
 /**
  * One branch's row in the Create Order cross-branch dues breakdown: the patient's

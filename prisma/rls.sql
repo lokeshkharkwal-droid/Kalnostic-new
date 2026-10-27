@@ -1295,6 +1295,13 @@ CREATE POLICY orders_tenant_isolation ON orders
 CREATE UNIQUE INDEX IF NOT EXISTS orders_tenant_code_active_unique
   ON orders (tenant_id, order_code) WHERE deleted_at IS NULL;
 
+-- A combined order's parent has at most one ACTIVE child per section
+-- (one DIAGNOSTICS + one RADIOLOGY). Partial so soft-deleted children and
+-- non-child rows (parent_order_id IS NULL) are unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS orders_parent_section_active_unique
+  ON orders (parent_order_id, section)
+  WHERE deleted_at IS NULL AND parent_order_id IS NOT NULL;
+
 -- ── order_notes ───────────────────────────────────────────────────────────────
 -- Append-only Order Overview notes (Order / Sample / Tech tabs).
 ALTER TABLE order_notes ENABLE ROW LEVEL SECURITY;

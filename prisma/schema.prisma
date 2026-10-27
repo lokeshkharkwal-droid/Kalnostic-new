@@ -6344,6 +6344,31 @@ enum OrderStatus {
   CANCELLED
 }
 
+/// Structural role of an `Order` row within the parent/child sub-order model.
+/// `STANDALONE` — an ordinary order that holds its own items/payments (the
+/// default and the only kind for single-section orders). `PARENT` — the main
+/// order of a COMBINED (diagnostic + radiology) registration: it carries the
+/// patient/referral identity and the main `orderCode`, but NO items/payments/
+/// sections; its billing figures are the aggregate of its children, and it is
+/// excluded from the console/billing lists. `CHILD` — a per-section sub-order
+/// under a parent (one DIAGNOSTICS + one RADIOLOGY): it carries that section's
+/// items, payments, section row, and samples/studies, and has its own
+/// (suffixed) `orderCode` = the Sub-Order ID.
+enum OrderKind {
+  STANDALONE
+  PARENT
+  CHILD
+}
+
+/// Which service section an order (or sub-order) belongs to. Set on CHILD orders
+/// to pin them to the diagnostic vs radiology pipeline; also used as the derived
+/// `OrderSummary.sections` values (a STANDALONE order can span more than one).
+enum OrderSection {
+  DIAGNOSTICS
+  RADIOLOGY
+  OPD
+}
+
 /// Lifecycle of a quotation (an order with `status = QUOTE`). `DRAFT` is an open
 /// quote; `CONVERTED` is stored when a quote becomes an order (no convert flow
 /// yet — reserved); `EXPIRED` is derived at query time when `quotationValidTill`
@@ -6544,6 +6569,20 @@ model Order {
   branchId String? @map("branch_id")
   branch   Branch? @relation(fields: [branchId], references: [id])
 
+  // Parent/child sub-order model. A COMBINED (diagnostic + radiology)
+  // registration is stored as a PARENT order (identity + main orderCode, no
+  // items/payments) plus two CHILD orders (one per `section`) that each hold
+  // their own items/payments/section/samples. Single-section orders stay
+  // STANDALONE (the default). CHILD rows point at their parent via
+  // `parentOrderId`; the parent's `childOrders` is the reverse side.
+  orderKind     OrderKind     @default(STANDALONE) @map("order_kind")
+  parentOrderId String?       @map("parent_order_id")
+  parentOrder   Order?        @relation("OrderParentChild", fields: [parentOrderId], references: [id])
+  childOrders   Order[]       @relation("OrderParentChild")
+  // Section a CHILD order belongs to (DIAGNOSTICS / RADIOLOGY). Null on
+  // STANDALONE and PARENT rows.
+  section       OrderSection? @map("section")
+
   // Identity & basic info
   orderCode       String        @map("order_code")
   // Per-tenant sequential bill id for a diagnostic order (DIG-001…), generated
@@ -6717,6 +6756,8 @@ model Order {
   @@index([branchId])
   @@index([patientId])
   @@index([status])
+  @@index([orderKind])
+  @@index([parentOrderId])
   @@index([quotationStatus])
   @@index([referredByDoctorId])
   @@index([referralPanelId])

@@ -87,7 +87,19 @@ docs {
   every column without a second fetch. Radiology orders also carry `radiologyStatus`
   (aggregated study stage) and `radiologyDepartments` (distinct department names
   across the order's studies) — the Radiology Order Console's Order Status +
-  Department columns. Each row also carries `branchId` and `branch`
+  Department columns. For the combined ("All") Order Console tab, each row also
+  carries `consultantName` + `consultantDesignation` (the radiologist for a
+  radiology order, else the OPD consultant, else null) and an aggregated TaT —
+  `tatMinValue`/`tatMinUnit` (shortest min) and `tatMaxValue`/`tatMaxUnit`
+  (longest max, unit is MINUTES/HOURS/DAYS) across the order's items; all null when
+  no item carries TAT. These are derived read-only fields (no schema change).
+  In **grouped** mode (`groupCombined=true`, the "All" console tab) each row also
+  carries `subOrders[]` — one entry per service line (a standalone order has one;
+  a combined PARENT has one per CHILD sub-order) with `{ id, section, itemNames,
+  consultantName, consultantDesignation, reportStatus, radiologyStatus, tatMin/Max
+  value+unit }` so the combined worklist renders one grouped row per logical order
+  with its sub-orders stacked. Absent when not grouped.
+  Each row also carries `branchId` and `branch`
   (`{ id, name, code }`) — the branch the order was placed at — which the Create Order
   "Past Orders" view uses to label rows and to disable "Add" for other-branch orders.
   Defaults branch scope to the caller's active branch; an explicit `branchId` overrides

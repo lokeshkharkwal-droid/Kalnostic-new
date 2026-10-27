@@ -324,4 +324,17 @@ export class ListOrdersDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   isUrgent?: boolean;
+
+  /**
+   * `true` groups combined orders in the UNSCOPED list: a combined order is shown
+   * as a SINGLE aggregated PARENT row (its CHILD sub-orders are hidden) instead of
+   * two separate sub-order rows. The Billings "All" tab sets this. Ignored when a
+   * `section` filter is active (the department tabs keep showing the individual
+   * sub-orders) and never applied to the summary cards / Finance reports (which
+   * aggregate over the real ledger rows).
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  groupCombined?: boolean;
 }

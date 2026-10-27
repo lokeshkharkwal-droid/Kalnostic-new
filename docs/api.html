@@ -2676,6 +2676,51 @@ partially while <code>AllowPartialBillingOfDiscountedOrder</code> is off (but
 <code>AllowPartialBilling</code> is on), it is rejected with
 <code>PARTIAL_BILLING_NOT_ALLOWED_FOR_DISCOUNTED_ORDER</code>.</div>
 
+<div class="note"><b>Combined (diagnostic + radiology) orders.</b> When <code>POST /orders</code>
+carries BOTH lab/direct items and radiology items, the order is stored as a <b>PARENT</b> order
+(identity + main <code>orderCode</code>, no items/payments) plus two <b>CHILD</b> sub-orders — one
+<code>DIAGNOSTICS</code>, one <code>RADIOLOGY</code> — each with that section's items, its own
+suffixed <code>orderCode</code> (<code>ORD-00001-D</code> / <code>-R</code>), split payment ledger,
+and accession samples / radiology studies. The order-level money (payable, order discount, each
+payment) is split across the children proportionally by each section's <code>gross&nbsp;&minus;&nbsp;lineDiscount</code>
+share (radiology absorbs the rounding remainder; e.g. 60/40 of &#8377;1000 &rarr; 600/400). The create
+response is the PARENT (<code>orderKind=PARENT</code>, aggregated status, <code>childOrders</code>);
+fetch the fully-composed sub-orders via <code>GET /orders/:id/sub-orders</code> (<code>:id</code> =
+parent or either child). PARENT orders are excluded from <code>GET /orders</code> (console / billing /
+appointments) — the two CHILD rows appear instead, each in its own section/tab, and can be billed /
+cancelled / refunded / paid independently (the parent re-aggregates). A single-section order stays a
+STANDALONE order, unchanged.
+<br><br>
+<b>Manual paid split (create).</b> By default a combined order's collected payment is auto-split across
+the two sub-orders proportionally. To control how a <b>partial</b> payment lands on each sub-order, send
+<code>subOrderPaidSplit: { diagnostics, radiology }</code> on <code>POST /orders</code> — the two values
+must sum to the total paid (else 422 <code>COMBINED_PAYMENT_INVALID</code>). Only the <code>paidAmount</code>
+honours the manual split; every other field (payable, discount, net) still splits proportionally. Ignored
+for a single-section order.</div>
+
+<div class="note"><b>Combined billing — pay/refund all sub-orders at once.</b> The Billings
+"All" tab groups a combined order into a SINGLE aggregated PARENT row (pass
+<code>groupCombined=true</code> to <code>GET /orders</code> — only honoured when no
+<code>section</code> filter is set; the Diagnostics/Radiology tabs keep showing the individual
+CHILD rows, and the Finance reports / summary cards always aggregate over the real ledger).
+Two endpoints settle/refund across all of a parent's sub-orders atomically (<code>:id</code> =
+parent or either child):
+<ul>
+<li><code>POST /orders/:id/payments-all</code> — one combined payment. Send either
+<code>totalAmount</code> (auto-distributed by the creation ratio, capped at each sub-order's
+remaining balance, overflow spilling to the other) OR explicit per-sub-order
+<code>allocations</code>. Guards: <code>COMBINED_PAYMENT_INVALID</code>,
+<code>SUB_ORDER_NOT_IN_PARENT</code>, <code>SUB_ORDER_OVERPAYMENT</code>,
+<code>NOT_A_COMBINED_ORDER</code>; collection-by-other-user gate as per <code>POST /payments</code>.</li>
+<li><code>POST /orders/:id/refund-all</code> (<code>REG_UPDATE_REFUND_AMOUNT</code>) — per-sub-order
+<code>allocations</code> (<code>amount</code> + optional <code>refundCharge</code>), each validated
+against that sub-order's own refundable balance and branch refund settings, exactly like
+<code>POST /orders/:id/refund</code>.</li>
+</ul>
+Both run in ONE transaction (all sub-orders succeed or none do), append-only (prior payments are
+never overwritten), recompute each sub-order's status, re-aggregate the parent once, and return the
+parent's fully-composed sub-orders with their new balances.</div>
+
 <h3 id="registration-id-sequences">Registration Id Sequences <span style="font-size:13px;color:var(--muted)">(Order/Quotation/Appointment/Patient-UMID external-id generation)</span></h3>
 <div class="note">Reusable per-branch id-generation config — one <code>RegistrationIdSequence</code> row per
 <code>(tenantId, branchId, sequenceType)</code>. Mirrors the old system's AUTO_INCREMENT_OPTIONS

@@ -5,13 +5,14 @@ import {
   OrderType,
   QuotationStatus,
 } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -19,6 +20,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { roundToTwoDecimalPlacesTransform } from '../../../common/utils';
 import { OrderItemDto } from './order-item.dto';
 import { BillingDetailsDto } from './billing-details.dto';
 import {
@@ -28,6 +30,28 @@ import {
 import { OrderOpdDto } from './order-opd.dto';
 import { OrderRadiologyDto } from './order-radiology.dto';
 import { OrderPaymentDto } from './order-payment.dto';
+
+/**
+ * Manual per-sub-order paid allocation for a COMBINED (diagnostic + radiology)
+ * order. When present, the collected payment is recorded as exactly these amounts
+ * on the two CHILD sub-orders instead of being auto-split proportionally — the
+ * operator sets it on `/registration/create` to control how a PARTIAL payment
+ * lands on each sub-order. `diagnostics + radiology` must equal the total paid
+ * across `payments` (enforced in `OrderService.create`). Rupees, up to 2 dp.
+ */
+export class SubOrderPaidSplitDto {
+  /** Amount of the collected payment recorded against the diagnostic sub-order. */
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  diagnostics!: number;
+
+  /** Amount of the collected payment recorded against the radiology sub-order. */
+  @Transform(roundToTwoDecimalPlacesTransform)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  radiology!: number;
+}
 
 /**
  * Create an order. The frontend submits everything in one call: basic info, the
@@ -222,6 +246,17 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderPaymentDto)
   payments?: OrderPaymentDto[];
+
+  /**
+   * Manual per-sub-order paid split for a COMBINED order (optional). When sent,
+   * the collected payment is recorded as exactly these amounts on the diagnostic
+   * and radiology sub-orders instead of being auto-split proportionally. Ignored
+   * for a single-section order; the two values must sum to the total paid.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SubOrderPaidSplitDto)
+  subOrderPaidSplit?: SubOrderPaidSplitDto;
 
   /**
    * Amount (same integer units as the payment ledger) collected on this order

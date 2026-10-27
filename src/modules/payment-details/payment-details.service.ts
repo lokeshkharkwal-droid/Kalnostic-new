@@ -5,8 +5,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { roundToTwoDecimalPlaces } from '../../common/utils';
-import { recomputeBillStatusInTx } from '../order/utils/bill-status';
+import {
+  recomputeBillStatusInTx,
+  recomputeParentAggregateInTx,
+} from '../order/utils/bill-status';
+import { computePendingBalance } from '../order/utils/payment-math';
 import { assertQuoteTakesNoNewMoney } from '../order/utils/quote-payment';
 import {
   derivePaymentStatus,
@@ -182,17 +185,18 @@ export class PaymentDetailsService {
           refundCharge: true,
         },
       });
-      const effectivePaid = computeEffectivePaid(
-        agg._sum.paidAmount?.toNumber() ?? 0,
-        order.cancellationCharge.toNumber(),
-        agg._sum.refundAmount?.toNumber() ?? 0,
-        agg._sum.refundCharge?.toNumber() ?? 0,
-      );
       // Round to 2dp before comparing: `netAmount − effectivePaid` in float can
       // land at e.g. 666.5999999… and wrongly reject an exact 666.60 payment of a
-      // balance that contains paise. Whole-rupee balances are unaffected.
-      const pending = roundToTwoDecimalPlaces(
-        (agg._sum.netAmount?.toNumber() ?? 0) - effectivePaid,
+      // balance that contains paise. Whole-rupee balances are unaffected. Shared
+      // with the combined pay-all path via `computePendingBalance`.
+      const pending = computePendingBalance(
+        {
+          netAmount: agg._sum.netAmount?.toNumber() ?? 0,
+          paidAmount: agg._sum.paidAmount?.toNumber() ?? 0,
+          refundAmount: agg._sum.refundAmount?.toNumber() ?? 0,
+          refundCharge: agg._sum.refundCharge?.toNumber() ?? 0,
+        },
+        order.cancellationCharge.toNumber(),
       );
       const attempted = dto.paidAmount ?? 0;
       if (attempted > pending) {
@@ -456,7 +460,7 @@ export class PaymentDetailsService {
       }),
       tx.order.findFirst({
         where: { id: orderId, tenantId },
-        select: { cancellationCharge: true },
+        select: { cancellationCharge: true, parentOrderId: true },
       }),
     ]);
     const net = agg._sum.netAmount?.toNumber() ?? 0;
@@ -472,5 +476,10 @@ export class PaymentDetailsService {
     });
     // Keep the Billings list Status (badge + filter) in step with the ledger.
     await recomputeBillStatusInTx(tx, tenantId, orderId);
+    // When this order is a CHILD sub-order of a combined order, re-aggregate its
+    // parent so the parent's status reflects the per-sub-order payment.
+    if (order?.parentOrderId) {
+      await recomputeParentAggregateInTx(tx, tenantId, order.parentOrderId);
+    }
   }
 }

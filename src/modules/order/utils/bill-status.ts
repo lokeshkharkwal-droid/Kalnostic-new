@@ -1,6 +1,10 @@
 import { BillStatus, OrderStatus, Prisma } from '@prisma/client';
 import { roundToTwoDecimalPlaces, toNum } from '../../../common/utils';
-import { computeEffectivePaid } from '../entities/order.entity';
+import {
+  computeEffectivePaid,
+  derivePaymentStatus,
+  deriveRefundStatus,
+} from '../entities/order.entity';
 import { computeBillingTotals } from './billing-totals';
 
 /**
@@ -175,5 +179,135 @@ export async function recomputeBillStatusInTx(
     refunded,
   );
   await tx.order.update({ where: { id: orderId }, data: { billStatus } });
+  return billStatus;
+}
+
+/**
+ * Recompute and persist a PARENT (combined) order's aggregate
+ * `billStatus` / `paymentStatus` / `refundStatus` from its active CHILD
+ * sub-orders. A parent holds no items/payments of its own; its figures are the
+ * sum of its children's ledgers, so the Billings/console lists and the combined
+ * overview read the parent as the true aggregate of its two sub-orders.
+ *
+ * Call it after EVERY write that changes a child's status, items, discount or
+ * payment ledger (child create, receive-payment, cancel, refund, update).
+ * No-op for a non-parent order id.
+ *
+ * @param tx active tenant-scoped transaction client
+ * @param tenantId tenant scope
+ * @param parentId the parent order to recompute
+ * @returns the stored aggregate bill status (null if not a parent / not found)
+ */
+export async function recomputeParentAggregateInTx(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  parentId: string,
+): Promise<BillStatus | null> {
+  const parent = await tx.order.findFirst({
+    where: { id: parentId, tenantId },
+    select: {
+      status: true,
+      childOrders: {
+        where: { deletedAt: null },
+        select: {
+          status: true,
+          cancellationCharge: true,
+          payments: {
+            where: { deletedAt: null },
+            select: {
+              totalAmount: true,
+              orderDiscount: true,
+              netAmount: true,
+              orderDiscountMode: true,
+              orderDiscountValue: true,
+              paidAmount: true,
+              refundAmount: true,
+              refundCharge: true,
+            },
+          },
+          items: {
+            where: { deletedAt: null },
+            select: { unitPrice: true, discount: true },
+          },
+        },
+      },
+    },
+  });
+  if (!parent) return null;
+
+  const children = parent.childOrders;
+  // Aggregate each child's authoritative figures.
+  let netSum = 0;
+  let paidSum = 0;
+  let effectivePaidSum = 0;
+  let refundedSum = 0;
+  let refundChargeSum = 0;
+  let cancellationChargeSum = 0;
+  for (const child of children) {
+    const { net } = computeBillingTotals(
+      child.payments.map((p) => ({
+        totalAmount: toNum(p.totalAmount),
+        orderDiscount: toNum(p.orderDiscount),
+        netAmount: toNum(p.netAmount),
+        orderDiscountMode: p.orderDiscountMode ?? null,
+        orderDiscountValue:
+          p.orderDiscountValue != null ? toNum(p.orderDiscountValue) : null,
+      })),
+      child.items.map((it) => ({
+        unitPrice: toNum(it.unitPrice),
+        discount: toNum(it.discount),
+      })),
+    );
+    const paid = child.payments.reduce((s, p) => s + toNum(p.paidAmount), 0);
+    const refunded = child.payments.reduce(
+      (s, p) => s + toNum(p.refundAmount),
+      0,
+    );
+    const refundCharge = child.payments.reduce(
+      (s, p) => s + toNum(p.refundCharge),
+      0,
+    );
+    const cancellationCharge = toNum(child.cancellationCharge);
+    netSum += net;
+    paidSum += paid;
+    refundedSum += refunded;
+    refundChargeSum += refundCharge;
+    cancellationChargeSum += cancellationCharge;
+    effectivePaidSum += computeEffectivePaid(
+      paid,
+      cancellationCharge,
+      refunded,
+      refundCharge,
+    );
+  }
+  netSum = roundToTwoDecimalPlaces(netSum);
+  paidSum = roundToTwoDecimalPlaces(paidSum);
+  effectivePaidSum = roundToTwoDecimalPlaces(effectivePaidSum);
+  refundedSum = roundToTwoDecimalPlaces(refundedSum);
+
+  // The parent reads as CANCELLED only when every child is cancelled; otherwise
+  // the lifecycle status drives the ladder (an active child keeps it live).
+  const allCancelled =
+    children.length > 0 &&
+    children.every((c) => c.status === OrderStatus.CANCELLED);
+  const lifecycle = allCancelled ? OrderStatus.CANCELLED : parent.status;
+
+  const billStatus = deriveBillStatus(
+    lifecycle,
+    netSum,
+    effectivePaidSum,
+    refundedSum,
+  );
+  const paymentStatus = derivePaymentStatus(netSum, paidSum);
+  const refundStatus = deriveRefundStatus(
+    paidSum,
+    cancellationChargeSum,
+    refundedSum,
+    refundChargeSum,
+  );
+  await tx.order.update({
+    where: { id: parentId },
+    data: { billStatus, paymentStatus, refundStatus },
+  });
   return billStatus;
 }

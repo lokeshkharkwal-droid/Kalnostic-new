@@ -17,6 +17,15 @@
  *
  * `order` mirrors the spec's numbering.
  */
+/**
+ * Service-line grouping used by the branch-creation module picker: common
+ * modules render as a flat block, diagnostic/radiology modules each in their own
+ * accordion. Also the basis for the derived `isDiagnosticAllowed` /
+ * `isRadiologyAllowed` branch capabilities (see branch-modules.constant.ts).
+ * Modules with no group (e.g. legacy-only keys) are treated as ungrouped.
+ */
+export type ModuleGroup = 'common' | 'diagnostic' | 'radiology';
+
 export interface SystemModule {
   key: string;
   label: string;
@@ -27,48 +36,57 @@ export interface SystemModule {
    * leak permission keys into the catalogue or role baselines.
    */
   hasPermissions?: boolean;
+  /**
+   * Service-line group for the branch module picker. Omitted for modules that
+   * only appear in legacy branch types and have no place in the new grouped UI.
+   */
+  group?: ModuleGroup;
 }
 
+/**
+ * The modules in **canonical display order** — the single predefined order used
+ * everywhere a module list is shown or assigned (navbar tabs, `/business-admin/users`
+ * module assignment, branch module picker, per-branch enablement). The order is
+ * deliberate, NOT alphabetical and NOT sorted dynamically: the first seven are the
+ * primary navigable modules in the exact product-specified sequence, and the
+ * remaining operational/placeholder modules follow. `order` mirrors the array
+ * index (1-based) and is kept in lockstep; array position is authoritative.
+ *
+ * `registration`, `lab_operations` (Technician) and `radiology` back **built** FE
+ * pages gated by module visibility (`GET /users/manage/me/permissions` →
+ * `moduleAllowed`); because the FE only reveals a module when it is
+ * permission-allowed, these MUST be permission-bearing. `patient_management` and
+ * `pharmacy` are enablement-only placeholders (`hasPermissions: false`) and stay
+ * out of the permission catalogue until a real page ships. `business_admin` /
+ * `branch_admin` are the admin consoles whose permission set is the full API
+ * resource catalogue (see module-permissions.constant.ts), not the CRUD verbs.
+ */
 export const SYSTEM_MODULES: SystemModule[] = [
-  // ── 7 operational modules (branch-toggleable, permission-bearing) ──
-  { key: 'accession', label: 'Accession', order: 1 },
-  { key: 'inventory', label: 'Inventory', order: 2 },
-  { key: 'sales', label: 'Sales', order: 3 },
-  { key: 'finance', label: 'Finance', order: 4 },
-  { key: 'phlebotomist', label: 'Phlebotomist', order: 5 },
-  { key: 'assistant', label: 'Assistant', order: 6 },
-  { key: 'operation', label: 'Operation', order: 7 },
-  // ── Admin console modules (User Management v2.0) ──
-  // Unlike the operational modules above, these are not branch-toggleable
-  // feature areas — they are the admin "consoles" the Business Admin / Branch
-  // Admin roles are linked to. Their permission set is the full API resource
-  // catalogue (see module-permissions.constant.ts), not the standard CRUD verbs.
-  { key: 'business_admin', label: 'Business Admin', order: 8 },
-  { key: 'branch_admin', label: 'Branch Admin', order: 9 },
-  // ── Branch-catalogue feature areas ──
-  // Surfaced by the branch-type → module catalogue (branch-modules.constant.ts)
-  // and enableable per branch. Keys are aligned to the frontend module routes
-  // (e.g. `lab_operations` → /technician).
-  //
-  // `registration`, `lab_operations` and `radiology` back **built** FE pages that
-  // are gated by module visibility (`GET /users/manage/me/permissions` →
-  // `moduleAllowed`). Because the FE only reveals a module when it is
-  // permission-allowed, these MUST be permission-bearing — otherwise their
-  // tab/route can never appear for any user. They therefore mint their permission
-  // keys (radiology's are the imaging worklist + study lifecycle; see
-  // module-permissions.constant.ts). The remaining two
-  // (`patient_management`/`pharmacy`) are still enablement-only: their FE pages are
-  // placeholders (Coming Soon), so they stay out of the permission catalogue until
-  // a real page ships.
-  { key: 'registration', label: 'Registration', order: 10 },
-  { key: 'lab_operations', label: 'Laboratory', order: 11 },
+  { key: 'registration', label: 'Registration', order: 1, group: 'common' },
+  { key: 'accession', label: 'Accession', order: 2, group: 'diagnostic' },
+  { key: 'lab_operations', label: 'Laboratory', order: 3, group: 'diagnostic' },
+  { key: 'radiology', label: 'Radiology', order: 4, group: 'radiology' },
+  { key: 'finance', label: 'Finance', order: 5, group: 'common' },
+  { key: 'branch_admin', label: 'Branch Admin', order: 6, group: 'common' },
+  { key: 'business_admin', label: 'Business Admin', order: 7, group: 'common' },
+  // ── Remaining operational modules (built, permission-bearing) ──
+  { key: 'inventory', label: 'Inventory', order: 8, group: 'common' },
+  { key: 'sales', label: 'Sales', order: 9, group: 'common' },
+  {
+    key: 'phlebotomist',
+    label: 'Phlebotomist',
+    order: 10,
+    group: 'diagnostic',
+  },
+  { key: 'assistant', label: 'Assistant', order: 11 },
+  { key: 'operation', label: 'Operation', order: 12 },
+  // ── Enablement-only placeholders (no permission keys yet) ──
   {
     key: 'patient_management',
     label: 'Patient Management',
-    order: 12,
+    order: 13,
     hasPermissions: false,
   },
-  { key: 'radiology', label: 'Radiology', order: 13 },
   { key: 'pharmacy', label: 'Pharmacy', order: 14, hasPermissions: false },
 ];
 
@@ -92,4 +110,9 @@ export function isValidModuleKey(key: string): boolean {
 /** Look up a module's display label (falls back to the raw key). */
 export function moduleLabel(key: string): string {
   return SYSTEM_MODULES.find((m) => m.key === key)?.label ?? key;
+}
+
+/** Look up a module's service-line group (undefined for ungrouped modules). */
+export function moduleGroup(key: string): ModuleGroup | undefined {
+  return SYSTEM_MODULES.find((m) => m.key === key)?.group;
 }

@@ -15,6 +15,7 @@ import { UpdateBranchDto } from './dto/update-branch.dto';
 import { BranchModuleItemDto } from './dto/set-branch-modules.dto';
 import { UpdateBranchSettingDto } from './dto/update-branch-setting.dto';
 import { SYSTEM_MODULES } from '../permissions/constants/system-modules.constant';
+import { BRANCH_MODULES } from '../branch-catalogue/constants/branch-modules.constant';
 import {
   describeMissing,
   missingTestsAtBranches,
@@ -165,6 +166,7 @@ export class BranchService {
         // same transaction, so a single POST sets up the branch and its modules
         // (no separate PUT /branches/:id/modules round-trip needed).
         if (dto.modules && dto.modules.length > 0) {
+          this.assertModulesAllowedForBranchType(dto.branchType, dto.modules);
           await this.upsertBranchModules(tx, tenantId, branch.id, dto.modules);
         }
 
@@ -463,7 +465,7 @@ export class BranchService {
     tenantId: string,
     dto: UpdateBranchDto,
   ): Promise<Branch> {
-    await this.findById(id, tenantId);
+    const existing = await this.findById(id, tenantId);
     const data: Prisma.BranchUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.branchType !== undefined) data.branchType = dto.branchType;
@@ -510,6 +512,10 @@ export class BranchService {
         // Apply any module enablement changes in the same transaction (only the
         // supplied keys are touched). Mirrors PUT /branches/:id/modules.
         if (dto.modules && dto.modules.length > 0) {
+          this.assertModulesAllowedForBranchType(
+            dto.branchType ?? existing.branchType,
+            dto.modules,
+          );
           await this.upsertBranchModules(tx, tenantId, id, dto.modules);
         }
         // Deactivating the main branch releases its pointer; deleteMany is a
@@ -685,7 +691,8 @@ export class BranchService {
     branchId: string,
     items: BranchModuleItemDto[],
   ): Promise<Array<{ moduleKey: string; label: string; isEnabled: boolean }>> {
-    await this.findById(branchId, tenantId);
+    const branch = await this.findById(branchId, tenantId);
+    this.assertModulesAllowedForBranchType(branch.branchType, items);
     await this.prisma.withTenant(tenantId, (tx) =>
       this.upsertBranchModules(tx, tenantId, branchId, items),
     );
@@ -767,6 +774,35 @@ export class BranchService {
    * @param branchId branch the modules belong to
    * @param items the modules to enable/disable
    */
+  /**
+   * Guard that every module being **enabled** is actually offered by the
+   * branch's type (the `BRANCH_MODULES` catalogue). This enforces the Center
+   * Type restriction server-side — e.g. a Collection Center / Franchise cannot
+   * enable the `radiology` module (only a Combined/Main Center can). Disabling
+   * an out-of-catalogue module is always allowed (harmless cleanup), and a
+   * branch type absent from the catalogue (legacy) is not restricted.
+   * @param branchType the branch's effective type
+   * @param items the modules being set
+   * @throws ValidationException if an enabled module is not in the type's catalogue
+   */
+  private assertModulesAllowedForBranchType(
+    branchType: BranchType,
+    items: BranchModuleItemDto[],
+  ): void {
+    const allowed = BRANCH_MODULES[branchType];
+    if (!allowed) return; // unknown/legacy type — not restricted
+    const allowedSet = new Set(allowed);
+    const offending = items
+      .filter((i) => (i.isEnabled ?? true) && !allowedSet.has(i.moduleKey))
+      .map((i) => i.moduleKey);
+    if (offending.length > 0) {
+      throw new ValidationException(
+        `Modules not available for a ${branchType} branch: ${offending.join(', ')}`,
+        { modules: `not offered by branch type ${branchType}` },
+      );
+    }
+  }
+
   private async upsertBranchModules(
     tx: Prisma.TransactionClient,
     tenantId: string,

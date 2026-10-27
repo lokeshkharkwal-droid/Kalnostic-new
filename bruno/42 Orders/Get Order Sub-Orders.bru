@@ -1,0 +1,51 @@
+meta {
+  name: Get Order Sub-Orders
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/sub-orders
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Fetch the CHILD sub-orders of a COMBINED (diagnostic + radiology) order, each
+  fully composed (the same shape as `GET /orders/:id`). `:id` may be the PARENT
+  order OR either CHILD — both resolve to the same parent's children, returned
+  DIAGNOSTICS first, then RADIOLOGY.
+
+  Background — the combined-order model. When an order is created on
+  `/registration/create` with BOTH lab/direct items and radiology items, it is
+  stored as a PARENT order plus two CHILD sub-orders:
+    • PARENT — carries the patient/referral identity and the main `orderCode`
+      (e.g. `ORD-00001`), but NO items/payments/sections. Its billing figures are
+      the aggregate of its children, and it is EXCLUDED from the order/billing/
+      console lists (`GET /orders` returns only STANDALONE + CHILD rows).
+    • CHILD — one per `section` (DIAGNOSTICS / RADIOLOGY). Each carries that
+      section's items, its own split payment ledger, its section row, and its own
+      suffixed `orderCode` (`ORD-00001-D`, `ORD-00001-R`) = the Sub-Order ID. A
+      child is an ordinary order for every other purpose: it appears in its tab,
+      can be billed, cancelled, refunded, and have payments received
+      independently, and the parent re-aggregates automatically.
+
+  The order-level money (payable, order-level discount, each partial payment) is
+  split across the two children proportionally by each section's share of
+  `gross − lineDiscount`, with the radiology (last) section absorbing each field's
+  rounding remainder so the parts sum back to the whole to the paisa. Example:
+  diagnostic 60% / radiology 40% of a ₹1000 partial payment → ₹600 / ₹400.
+
+  Returns `[]` for a STANDALONE (single-section) order. Powers the combined Order
+  Overview on `/registration/create`, which renders a separate Test Details +
+  Billing block per sub-order. 404 `ORDER_NOT_FOUND` if the order is missing,
+  soft-deleted, or owned by another tenant.
+
+  Each child element has the full `GET /orders/:id` shape, plus `orderKind`
+  (`CHILD`), `section`, `parentOrderId`, and `parentOrder` ({ id, orderCode,
+  externalOrderId }) = the Main Order ID the sub-orders are linked to.
+}

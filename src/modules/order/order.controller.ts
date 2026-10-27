@@ -26,6 +26,8 @@ import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { RefundOrderDto } from './dto/refund-order.dto';
+import { PayAllOrdersDto } from './dto/pay-all-orders.dto';
+import { RefundAllOrdersDto } from './dto/refund-all-orders.dto';
 import { PatientDuesQueryDto } from './dto/patient-dues.dto';
 import { PrintOrderDto } from './dto/print-order.dto';
 import { ShareOrderChannelDto, ShareOrderAllDto } from './dto/share.dto';
@@ -221,6 +223,7 @@ export class OrderController {
       query.patientId,
       profile.branchId,
       canCrossBranch,
+      query.excludeOrderId,
     );
   }
 
@@ -600,6 +603,17 @@ export class OrderController {
   @Get(':id')
   findOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.orderService.findById(id, tenantId);
+  }
+
+  /**
+   * The CHILD sub-orders of a combined (diagnostic + radiology) order, fully
+   * composed. `:id` may be the parent or either child; both resolve to the same
+   * parent's children (DIAGNOSTICS, then RADIOLOGY). Returns `[]` for a
+   * standalone order. Powers the combined Order Overview on `/registration/create`.
+   */
+  @Get(':id/sub-orders')
+  findSubOrders(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.orderService.findSubOrders(id, tenantId);
   }
 
   /**
@@ -1103,6 +1117,61 @@ export class OrderController {
     @Body() dto: RefundOrderDto,
   ) {
     return this.orderService.refund(id, tenantId, personId, dto);
+  }
+
+  /**
+   * Receive one combined payment across a combined order's CHILD sub-orders in a
+   * single atomic submission (Billings → "Make Payment All"). `:id` may be the
+   * parent or either child. Send either `totalAmount` (auto-distributed by the
+   * creation-ratio, capped at each sub-order's balance) or explicit per-sub-order
+   * `allocations`. The collection-by-other-user gate is enforced in the service,
+   * mirroring the single `POST /payments` route.
+   */
+  @Post(':id/payments-all')
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Received a combined payment across sub-orders',
+  })
+  payAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: PayAllOrdersDto,
+  ) {
+    return this.orderService.payAll(
+      id,
+      tenantId,
+      {
+        personId,
+        branchId: profile.branchId,
+        profileKey: profile.profileKey,
+      },
+      dto,
+    );
+  }
+
+  /**
+   * Refund across a combined order's CHILD sub-orders in a single atomic
+   * submission (Billings → "Refund All"). `:id` may be the parent or either child.
+   * Each sub-order's refund is validated against its own refundable balance and
+   * branch refund settings, exactly as the single `POST /orders/:id/refund` route.
+   */
+  @Post(':id/refund-all')
+  @RequirePermission(PERMISSION_KEYS.REG_UPDATE_REFUND_AMOUNT)
+  @Audit({
+    module: AuditModule.ORDER,
+    action: AuditAction.UPDATE,
+    description: 'Refunded a combined order across sub-orders',
+  })
+  refundAll(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Param('id') id: string,
+    @Body() dto: RefundAllOrdersDto,
+  ) {
+    return this.orderService.refundAll(id, tenantId, personId, dto);
   }
 
   /** Soft-delete an order (cascade soft-deletes items, sections, payments). */

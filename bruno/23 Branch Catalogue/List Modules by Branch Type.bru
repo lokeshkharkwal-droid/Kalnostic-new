@@ -5,37 +5,52 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/modules?branch_type=DIAGNOSTIC
+  url: {{baseUrl}}/modules?branch_type=COMBINED
   body: none
   auth: none
 }
 
 params:query {
-  branch_type: DIAGNOSTIC
+  branch_type: COMBINED
 }
 
 docs {
   Public. Returns the ordered module list for one branch type as
-  `{ key, label }` objects (key = the unified SYSTEM_MODULES key; label = its
-  display name). The `branch_type` query param is snake_case and must match a
-  key in the config constant (case-sensitive).
+  `{ key, label, group }` objects (key = the unified SYSTEM_MODULES key; label =
+  its display name; group = the service-line group `common` | `diagnostic` |
+  `radiology`, omitted for ungrouped/legacy-only modules). The `group` drives the
+  grouped module picker in the branch form (a flat Common block + Diagnostic /
+  Radiology accordions). The `branch_type` query param is snake_case and must
+  match a key in the config constant (case-sensitive).
 
-  `GET {{baseUrl}}/modules?branch_type=DIAGNOSTIC` →
+  ## Center-type model
+
+  The branch form ships one branch type ("Combined") plus a Center Type selector
+  that maps onto three keys: Main Center → `COMBINED`, Collection Center →
+  `COLLECTION_CENTER`, Franchise → `FRANCHISE`. A Main Center offers both the
+  diagnostic and radiology groups; Collection Center / Franchise offer the
+  diagnostic group only (no `radiology`). The other keys (`DIAGNOSTIC`,
+  `RADIOLOGY`, `OPD`, `PHARMACY`, `BLOOD_BANK`) are legacy — still resolvable for
+  existing branches, but not offered in the new selector.
+
+  `GET {{baseUrl}}/modules?branch_type=COMBINED` →
 
       { "success": true,
         "data": [
-          { "key": "registration",   "label": "Registration" },
-          { "key": "accession",      "label": "Accession" },
-          { "key": "lab_operations", "label": "Laboratory" },
-          { "key": "finance",        "label": "Finance" },
-          { "key": "phlebotomist",   "label": "Phlebotomist" },
-          { "key": "inventory",      "label": "Inventory" },
-          { "key": "sales",          "label": "Sales" },
-          { "key": "branch_admin",   "label": "Branch Admin" },
-          { "key": "business_admin", "label": "Business Admin" }
+          { "key": "registration",   "label": "Registration",   "group": "common" },
+          { "key": "finance",        "label": "Finance",        "group": "common" },
+          { "key": "inventory",      "label": "Inventory",      "group": "common" },
+          { "key": "sales",          "label": "Sales",          "group": "common" },
+          { "key": "branch_admin",   "label": "Branch Admin",   "group": "common" },
+          { "key": "business_admin", "label": "Business Admin", "group": "common" },
+          { "key": "accession",      "label": "Accession",      "group": "diagnostic" },
+          { "key": "lab_operations", "label": "Laboratory",     "group": "diagnostic" },
+          { "key": "phlebotomist",   "label": "Phlebotomist",   "group": "diagnostic" },
+          { "key": "radiology",      "label": "Radiology",      "group": "radiology" }
         ],
         "meta": { "timestamp": "..." } }
 
+  - `COLLECTION_CENTER` / `FRANCHISE` return the same list minus the `radiology` row.
   - Unknown `branch_type` → 400 (see "Modules - Invalid Branch Type").
   - Known type with no modules → `data: []` (see "Modules - Empty List").
 

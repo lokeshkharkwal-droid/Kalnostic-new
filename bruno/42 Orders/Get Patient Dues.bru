@@ -12,6 +12,7 @@ get {
 
 params:query {
   patientId: {{patientId}}
+  ~excludeOrderId: {{orderId}}
 }
 
 auth:bearer {
@@ -45,7 +46,16 @@ docs {
   ```
 
   Each figure is the summed positive `netAmount − paidAmount` across the patient's
-  active, non-cancelled orders (`ORDER`/`APPOINTMENT`). Cross-branch visibility is
+  active, non-cancelled orders (`ORDER`/`APPOINTMENT`).
+
+  Optional `excludeOrderId` — pass the order currently being EDITED so its OWN
+  unpaid balance is excluded from the total. Without it, editing an order with a
+  balance would show that balance as the patient's "previous dues" and prompt the
+  operator to clear it — yet the finalize-time previous-dues gate EXCLUDES the
+  order being finalized, so it would then reject the clearance as an overpayment
+  of ₹0. Passing `excludeOrderId` makes the screen's figure and the gate agree.
+
+  Cross-branch visibility is
   gated by `View cross-branch results`
   (`registration:create_order_patient_details__view_cross_branch_results`); without
   it, `businessWideOutstanding` equals `outstanding` and `branches` contains only

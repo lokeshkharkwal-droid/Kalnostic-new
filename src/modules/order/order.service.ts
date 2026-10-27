@@ -14,6 +14,8 @@ import {
   MessagingChannel,
   Order,
   OrderDateType,
+  OrderKind,
+  OrderSection,
   OrderStatus,
   PaymentEntryType,
   PaymentMode,
@@ -50,6 +52,8 @@ import { ReferralCreditService } from '../referral-credit/referral-credit.servic
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
 import { PatientService } from '../patient/patient.service';
+import { PermissionCheckService } from '../permissions/services/permission-check.service';
+import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -79,6 +83,8 @@ import { OrderItemDto } from './dto/order-item.dto';
 import { OrderPaymentDto } from './dto/order-payment.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { RefundOrderDto } from './dto/refund-order.dto';
+import { PayAllOrdersDto } from './dto/pay-all-orders.dto';
+import { RefundAllOrdersDto } from './dto/refund-all-orders.dto';
 import { BillingDetailsDto } from './dto/billing-details.dto';
 import { OrderDiagnosticsDto } from './dto/order-diagnostics.dto';
 import { OrderOpdDto } from './dto/order-opd.dto';
@@ -104,13 +110,27 @@ import {
   deriveReportStatus,
   deriveReportStatusCounts,
   orderItemNames,
+  deriveConsultant,
+  deriveOrderTat,
+  buildSubRow,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
   billStatusLabel,
   deriveBillStatus,
   recomputeBillStatusInTx,
+  recomputeParentAggregateInTx,
 } from './utils/bill-status';
+import {
+  splitPaymentsBySection,
+  SplitItemInput,
+  distributeCappedByWeight,
+} from './utils/suborder-split';
+import {
+  computePendingBalance,
+  computeRefundableBalance,
+  type LedgerAggregate,
+} from './utils/payment-math';
 import { CANCEL_BLOCKING_REPORT_STATUSES } from './utils/cancel-rules.util';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
@@ -254,6 +274,10 @@ import {
   AppointmentPaymentRequiredException,
   PaymentWithoutBillGeneratedException,
   TestNotDeletableAfterReportException,
+  NotACombinedOrderException,
+  CombinedPaymentInvalidException,
+  SubOrderNotInParentException,
+  SubOrderOverpaymentException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -487,6 +511,27 @@ const BILL_DOCUMENT_PRINT_TYPES = new Set<OrderPrintType>([
   'referral_patient_bill_print',
 ]);
 
+/**
+ * Sum a sub-order's active payment rows into the {@link LedgerAggregate} the
+ * pending/refundable helpers consume (Prisma `Decimal` → `number` via `toNum`).
+ * Used by the combined pay-all/refund-all to derive each sub-order's balance.
+ */
+function sumLedgerRows(
+  rows: Array<{
+    netAmount: Prisma.Decimal;
+    paidAmount: Prisma.Decimal;
+    refundAmount: Prisma.Decimal;
+    refundCharge: Prisma.Decimal;
+  }>,
+): LedgerAggregate {
+  return {
+    netAmount: rows.reduce((s, r) => s + toNum(r.netAmount), 0),
+    paidAmount: rows.reduce((s, r) => s + toNum(r.paidAmount), 0),
+    refundAmount: rows.reduce((s, r) => s + toNum(r.refundAmount), 0),
+    refundCharge: rows.reduce((s, r) => s + toNum(r.refundCharge), 0),
+  };
+}
+
 @Injectable()
 export class OrderService {
   constructor(
@@ -505,7 +550,32 @@ export class OrderService {
     private readonly tenantService: TenantService,
     private readonly referralCredit: ReferralCreditService,
     private readonly patientService: PatientService,
+    private readonly permissionCheck: PermissionCheckService,
   ) {}
+
+  /**
+   * When `orderId` is a CHILD sub-order of a combined order, re-aggregate its
+   * PARENT's billing/payment/refund status so the parent stays consistent after
+   * a write to one sub-order (cancel / refund / receive-payment / update). A
+   * no-op for STANDALONE / PARENT orders. Call it inside the same transaction,
+   * right after the child's own status recompute.
+   * @param tx active tenant-scoped transaction client
+   * @param tenantId tenant scope
+   * @param orderId the order just written (may or may not be a child)
+   */
+  private async syncParentAggregateInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    const row = await tx.order.findFirst({
+      where: { id: orderId, tenantId },
+      select: { parentOrderId: true },
+    });
+    if (row?.parentOrderId) {
+      await recomputeParentAggregateInTx(tx, tenantId, row.parentOrderId);
+    }
+  }
 
   /**
    * True when an order at `status` is a confirmed diagnostic order — the point at
@@ -782,6 +852,56 @@ export class OrderService {
     let createdId: string;
     try {
       createdId = await this.prisma.withTenant(tenantId, async (tx) => {
+        // ── Combined (diagnostic + radiology) order → parent + two children ──
+        // A registration carrying BOTH lab/direct items and radiology items is
+        // stored as a PARENT order (identity + main orderCode, no items/payments)
+        // plus two CHILD sub-orders (one DIAGNOSTICS, one RADIOLOGY), each with
+        // its own items, section, split payments, and samples/studies. The money
+        // entered once at the order level is split proportionally across the two
+        // children (see suborder-split). Single-section orders fall through to the
+        // STANDALONE path below, unchanged.
+        const itemSection = (i: OrderItemDto): OrderSection =>
+          i.branchRadiologyTestId || i.branchRadiologyPanelId
+            ? OrderSection.RADIOLOGY
+            : OrderSection.DIAGNOSTICS;
+        const resolveUnitPrice = (i: OrderItemDto): number =>
+          i.direct
+            ? (i.unitPrice ?? 0)
+            : (itemPrices.get(
+                i.branchLabTestId ??
+                  i.branchLabPanelId ??
+                  i.branchRadiologyTestId ??
+                  i.branchRadiologyPanelId ??
+                  '',
+              ) ?? 0);
+        const allItems = dto.items ?? [];
+        const hasLabPart = allItems.some(
+          (i) => itemSection(i) === OrderSection.DIAGNOSTICS,
+        );
+        const hasRadPart = allItems.some(
+          (i) => itemSection(i) === OrderSection.RADIOLOGY,
+        );
+        if (hasLabPart && hasRadPart) {
+          return await this.createCombinedInTx(tx, {
+            tenantId,
+            branchId,
+            personId,
+            dto,
+            itemPrices,
+            timezone,
+            appointmentAt,
+            appointmentType,
+            paymentStatus,
+            billNotGenerated,
+            externalIdIsManual,
+            manualExternalId,
+            externalIdPurpose,
+            externalIdFormat,
+            itemSection,
+            resolveUnitPrice,
+          });
+        }
+
         // A diagnostic order is a bill — bump the per-tenant diagnostic bill
         // counter alongside the order counter so it gets a `DIG-001…` bill id.
         const isDiagnosticBill = Boolean(dto.diagnostics);
@@ -1165,6 +1285,499 @@ export class OrderService {
   }
 
   /**
+   * Create a COMBINED (diagnostic + radiology) order as a PARENT order plus two
+   * CHILD sub-orders, inside the caller's transaction. The parent holds the
+   * patient/referral identity and the main `orderCode`; each child holds its
+   * own section's items, section row, split payments, samples/studies and (for
+   * an APPOINTMENT) its own lifecycle appointment. The order-level money is
+   * split proportionally across the two children (see
+   * {@link splitPaymentsBySection}); the parent's billing figures are the
+   * aggregate of its children ({@link recomputeParentAggregateInTx}).
+   *
+   * All pre-transaction context (validated amounts, resolved external-id config,
+   * item prices, derived appointment) is passed in so this mirrors the
+   * standalone create path exactly — it is only reached when the order genuinely
+   * spans both sections.
+   *
+   * @returns the created PARENT order id
+   */
+  private async createCombinedInTx(
+    tx: Prisma.TransactionClient,
+    ctx: {
+      tenantId: string;
+      branchId: string | null;
+      personId: string | null;
+      dto: CreateOrderDto;
+      itemPrices: Map<string, number>;
+      timezone: string;
+      appointmentAt: Date | null;
+      appointmentType: AppointmentType | null;
+      paymentStatus: PaymentStatus;
+      billNotGenerated: boolean;
+      externalIdIsManual: boolean;
+      manualExternalId: string | null;
+      externalIdPurpose: ExternalIdPurpose;
+      externalIdFormat: ExternalIdFormat;
+      itemSection: (i: OrderItemDto) => OrderSection;
+      resolveUnitPrice: (i: OrderItemDto) => number;
+    },
+  ): Promise<string> {
+    const {
+      tenantId,
+      branchId,
+      personId,
+      dto,
+      timezone,
+      appointmentAt,
+      appointmentType,
+      paymentStatus,
+      billNotGenerated,
+      externalIdIsManual,
+      manualExternalId,
+      externalIdPurpose,
+      externalIdFormat,
+      itemSection,
+      resolveUnitPrice,
+    } = ctx;
+    const allItems = dto.items ?? [];
+
+    // Parent code (bumps the order counter once); a diagnostic child also gets a
+    // DIG bill id (bumps the diagnostic bill counter).
+    const isDiagnosticBill = Boolean(dto.diagnostics);
+    const tenant = await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
+        orderCounter: { increment: 1 },
+        ...(isDiagnosticBill
+          ? { diagnosticBillCounter: { increment: 1 } }
+          : {}),
+      },
+      select: { orderCounter: true, diagnosticBillCounter: true },
+    });
+    const parentCode = `ORD-${String(tenant.orderCounter).padStart(5, '0')}`;
+    const diagBillId = isDiagnosticBill
+      ? `DIG-${String(tenant.diagnosticBillCounter).padStart(3, '0')}`
+      : null;
+
+    // External Order/Quote id — resolved on the PARENT only (the user-facing id
+    // of the combined order); children carry none. Mirrors the standalone path.
+    let externalOrderId: string | null = null;
+    if (branchId) {
+      if (externalIdIsManual) {
+        externalOrderId = manualExternalId;
+        if (externalOrderId) {
+          const dup = await tx.order.findFirst({
+            where: { branchId, externalOrderId, deletedAt: null },
+            select: { id: true },
+          });
+          if (dup) {
+            throw new DuplicateExternalOrderIdException(externalOrderId);
+          }
+        }
+      } else {
+        const branchRow = await tx.branch.findUnique({
+          where: { id: branchId },
+          select: { shortName: true },
+        });
+        externalOrderId = await this.externalIdService.generateInTx(
+          tx,
+          tenantId,
+          branchId,
+          externalIdPurpose,
+          externalIdFormat,
+          branchRow?.shortName ?? '',
+        );
+      }
+    }
+
+    // Fields shared by the parent and both children.
+    const commonOrderData = {
+      tenantId,
+      branchId,
+      patientId: dto.patientId,
+      status: dto.status ?? OrderStatus.DRAFT,
+      orderDate: new Date(dto.orderDate),
+      orderDateType: classifyOrderDate(dto.orderDate, timezone),
+      orderType: dto.orderType,
+      billingType: dto.billingType,
+      isUrgentBill: dto.isUrgentBill ?? false,
+      isBillGenerated: dto.isBillGenerated ?? true,
+      orderNotes: dto.orderNotes ?? null,
+      orderTime: dto.orderTime ?? null,
+      billingDetails:
+        (dto.billingDetails as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+      referredByDoctorId: dto.referredByDoctorId ?? null,
+      referralPanelId: dto.referralPanelId ?? null,
+      b2bClient: dto.b2bClient ?? null,
+      internalReferralId: dto.internalReferralId ?? null,
+      externalReferralId: dto.externalReferralId ?? null,
+      branchLabTestListId: dto.branchLabTestListId ?? null,
+      branchLabPanelListId: dto.branchLabPanelListId ?? null,
+      branchRadiologyTestListId: dto.branchRadiologyTestListId ?? null,
+      branchRadiologyPanelListId: dto.branchRadiologyPanelListId ?? null,
+      createdBy: personId,
+      updatedBy: personId,
+    };
+
+    // 1. Parent order — identity + main code; no items/payments/sections.
+    const parent = await tx.order.create({
+      data: {
+        ...commonOrderData,
+        orderKind: OrderKind.PARENT,
+        orderCode: parentCode,
+        billId: null,
+        externalOrderId,
+        appointmentId: null,
+        appointmentAt,
+        appointmentType,
+        paymentStatus,
+        quotationStatus:
+          dto.quotationStatus ??
+          (dto.status === OrderStatus.QUOTE ? QuotationStatus.DRAFT : null),
+        quotationValidTill: dto.quotationValidTill
+          ? new Date(dto.quotationValidTill)
+          : null,
+        sourceQuotationId:
+          dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE
+            ? dto.sourceQuotationId
+            : null,
+      },
+    });
+    if (dto.sourceQuotationId && dto.status !== OrderStatus.QUOTE) {
+      await this.markSourceQuotationConvertedInTx(
+        tx,
+        tenantId,
+        dto.sourceQuotationId,
+        personId,
+      );
+    }
+    if (dto.orderNotes && personId) {
+      await tx.orderNote.create({
+        data: {
+          tenantId,
+          branchId,
+          orderId: parent.id,
+          category: 'ORDER',
+          body: dto.orderNotes,
+          createdBy: personId,
+        },
+      });
+    }
+
+    // Split the order-level money across the two sections.
+    const splitItems: SplitItemInput[] = allItems.map((i) => ({
+      section: itemSection(i),
+      unitPrice: resolveUnitPrice(i),
+      discount: i.discount ?? 0,
+    }));
+    // Manual per-sub-order paid split (combined orders): when the operator chose
+    // how the collected payment lands on each sub-order, validate it sums to the
+    // total paid, then record exactly those amounts instead of auto-splitting the
+    // paid amount proportionally. Every other field still splits proportionally.
+    let paidSplitBySection: Partial<Record<OrderSection, number>> | undefined;
+    if (dto.subOrderPaidSplit) {
+      const totalPaid = roundToTwoDecimalPlaces(
+        (dto.payments ?? []).reduce((s, p) => s + (p.paidAmount ?? 0), 0),
+      );
+      const splitSum = roundToTwoDecimalPlaces(
+        dto.subOrderPaidSplit.diagnostics + dto.subOrderPaidSplit.radiology,
+      );
+      if (splitSum !== totalPaid) {
+        throw new CombinedPaymentInvalidException(
+          'The sub-order paid split must equal the total amount paid',
+        );
+      }
+      paidSplitBySection = {
+        [OrderSection.DIAGNOSTICS]: dto.subOrderPaidSplit.diagnostics,
+        [OrderSection.RADIOLOGY]: dto.subOrderPaidSplit.radiology,
+      };
+    }
+    const splits = splitPaymentsBySection(splitItems, dto.payments ?? [], {
+      paidSplitBySection,
+    });
+    const splitBySection = new Map(splits.map((s) => [s.section, s.payments]));
+    const srcPayments = dto.payments ?? [];
+
+    // 2. Children — one DIAGNOSTICS, one RADIOLOGY.
+    for (const section of [
+      OrderSection.DIAGNOSTICS,
+      OrderSection.RADIOLOGY,
+    ] as const) {
+      const isDiag = section === OrderSection.DIAGNOSTICS;
+      const childCode = `${parentCode}-${isDiag ? 'D' : 'R'}`;
+      const childApptAt = isDiag
+        ? dto.diagnostics?.appointmentAt
+        : dto.radiology?.appointmentAt;
+      const childApptType = isDiag
+        ? AppointmentType.DIAGNOSTIC
+        : AppointmentType.RADIOLOGY;
+      const childAppointmentId =
+        dto.status === OrderStatus.APPOINTMENT
+          ? await this.appointmentService.createInTx(
+              tx,
+              tenantId,
+              branchId,
+              personId,
+              { appointmentType: childApptType },
+            )
+          : null;
+
+      // This child's share of the split money → its own payment rows + status.
+      const money = splitBySection.get(section) ?? [];
+      const childNet = billNotGenerated
+        ? 0
+        : roundToTwoDecimalPlaces(money.reduce((s, m) => s + m.netAmount, 0));
+      const childPaid = billNotGenerated
+        ? 0
+        : roundToTwoDecimalPlaces(money.reduce((s, m) => s + m.paidAmount, 0));
+      const childPaymentStatus = billNotGenerated
+        ? PaymentStatus.PAID
+        : derivePaymentStatus(childNet, childPaid);
+
+      const child = await tx.order.create({
+        data: {
+          ...commonOrderData,
+          orderKind: OrderKind.CHILD,
+          parentOrderId: parent.id,
+          section,
+          orderCode: childCode,
+          billId: isDiag ? diagBillId : null,
+          externalOrderId: null,
+          appointmentId: childAppointmentId,
+          appointmentAt: childApptAt ? new Date(childApptAt) : appointmentAt,
+          appointmentType:
+            dto.status === OrderStatus.APPOINTMENT ? childApptType : null,
+          paymentStatus: childPaymentStatus,
+        },
+      });
+
+      // Each sub-order gets its own order barcode (branch-scoped counter).
+      if (branchId) {
+        const barcodeValue = await this.barcodeService.allocateOrderNumberInTx(
+          tx,
+          tenantId,
+          branchId,
+        );
+        const barcodeImageUrl = await this.barcodeService.generateAndUpload(
+          barcodeValue,
+          tenantId,
+        );
+        await tx.order.update({
+          where: { id: child.id },
+          data: {
+            orderIdBarcode: barcodeValue,
+            orderIdQrCode: barcodeImageUrl,
+          },
+        });
+      }
+      // Seed the order notes on the child too so its Overview/ViewBill shows them.
+      if (dto.orderNotes && personId) {
+        await tx.orderNote.create({
+          data: {
+            tenantId,
+            branchId,
+            orderId: child.id,
+            category: 'ORDER',
+            body: dto.orderNotes,
+            createdBy: personId,
+          },
+        });
+      }
+
+      // Items — only this section's lines.
+      const sliceItems = allItems.filter((i) => itemSection(i) === section);
+      if (sliceItems.length) {
+        await tx.orderItem.createMany({
+          data: sliceItems.map((i) => ({
+            tenantId,
+            branchId,
+            orderId: child.id,
+            branchLabTestId: i.branchLabTestId ?? null,
+            branchLabPanelId: i.branchLabPanelId ?? null,
+            branchRadiologyTestId: i.branchRadiologyTestId ?? null,
+            branchRadiologyPanelId: i.branchRadiologyPanelId ?? null,
+            direct: i.direct ?? null,
+            unitPrice: resolveUnitPrice(i),
+            discount: i.discount ?? 0,
+            discountMode: i.discountMode ?? null,
+            discountValue: i.discountValue ?? null,
+            outsourceCenterId: i.outsourceCenterId ?? null,
+          })),
+        });
+      }
+
+      // Section row + prescription documents.
+      if (isDiag && dto.diagnostics) {
+        await tx.orderDiagnostics.create({
+          data: this.diagnosticsData(
+            dto.diagnostics,
+            tenantId,
+            branchId,
+            child.id,
+          ),
+        });
+        const attachments = dto.diagnostics.prescriptionAttachments ?? [];
+        if (attachments.length) {
+          await this.patientService.createPatientDocumentsInTx(tx, {
+            tenantId,
+            branchId,
+            patientId: dto.patientId,
+            actorId: personId,
+            docs: attachments.map((a) => ({
+              name: a.name,
+              documentUrl: a.url,
+            })),
+          });
+        }
+      }
+      if (!isDiag && dto.radiology) {
+        await tx.orderRadiology.create({
+          data: this.radiologyData(dto.radiology, tenantId, branchId, child.id),
+        });
+      }
+      if (!isDiag) {
+        const radAttachments = dto.radiologyPrescriptionAttachments ?? [];
+        if (radAttachments.length) {
+          await this.patientService.createPatientDocumentsInTx(tx, {
+            tenantId,
+            branchId,
+            patientId: dto.patientId,
+            actorId: personId,
+            docs: radAttachments.map((a) => ({
+              name: a.name,
+              documentUrl: a.url,
+            })),
+          });
+        }
+      }
+
+      // Payments — this section's split rows.
+      if (money.length) {
+        await tx.paymentDetails.createMany({
+          data: money.map((m, idx) => {
+            const s = srcPayments[idx];
+            return {
+              tenantId,
+              branchId,
+              orderId: child.id,
+              totalAmount: m.totalAmount,
+              orderDiscount: m.orderDiscount,
+              orderDiscountMode: m.orderDiscountMode,
+              orderDiscountValue: m.orderDiscountValue,
+              netDiscount: m.netDiscount,
+              visitingCharges: m.visitingCharges,
+              netAmount: m.netAmount,
+              deductFromWallet: m.deductFromWallet,
+              deductFromPoints: m.deductFromPoints,
+              hasClearedPreviousDues: s?.hasClearedPreviousDues ?? false,
+              tdsDeduction: m.tdsDeduction,
+              payableAmount: m.payableAmount,
+              paidAmount: m.paidAmount,
+              remainingBalance: m.remainingBalance,
+              paymentMode: s?.paymentMode ?? PaymentMode.CASH,
+              paymentDate: s?.paymentDate ? new Date(s.paymentDate) : null,
+              reference: s?.reference ?? null,
+              notes: s?.notes ?? null,
+              collectedBy: personId,
+              ...(billNotGenerated
+                ? {
+                    orderDiscount: 0,
+                    netDiscount: 0,
+                    netAmount: 0,
+                    payableAmount: 0,
+                    paidAmount: 0,
+                    remainingBalance: 0,
+                    tdsDeduction: 0,
+                  }
+                : {}),
+            };
+          }),
+        });
+      }
+
+      // Cross-order previous-dues settlement — attributed to the diagnostic
+      // child (it owns the diagnostic bill). Only on a finalized billed order.
+      if (
+        isDiag &&
+        dto.status === OrderStatus.ORDER &&
+        branchId &&
+        !billNotGenerated &&
+        (dto.previousDuesCleared ?? 0) > 0
+      ) {
+        await this.settlePreviousDuesInTx(
+          tx,
+          tenantId,
+          dto.patientId,
+          dto.previousDuesCleared ?? 0,
+          child.id,
+          childCode,
+          this.settlementPaymentMode(dto.payments),
+          new Date(dto.orderDate),
+          personId,
+          branchId,
+        );
+      }
+
+      // Home-visit reservation + Collection Schedule — diagnostic child only.
+      if (isDiag) {
+        const reservation = this.homeVisitReservation(
+          dto.status,
+          branchId,
+          dto.diagnostics,
+        );
+        if (reservation) {
+          await this.slotReservation.reserveInTx(
+            tx,
+            tenantId,
+            reservation.branchId,
+            reservation.phlebotomistId,
+            reservation.at,
+          );
+        }
+      }
+
+      // Accession samples (diagnostic child) / radiology studies (radiology child)
+      // for a finalized order — each keyed off the child's own items.
+      const isFinalized =
+        dto.status === OrderStatus.ORDER ||
+        dto.status === OrderStatus.APPOINTMENT;
+      if (isDiag && isFinalized) {
+        await this.orderSamples.generateForOrderInTx(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          child.id,
+        );
+      }
+      if (!isDiag && isFinalized) {
+        await this.radiologyStudies.generateStudiesForOrderInTx(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          child.id,
+        );
+      }
+      if (isDiag) {
+        await this.homeVisitCollections.createForOrderInTx(
+          tx,
+          tenantId,
+          branchId,
+          personId,
+          child.id,
+        );
+      }
+
+      await recomputeBillStatusInTx(tx, tenantId, child.id);
+    }
+
+    // Parent billing = aggregate of its two children.
+    await recomputeParentAggregateInTx(tx, tenantId, parent.id);
+    return parent.id;
+  }
+
+  /**
    * Duplicate an EXPIRED quotation into a fresh DRAFT quote dated today, reusing
    * the source's patient, items (with per-line discounts), referrals, billing
    * sub-form and order-level totals. The new quote gets today's order date, so a
@@ -1458,17 +2071,23 @@ export class OrderService {
     patientId: string,
     currentBranchId: string | null,
     includeAllBranches: boolean,
+    excludeOrderId?: string,
   ): Promise<PatientDuesResult> {
     await this.assertPatient(tenantId, patientId);
 
     // One pass over the patient's active, non-cancelled orders; group the
-    // per-order balance (floored at 0) by branch.
+    // per-order balance (floored at 0) by branch. The order being edited is
+    // excluded so its OWN unpaid balance is never counted as the patient's
+    // "previous dues" — exactly what the finalize-time previous-dues gate does
+    // (`assertBillingRules` passes the same `excludeOrderId`), so the Create
+    // screen's figure and the gate always agree.
     const orders = await this.prisma.order.findMany({
       where: {
         tenantId,
         patientId,
         deletedAt: null,
         status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+        ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
       },
       select: {
         branchId: true,
@@ -2061,6 +2680,45 @@ export class OrderService {
       sections: deriveOrderSections(order.items, order.opd != null),
       cancelBlockedReason: cancelBlocked.get(id) ?? null,
     };
+  }
+
+  /**
+   * Resolve a combined order's CHILD sub-orders as fully-composed orders. The
+   * `id` may be the PARENT order or either CHILD — both resolve to the same
+   * parent, and all of its active children are returned (DIAGNOSTICS first, then
+   * RADIOLOGY), each via {@link findById} so the combined Order Overview gets the
+   * same rich shape (items, sections, billing rollups, payments) it uses for a
+   * standalone order. Returns an empty array for a STANDALONE order.
+   * @param id a parent or child order id
+   * @param tenantId tenant scope (from JWT)
+   * @returns the parent's child sub-orders, fully composed
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   */
+  async findSubOrders(
+    id: string,
+    tenantId: string,
+  ): Promise<OrderWithRelations[]> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { id: true, orderKind: true, parentOrderId: true },
+    });
+    if (!order) {
+      throw new OrderNotFoundException(id);
+    }
+    const parentId =
+      order.orderKind === OrderKind.CHILD && order.parentOrderId
+        ? order.parentOrderId
+        : order.id;
+    const children = await this.prisma.order.findMany({
+      where: {
+        parentOrderId: parentId,
+        tenantId,
+        deletedAt: null,
+      },
+      select: { id: true, section: true },
+      orderBy: { section: 'asc' }, // DIAGNOSTICS before RADIOLOGY
+    });
+    return Promise.all(children.map((c) => this.findById(c.id, tenantId)));
   }
 
   // ── Order Overview notes (Order / Sample / Tech tabs) ───────────────────────
@@ -3699,7 +4357,7 @@ export class OrderService {
     query: ListOrdersDto,
     tenantId: string,
     activeBranchId: string | null,
-    opts?: { classificationCoarse?: boolean },
+    opts?: { classificationCoarse?: boolean; groupCombinedParents?: boolean },
   ): Promise<{
     where: Prisma.OrderWhereInput;
     quotationValidityValue: number | null;
@@ -3707,6 +4365,19 @@ export class OrderService {
     quotationExpiryCutoff: Date | null;
   }> {
     const where: Prisma.OrderWhereInput = { tenantId, deletedAt: null };
+    // A combined order is a PARENT aggregate container with no items/payments of
+    // its own + two CHILD sub-orders that hold the real rows. Two list shapes:
+    //  • Section-scoped tabs (Diagnostics/Radiology/OPD) AND every money
+    //    AGGREGATION (Billing summary cards, Finance reports) operate on the real
+    //    ledger, so they exclude PARENTs → CHILD + STANDALONE show/aggregate.
+    //  • The unscoped Billings "All" list groups each combined order into a SINGLE
+    //    PARENT row (its aggregated figures), so it excludes CHILDren →
+    //    PARENT + STANDALONE show. `groupCombinedParents` (set only by the list,
+    //    only when no `section` filter is active) selects that grouped view.
+    where.orderKind =
+      opts?.groupCombinedParents && !query.section
+        ? { not: OrderKind.CHILD }
+        : { not: OrderKind.PARENT };
     // Extra clauses are pushed here so independent filters compose (never
     // clobber each other by re-assigning `where.AND`).
     const and: Prisma.OrderWhereInput[] = [];
@@ -4198,7 +4869,9 @@ export class OrderService {
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId, {
+      groupCombinedParents: query.groupCombined === true,
+    });
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -4212,10 +4885,22 @@ export class OrderService {
     ]);
 
     const orderIds = rows.map((r) => r.id);
+    // Grouped ("All" console) mode surfaces one row per logical order with its
+    // sub-orders stacked; child ids are needed so each sub-row resolves its own
+    // panel-member counts and radiology status.
+    const isGrouped = query.groupCombined === true;
+    const childOrderIds = isGrouped
+      ? rows.flatMap((r) => r.childOrders.map((c) => c.id))
+      : [];
     const panelIds = [
       ...new Set(
         rows
-          .flatMap((r) => r.items.map((it) => it.branchLabPanel?.id))
+          .flatMap((r) => [
+            ...r.items.map((it) => it.branchLabPanel?.id),
+            ...r.childOrders.flatMap((c) =>
+              c.items.map((it) => it.branchLabPanel?.id),
+            ),
+          ])
           .filter((id): id is string => id != null),
       ),
     ];
@@ -4230,7 +4915,9 @@ export class OrderService {
       this.countItemsByOrder(tenantId, orderIds),
       this.invoicedOrderCodes(tenantId, orderIds),
       this.cancelBlockedReasons(tenantId, orderIds),
-      this.radiologyStatusByOrder(tenantId, orderIds),
+      // Include child ids so a grouped PARENT's per-section sub-rows resolve their
+      // own radiology stage (the parent itself has no studies).
+      this.radiologyStatusByOrder(tenantId, [...orderIds, ...childOrderIds]),
       this.radiologyDepartmentsByOrder(tenantId, orderIds),
     ]);
     const data: OrderListRow[] = rows.map((r) => {
@@ -4240,27 +4927,84 @@ export class OrderService {
       // item total (not a stale frozen amount). Legacy orders (no mode/value)
       // retain the previous Σ-payment behaviour. Detail responses share this
       // exact derivation (see `findById`), so the list and detail never diverge.
-      const { grossAmount, discountAmount, netAmount, paidAmount } =
-        this.billingRollups(r.payments, r.items);
-      const tdsAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.tdsDeduction),
-        0,
-      );
+      // A combined PARENT row holds no ledger of its own: aggregate its billing
+      // figures from its CHILD sub-orders (each rolled up with its own
+      // discount handling, then summed). Only the grouped Billings "All" list
+      // surfaces PARENT rows here; every other caller excludes them, so a
+      // STANDALONE / CHILD row rolls up its own items + payments as before.
+      const isParentRow = r.orderKind === OrderKind.PARENT;
+      let grossAmount = 0;
+      let discountAmount = 0;
+      let netAmount = 0;
+      let paidAmount = 0;
+      let tdsAmount = 0;
+      let refundedAmount = 0;
+      let refundChargeTotal = 0;
+      // Aggregated cancellation charge across a parent's children — folds into the
+      // row's `cancellationCharge` so the FE's effective-paid/balance (which
+      // subtracts it) matches the parent's stored aggregate status.
+      let childCancellationCharge = 0;
+      if (isParentRow) {
+        for (const child of r.childOrders) {
+          const roll = this.billingRollups(child.payments, child.items);
+          grossAmount += roll.grossAmount;
+          discountAmount += roll.discountAmount;
+          netAmount += roll.netAmount;
+          paidAmount += roll.paidAmount;
+          childCancellationCharge += toNum(child.cancellationCharge);
+          tdsAmount += child.payments.reduce(
+            (s, p) => s + toNum(p.tdsDeduction),
+            0,
+          );
+          refundedAmount += child.payments.reduce(
+            (s, p) => s + toNum(p.refundAmount),
+            0,
+          );
+          refundChargeTotal += child.payments.reduce(
+            (s, p) => s + toNum(p.refundCharge),
+            0,
+          );
+        }
+        grossAmount = roundToTwoDecimalPlaces(grossAmount);
+        discountAmount = roundToTwoDecimalPlaces(discountAmount);
+        netAmount = roundToTwoDecimalPlaces(netAmount);
+        paidAmount = roundToTwoDecimalPlaces(paidAmount);
+      } else {
+        const roll = this.billingRollups(r.payments, r.items);
+        grossAmount = roll.grossAmount;
+        discountAmount = roll.discountAmount;
+        netAmount = roll.netAmount;
+        paidAmount = roll.paidAmount;
+        tdsAmount = r.payments.reduce((s, p) => s + toNum(p.tdsDeduction), 0);
+        refundedAmount = r.payments.reduce(
+          (s, p) => s + toNum(p.refundAmount),
+          0,
+        );
+        refundChargeTotal = r.payments.reduce(
+          (s, p) => s + toNum(p.refundCharge),
+          0,
+        );
+      }
       const dueAmount = Math.max(0, netAmount - paidAmount);
-      const refundedAmount = r.payments.reduce(
-        (s, p) => s + toNum(p.refundAmount),
-        0,
-      );
-      const refundChargeTotal = r.payments.reduce(
-        (s, p) => s + toNum(p.refundCharge),
-        0,
-      );
       const count = counts.get(r.id);
       // Workflow-facing item view: bill-only tests/panels are billed but never
       // enter the lab workflow, so they're excluded from the Order Console's
       // item names and report-status derivation (they have no samples/reports).
       // `r.items` (all items) still feeds `billingRollups` above so they're billed.
       const workflowItems = r.items.filter(
+        (it) =>
+          !it.branchLabTest?.isBillOnlyTest &&
+          !it.branchLabPanel?.isBillOnlyTest,
+      );
+      // Items driving the displayed Module/item-names/count: for a combined PARENT
+      // row these live on the CHILD sub-orders (the parent has none of its own).
+      // Report-status/report-counts stay keyed off `workflowItems` (empty for a
+      // parent → PENDING/0), which is the correct fallback — the grouped "All" row
+      // is a billing view, not a workflow row.
+      const displayItems = isParentRow
+        ? r.childOrders.flatMap((c) => c.items)
+        : r.items;
+      const displayWorkflowItems = displayItems.filter(
         (it) =>
           !it.branchLabTest?.isBillOnlyTest &&
           !it.branchLabPanel?.isBillOnlyTest,
@@ -4292,10 +5036,10 @@ export class OrderService {
       // relation) — the authoritative classification the frontend uses to route a
       // row into the Diagnostics / Radiology panels and to label its "Module"
       // (e.g. "Combined" when it carries both lab and radiology items).
-      const sections = deriveOrderSections(r.items, r.opd != null);
+      const sections = deriveOrderSections(displayItems, r.opd != null);
       return {
         ...r,
-        itemCount: count?.total ?? 0,
+        itemCount: isParentRow ? displayItems.length : (count?.total ?? 0),
         collectedItemCount: count?.collected ?? 0,
         // Order-level "Order Status": derived per-test from each item's LabReport.
         reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
@@ -4305,7 +5049,7 @@ export class OrderService {
         // worklist; names resolved from the already-included test/panel refs.
         // Bill-only items are excluded (no workflow, no reports).
         reportStatusCounts: deriveReportStatusCounts(workflowItems),
-        itemNames: orderItemNames(workflowItems),
+        itemNames: orderItemNames(displayWorkflowItems),
         grossAmount,
         discountAmount,
         netAmount,
@@ -4332,9 +5076,49 @@ export class OrderService {
         // Distinct department names across the order's radiology studies — drives
         // the Radiology Order Console's Department column.
         radiologyDepartments: radiologyDepartmentsByOrder.get(r.id) ?? [],
+        // Consultant / Radiologist (+ designation) and aggregated TaT for the
+        // combined Order Console's "All" tab — derived from the already-included
+        // OPD/radiology relation and the items' TAT metadata (no extra query).
+        ...(() => {
+          const consultant = deriveConsultant(r);
+          // TAT is read off the row's own items (which carry the TAT metadata);
+          // a combined PARENT row has none of its own (null TaT), but the console
+          // lists the CHILD sub-orders, each of which carries its items + TAT.
+          const tat = deriveOrderTat(r.items);
+          return {
+            consultantName: consultant.name,
+            consultantDesignation: consultant.designation,
+            ...tat,
+          };
+        })(),
+        // Grouped ("All" console) sub-orders: one row per logical order stacking
+        // its per-section sub-orders. A standalone order yields a single entry
+        // (itself); a combined PARENT yields one per CHILD. Only built in grouped
+        // mode so section-scoped lists stay lean.
+        ...(isGrouped
+          ? {
+              subOrders:
+                r.childOrders.length > 0
+                  ? r.childOrders.map((c) =>
+                      buildSubRow(c, radiologyStatusByOrder, panelMemberCounts),
+                    )
+                  : [buildSubRow(r, radiologyStatusByOrder, panelMemberCounts)],
+            }
+          : {}),
         // Module sections this order spans (item-derived) — drives the frontend's
         // Diagnostics/Radiology panel split and the Billing "Module" label.
         sections,
+        // A grouped PARENT row carries its children's summed cancellation charge
+        // (it has none of its own) so the FE's balance math matches its status.
+        // Kept a Prisma.Decimal (like the column) — the ResponseInterceptor
+        // converts it to a number for the JSON response.
+        ...(isParentRow
+          ? {
+              cancellationCharge: new Prisma.Decimal(
+                roundToTwoDecimalPlaces(childCancellationCharge),
+              ),
+            }
+          : {}),
         cancelBlockedReason: cancelBlocked.get(r.id) ?? null,
       };
     });
@@ -7064,6 +7848,8 @@ export class OrderService {
       // Billing Status: items, discount, ledger and/or status may all have
       // changed in this patch, so always recompute off the final state.
       await recomputeBillStatusInTx(tx, tenantId, id);
+      // Keep a combined order's parent aggregate in sync when this is a child.
+      await this.syncParentAggregateInTx(tx, tenantId, id);
 
       // Re-point the phlebotomist slot reservation when the booking changed
       // (reschedule / phlebotomist swap / home-visit toggle / status flip). Skip
@@ -7532,6 +8318,8 @@ export class OrderService {
         },
       });
       await recomputeBillStatusInTx(tx, tenantId, id);
+      // Keep a combined order's parent aggregate in sync when this is a child.
+      await this.syncParentAggregateInTx(tx, tenantId, id);
 
       // Cancel the linked appointment too (+ history) so a cancelled order no
       // longer occupies a phlebotomist slot.
@@ -7675,19 +8463,18 @@ export class OrderService {
       // Refunding below the net owed would leave an active order underpaid; that
       // is a cancellation, not a refund. When a paid test is removed the net
       // shrinks, exposing exactly that test's value as the refundable surplus.
-      const effectivePaidNow = computeEffectivePaid(
-        paidSum,
-        toNum(existing.cancellationCharge),
-        refundSum,
-        refundChargeSum,
-      );
       // A CANCELLED order owes nothing, so its whole retained amount is
-      // refundable (the documented refund top-up on a cancelled order) — using
-      // the un-zeroed ledger net here made every such top-up throw
-      // NothingToRefund.
-      const owed = existing.status === OrderStatus.CANCELLED ? 0 : netSum;
-      const refundable = roundToTwoDecimalPlaces(
-        Math.max(0, effectivePaidNow - owed),
+      // refundable (the documented refund top-up on a cancelled order). Shared
+      // with the combined refund-all path via `computeRefundableBalance`.
+      const refundable = computeRefundableBalance(
+        {
+          netAmount: netSum,
+          paidAmount: paidSum,
+          refundAmount: refundSum,
+          refundCharge: refundChargeSum,
+        },
+        toNum(existing.cancellationCharge),
+        existing.status,
       );
       if (refundable <= 0) {
         throw new NothingToRefundException(id);
@@ -7757,6 +8544,8 @@ export class OrderService {
         },
       });
       await recomputeBillStatusInTx(tx, tenantId, id);
+      // Keep a combined order's parent aggregate in sync when this is a child.
+      await this.syncParentAggregateInTx(tx, tenantId, id);
     });
     // Fire-and-forget: confirm the refund to the patient. Handled by ClinicalEventListener.
     void this.eventEmitter.emitAsync('order.refunded', {
@@ -7768,6 +8557,485 @@ export class OrderService {
       refundAmount: dto.amount,
     });
     return this.findById(id, tenantId);
+  }
+
+  // ── Combined order pay-all / refund-all ─────────────────────────────────────
+  //
+  // A combined (diagnostic + radiology) order is a PARENT with two CHILD
+  // sub-orders, each carrying its own ledger. These two endpoints settle/refund
+  // across all of a parent's sub-orders in ONE transaction so a mid-way failure
+  // never leaves some children written and others not. They reuse the same
+  // per-order math as the single receive-payment/refund paths
+  // (`computePendingBalance` / `computeRefundableBalance`) and recompute the
+  // parent aggregate once at the end.
+
+  /**
+   * Resolve the PARENT of a combined order from either the parent id or one of
+   * its child ids, returning the light parent fields the pay-all/refund-all gates
+   * need. Child sub-orders + their live ledgers are (re)loaded inside each write
+   * transaction, never here, so the authoritative balances can't go stale.
+   * @param id a parent or child order id
+   * @param tenantId tenant scope
+   * @returns the resolved parent id + `{ id, createdBy, branchId }`
+   * @throws OrderNotFoundException if `id` doesn't resolve
+   * @throws NotACombinedOrderException if the resolved order is not a PARENT
+   */
+  private async resolveCombinedParent(
+    id: string,
+    tenantId: string,
+  ): Promise<{
+    parentId: string;
+    parent: { id: string; createdBy: string | null; branchId: string | null };
+  }> {
+    const anchor = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { id: true, orderKind: true, parentOrderId: true },
+    });
+    if (!anchor) {
+      throw new OrderNotFoundException(id);
+    }
+    const parentId =
+      anchor.orderKind === OrderKind.CHILD && anchor.parentOrderId
+        ? anchor.parentOrderId
+        : anchor.id;
+    const parent = await this.prisma.order.findFirst({
+      where: { id: parentId, tenantId, deletedAt: null },
+      select: { id: true, orderKind: true, createdBy: true, branchId: true },
+    });
+    if (!parent || parent.orderKind !== OrderKind.PARENT) {
+      throw new NotACombinedOrderException(id);
+    }
+    return {
+      parentId,
+      parent: {
+        id: parent.id,
+        createdBy: parent.createdBy,
+        branchId: parent.branchId,
+      },
+    };
+  }
+
+  /**
+   * Recompute and persist a CHILD sub-order's `paymentStatus` / `refundStatus` /
+   * `billStatus` from its current ledger, WITHOUT syncing the parent — the
+   * combined pay-all/refund-all call the parent aggregate recompute once after all
+   * children are written. Mirrors the single-path per-order recompute.
+   * @param tx active tenant-scoped transaction client
+   * @param tenantId tenant scope
+   * @param orderId the child order to recompute
+   */
+  private async recomputeChildStatusInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    const [agg, order] = await Promise.all([
+      tx.paymentDetails.aggregate({
+        where: { orderId, tenantId, deletedAt: null },
+        _sum: {
+          netAmount: true,
+          paidAmount: true,
+          refundAmount: true,
+          refundCharge: true,
+        },
+      }),
+      tx.order.findFirst({
+        where: { id: orderId, tenantId },
+        select: { cancellationCharge: true },
+      }),
+    ]);
+    const cancellationCharge = order?.cancellationCharge.toNumber() ?? 0;
+    const net = agg._sum.netAmount?.toNumber() ?? 0;
+    const paidSum = agg._sum.paidAmount?.toNumber() ?? 0;
+    const refundSum = agg._sum.refundAmount?.toNumber() ?? 0;
+    const refundChargeSum = agg._sum.refundCharge?.toNumber() ?? 0;
+    const effectivePaid = computeEffectivePaid(
+      paidSum,
+      cancellationCharge,
+      refundSum,
+      refundChargeSum,
+    );
+    await tx.order.update({
+      where: { id: orderId },
+      data: {
+        paymentStatus: derivePaymentStatus(net, effectivePaid),
+        refundStatus: deriveRefundStatus(
+          paidSum,
+          cancellationCharge,
+          refundSum,
+          refundChargeSum,
+        ),
+      },
+    });
+    await recomputeBillStatusInTx(tx, tenantId, orderId);
+  }
+
+  /**
+   * Enforce the collection-by-other-user gate for a combined pay-all, mirroring
+   * the single receive-payment path (`PaymentDetailsService.assertCanCollect` +
+   * the `REG_SETTLE_PAYMENT_OTHERS` permission). A non-creator may only collect
+   * when the branch setting allows it AND they hold the permission.
+   * @throws PaymentCollectionByOtherUserNotAllowedException when the setting is off
+   */
+  private async assertCanCollectCombined(
+    tenantId: string,
+    parent: { id: string; createdBy: string | null; branchId: string | null },
+    actor: {
+      personId: string;
+      branchId: string | null;
+      profileKey: string | null;
+    },
+  ): Promise<void> {
+    if (
+      !parent.createdBy ||
+      parent.createdBy === actor.personId ||
+      !parent.branchId
+    ) {
+      return;
+    }
+    const settings = await this.registrationSettingsService.getForBranch(
+      tenantId,
+      parent.branchId,
+    );
+    if (!settings.BillingMenu_AllowCollectionOfAmountByOtherUser) {
+      throw new PaymentCollectionByOtherUserNotAllowedException(
+        parent.id,
+        parent.createdBy,
+        actor.personId,
+      );
+    }
+    await this.permissionCheck.assert(
+      {
+        tenantId,
+        personId: actor.personId,
+        branchId: actor.branchId,
+        profileKey: actor.profileKey,
+      },
+      PERMISSION_KEYS.REG_SETTLE_PAYMENT_OTHERS,
+    );
+  }
+
+  /**
+   * Receive a single combined payment across a parent order's CHILD sub-orders,
+   * written atomically. `id` may be the parent or either child. Supply exactly one
+   * of `dto.totalAmount` (auto-distributed by the creation-ratio — each
+   * sub-order's net — capped at its remaining balance, overflow spilling to the
+   * other) or `dto.allocations` (explicit per-sub-order amounts). Every allocation
+   * is validated server-side against the sub-order's actual pending balance; on
+   * any failure nothing is written. Cancelled sub-orders are skipped.
+   * @param id a parent or child order id
+   * @param tenantId tenant scope (from JWT)
+   * @param actor the collecting user (person id + active branch/profile)
+   * @param dto the combined payment body
+   * @returns the parent's sub-orders, fully composed, with their new balances
+   * @throws OrderNotFoundException / NotACombinedOrderException
+   * @throws CombinedPaymentInvalidException if the body is malformed / amount ≤ 0
+   * @throws SubOrderNotInParentException / SubOrderOverpaymentException
+   * @throws PaymentCollectionByOtherUserNotAllowedException per the collection gate
+   */
+  async payAll(
+    id: string,
+    tenantId: string,
+    actor: {
+      personId: string;
+      branchId: string | null;
+      profileKey: string | null;
+    },
+    dto: PayAllOrdersDto,
+  ): Promise<OrderWithRelations[]> {
+    const { parentId, parent } = await this.resolveCombinedParent(id, tenantId);
+    await this.assertCanCollectCombined(tenantId, parent, actor);
+
+    const hasTotal = dto.totalAmount != null;
+    const hasAllocations = (dto.allocations?.length ?? 0) > 0;
+    if (hasTotal === hasAllocations) {
+      throw new CombinedPaymentInvalidException(
+        'Supply exactly one of totalAmount or allocations',
+      );
+    }
+
+    // All reads + validation + writes run in one transaction so the authoritative
+    // balances can't go stale and a partial failure rolls everything back.
+    const applied = await this.prisma.withTenant(tenantId, async (tx) => {
+      const children = await tx.order.findMany({
+        where: { parentOrderId: parentId, tenantId, deletedAt: null },
+        select: {
+          id: true,
+          status: true,
+          branchId: true,
+          cancellationCharge: true,
+          payments: {
+            where: { deletedAt: null },
+            select: {
+              netAmount: true,
+              paidAmount: true,
+              refundAmount: true,
+              refundCharge: true,
+            },
+          },
+        },
+        orderBy: { section: 'asc' },
+      });
+      // Only active sub-orders can take a payment (a cancelled one is skipped).
+      const eligible = children.filter(
+        (c) => c.status !== OrderStatus.CANCELLED,
+      );
+      if (eligible.length === 0) {
+        throw new CombinedPaymentInvalidException(
+          'This order has no active sub-orders to collect a payment for',
+        );
+      }
+      const state = eligible.map((c) => {
+        const agg = sumLedgerRows(c.payments);
+        const pending = Math.max(
+          0,
+          computePendingBalance(agg, toNum(c.cancellationCharge)),
+        );
+        return { child: c, net: agg.netAmount, pending };
+      });
+
+      // Resolve the per-sub-order amounts.
+      let amounts: Array<{
+        child: (typeof state)[number]['child'];
+        amount: number;
+      }>;
+      if (hasTotal) {
+        const dist = distributeCappedByWeight(
+          dto.totalAmount as number,
+          state.map((s) => ({ weight: s.net, cap: s.pending })),
+        );
+        amounts = state.map((s, i) => ({
+          child: s.child,
+          amount: dist[i] ?? 0,
+        }));
+      } else {
+        const byId = new Map(state.map((s) => [s.child.id, s]));
+        amounts = (dto.allocations ?? []).map((a) => {
+          const s = byId.get(a.orderId);
+          if (!s) {
+            throw new SubOrderNotInParentException(parentId, a.orderId);
+          }
+          const amount = roundToTwoDecimalPlaces(a.paidAmount);
+          if (amount > roundToTwoDecimalPlaces(s.pending + 0.005)) {
+            throw new SubOrderOverpaymentException(
+              a.orderId,
+              s.pending,
+              amount,
+            );
+          }
+          return { child: s.child, amount };
+        });
+      }
+
+      const totalToCollect = roundToTwoDecimalPlaces(
+        amounts.reduce((sum, a) => sum + a.amount, 0),
+      );
+      if (totalToCollect <= 0) {
+        throw new CombinedPaymentInvalidException(
+          'The payment amount must be greater than 0',
+        );
+      }
+
+      const rows = amounts.filter((a) => a.amount > 0);
+      for (const a of rows) {
+        await tx.paymentDetails.create({
+          data: {
+            tenantId,
+            branchId: a.child.branchId,
+            orderId: a.child.id,
+            entryType: PaymentEntryType.PAYMENT,
+            paidAmount: a.amount,
+            paymentMode: dto.paymentMode,
+            reference: dto.reference ?? null,
+            notes: dto.notes ?? null,
+            paymentDate: dto.paymentDate
+              ? new Date(dto.paymentDate)
+              : new Date(),
+            collectedBy: actor.personId,
+          },
+        });
+        await this.recomputeChildStatusInTx(tx, tenantId, a.child.id);
+      }
+      // Re-aggregate the parent once, after every child row is written.
+      await recomputeParentAggregateInTx(tx, tenantId, parentId);
+      return rows.map((a) => ({
+        orderId: a.child.id,
+        branchId: a.child.branchId,
+        amount: a.amount,
+      }));
+    });
+
+    // Fire-and-forget: acknowledge each sub-order payment to the patient.
+    for (const a of applied) {
+      void this.eventEmitter.emitAsync('payment.received', {
+        tenantId,
+        branchId: a.branchId,
+        orderId: a.orderId,
+        amount: a.amount,
+        paymentMode: dto.paymentMode,
+      });
+    }
+    return this.findSubOrders(parentId, tenantId);
+  }
+
+  /**
+   * Refund across a parent order's CHILD sub-orders, written atomically. `id` may
+   * be the parent or either child. Each `dto.allocations[]` entry is validated per
+   * sub-order against that sub-order's refundable balance and its branch's
+   * `Allow Refund` / `Allow Partial Refund` / `Refund Charges Applicable`
+   * settings — exactly as the single refund path does; on any failure nothing is
+   * written. Entries with a 0 amount are skipped; at least one must be positive.
+   * @param id a parent or child order id
+   * @param tenantId tenant scope (from JWT)
+   * @param actorId the acting user's `Person.id` (from JWT)
+   * @param dto the combined refund body (per-sub-order amounts + charges)
+   * @returns the parent's sub-orders, fully composed, with their new balances
+   * @throws OrderNotFoundException / NotACombinedOrderException
+   * @throws CombinedPaymentInvalidException if no positive refund amount is given
+   * @throws SubOrderNotInParentException / NothingToRefundException
+   * @throws RefundNotAllowedException / PartialRefundNotAllowedException
+   * @throws RefundExceedsRefundableException if a refund exceeds the refundable balance
+   */
+  async refundAll(
+    id: string,
+    tenantId: string,
+    actorId: string | null,
+    dto: RefundAllOrdersDto,
+  ): Promise<OrderWithRelations[]> {
+    const { parentId } = await this.resolveCombinedParent(id, tenantId);
+
+    const applied = await this.prisma.withTenant(tenantId, async (tx) => {
+      const children = await tx.order.findMany({
+        where: { parentOrderId: parentId, tenantId, deletedAt: null },
+        select: {
+          id: true,
+          status: true,
+          branchId: true,
+          cancellationCharge: true,
+          patientId: true,
+          orderCode: true,
+          payments: {
+            where: { deletedAt: null },
+            select: {
+              netAmount: true,
+              paidAmount: true,
+              refundAmount: true,
+              refundCharge: true,
+            },
+          },
+        },
+        orderBy: { section: 'asc' },
+      });
+      const byId = new Map(children.map((c) => [c.id, c]));
+
+      // Validate every allocation first (nothing is written until all pass).
+      const planned: Array<{
+        child: (typeof children)[number];
+        amount: number;
+        refundCharge: number;
+      }> = [];
+      for (const a of dto.allocations) {
+        const child = byId.get(a.orderId);
+        if (!child) {
+          throw new SubOrderNotInParentException(parentId, a.orderId);
+        }
+        const amount = roundToTwoDecimalPlaces(a.amount);
+        if (amount <= 0) continue; // a 0 row just skips that sub-order
+        const settings = child.branchId
+          ? await this.registrationSettingsService.getForBranch(
+              tenantId,
+              child.branchId,
+            )
+          : null;
+        if (settings && !settings.CancellationAndRefund_AllowRefund) {
+          throw new RefundNotAllowedException(a.orderId);
+        }
+        const refundCharge = settings
+          ? settings.CancellationAndRefund_RefundChargesApplicable
+            ? roundToTwoDecimalPlaces(
+                Number(
+                  a.refundCharge ??
+                    settings.CancellationAndRefund_RefundChargesAmount ??
+                    0,
+                ),
+              )
+            : 0
+          : (a.refundCharge ?? 0);
+        const refundable = computeRefundableBalance(
+          sumLedgerRows(child.payments),
+          toNum(child.cancellationCharge),
+          child.status,
+        );
+        if (refundable <= 0) {
+          throw new NothingToRefundException(a.orderId);
+        }
+        const refundableToPatient = roundToTwoDecimalPlaces(
+          refundable - refundCharge,
+        );
+        if (
+          settings &&
+          !settings.CancellationAndRefund_AllowPartialRefund &&
+          amount !== refundableToPatient
+        ) {
+          throw new PartialRefundNotAllowedException(
+            refundableToPatient,
+            amount,
+          );
+        }
+        const totalOutflow = roundToTwoDecimalPlaces(amount + refundCharge);
+        if (totalOutflow > refundable) {
+          throw new RefundExceedsRefundableException(refundable, totalOutflow);
+        }
+        planned.push({ child, amount, refundCharge });
+      }
+      if (planned.length === 0) {
+        throw new CombinedPaymentInvalidException(
+          'Enter a refund amount for at least one sub-order',
+        );
+      }
+
+      for (const p of planned) {
+        await tx.paymentDetails.create({
+          data: {
+            tenantId,
+            branchId: p.child.branchId,
+            orderId: p.child.id,
+            entryType: PaymentEntryType.REFUND,
+            refundAmount: p.amount,
+            refundCharge: p.refundCharge,
+            paidAmount: 0,
+            paymentMode: dto.paymentMode,
+            reference: dto.reference ?? null,
+            paymentDate: dto.paymentDate
+              ? new Date(dto.paymentDate)
+              : new Date(),
+            collectedBy: actorId,
+          },
+        });
+        await this.recomputeChildStatusInTx(tx, tenantId, p.child.id);
+      }
+      await recomputeParentAggregateInTx(tx, tenantId, parentId);
+      return planned.map((p) => ({
+        orderId: p.child.id,
+        branchId: p.child.branchId,
+        patientId: p.child.patientId,
+        orderCode: p.child.orderCode,
+        amount: p.amount,
+      }));
+    });
+
+    // Fire-and-forget: confirm each sub-order refund to the patient.
+    for (const p of applied) {
+      void this.eventEmitter.emitAsync('order.refunded', {
+        tenantId,
+        branchId: p.branchId,
+        orderId: p.orderId,
+        patientId: p.patientId,
+        orderCode: p.orderCode,
+        refundAmount: p.amount,
+      });
+    }
+    return this.findSubOrders(parentId, tenantId);
   }
 
   /**

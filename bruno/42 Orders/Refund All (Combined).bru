@@ -1,0 +1,72 @@
+meta {
+  name: Refund All (Combined)
+  type: http
+  seq: 43
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/refund-all
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "allocations": [
+      { "orderId": "{{subOrderDiagnosticId}}", "amount": 350 },
+      { "orderId": "{{subOrderRadiologyId}}", "amount": 150 }
+    ],
+    "paymentMode": "CASH"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Refund across a combined order's CHILD sub-orders in a single atomic transaction
+  (Registration/Finance → Billings → "Refund All"). `:id` may be the PARENT order
+  or either CHILD. Requires the `REG_UPDATE_REFUND_AMOUNT` permission. All amounts
+  are rupees (up to 2 decimal places).
+
+  Body:
+  - `allocations` (required, ≥1 entry) — per-sub-order refunds:
+    `[{ "orderId": "<child id>", "amount": 350, "refundCharge": 0 }, ...]`.
+    `amount` (≥0) is returned to the patient — a 0 amount skips that sub-order;
+    `refundCharge?` (≥0, default 0) is a fee the lab retains. At least one entry
+    must have a positive `amount`.
+  - `paymentMode` (required) — how the refunds are paid back.
+  - `reference?`, `paymentDate?` (ISO) — optional.
+
+  Each sub-order is validated INDEPENDENTLY against its own refundable balance and
+  its branch's Cancellation & Refund settings — exactly like `POST /orders/:id/refund`:
+  - `AllowRefund` off ⇒ 422 `REFUND_NOT_ALLOWED`.
+  - nothing refundable on a sub-order ⇒ 422 `NOTHING_TO_REFUND`.
+  - `amount + refundCharge` exceeds that sub-order's refundable balance ⇒ 422
+    `REFUND_EXCEEDS_REFUNDABLE`.
+  - `AllowPartialRefund` off ⇒ `amount` must equal the full refundable-to-patient
+    (`refundable − refundCharge`), else 422 `PARTIAL_REFUND_NOT_ALLOWED`.
+  - `RefundChargesApplicable` off ⇒ `refundCharge` ignored (forced to 0); on ⇒
+    used or defaults to the configured `RefundChargesAmount`.
+
+  Nothing is written if any sub-order fails validation (the whole transaction rolls
+  back). Other failures: 422 `COMBINED_PAYMENT_INVALID` (no positive refund amount),
+  422 `SUB_ORDER_NOT_IN_PARENT` (an `orderId` not under this parent), 422
+  `NOT_A_COMBINED_ORDER` / 404 `ORDER_NOT_FOUND`.
+
+  Writes one REFUND `PaymentDetails` row per refunded sub-order (append-only — prior
+  payments are never overwritten), recomputes each sub-order's `paymentStatus` /
+  `refundStatus` / `billStatus`, then re-aggregates the PARENT once. Returns the
+  parent's sub-orders, fully composed, with their new balances.
+
+  NOTE: set `{{subOrderDiagnosticId}}` / `{{subOrderRadiologyId}}` from a prior
+  `GET /orders/:id/sub-orders` response (the CHILD ids), and `{{orderId}}` to the
+  combined order's parent or child id.
+}

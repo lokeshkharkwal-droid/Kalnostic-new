@@ -1,0 +1,71 @@
+meta {
+  name: Make Payment All (Combined)
+  type: http
+  seq: 42
+}
+
+post {
+  url: {{baseUrl}}/orders/{{orderId}}/payments-all
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "totalAmount": 500,
+    "paymentMode": "CASH"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Receive ONE combined payment across a combined order's CHILD sub-orders in a
+  single atomic transaction (Registration/Finance → Billings → "Make Payment
+  All"). `:id` may be the PARENT order or either CHILD — both resolve to the same
+  parent, and the payment is spread across all of its ACTIVE (non-cancelled)
+  sub-orders. All amounts are rupees (up to 2 decimal places).
+
+  Supply EXACTLY ONE of:
+  - `totalAmount` (≥0.01) — the server auto-distributes it across the sub-orders by
+    the **creation ratio** (each sub-order's net share), **capped at each
+    sub-order's remaining balance**; any overflow spills to the other sub-order.
+    e.g. diagnostic net 1400 / radiology net 600 ⇒ a 500 payment → 350 / 150.
+  - `allocations` — an explicit per-sub-order amount (manual override):
+    `[{ "orderId": "<child id>", "paidAmount": 350 }, { "orderId": "<child id>", "paidAmount": 150 }]`.
+    A 0 amount skips that sub-order.
+
+  Always required:
+  - `paymentMode` — `CASH | CREDIT | UPI | CARD | WALLET | BANK_TRANSFER`.
+  - `reference?`, `paymentDate?` (ISO), `notes?` — optional, stored on every row.
+
+  Validation (nothing is written if any check fails — the whole transaction rolls
+  back):
+  - exactly one of `totalAmount` / `allocations`, and a positive total to collect,
+    else 422 `COMBINED_PAYMENT_INVALID`.
+  - each allocation's `orderId` must be an active CHILD of this parent, else 422
+    `SUB_ORDER_NOT_IN_PARENT`.
+  - no sub-order may be overpaid beyond its server-computed pending balance, else
+    422 `SUB_ORDER_OVERPAYMENT`.
+  - `:id` must resolve to a combined order, else 422 `NOT_A_COMBINED_ORDER`
+    (404 `ORDER_NOT_FOUND` if missing / other tenant).
+  - collection-by-other-user gate (same as `POST /payments`): a non-creator needs
+    the branch setting `AllowCollectionOfAmountByOtherUser` ON plus the
+    `REG_SETTLE_PAYMENT_OTHERS` permission.
+
+  Writes one PAYMENT `PaymentDetails` row per sub-order that received money (the
+  ledger is append-only), recomputes each sub-order's `paymentStatus` / `billStatus`,
+  then re-aggregates the PARENT once. Returns the parent's sub-orders, fully
+  composed, with their new balances (same shape as `GET /orders/:id/sub-orders`).
+
+  NOTE: `{{orderId}}` must be a COMBINED order's parent or child id. Create one on
+  `/registration/create` with both lab and radiology items, then use its id.
+}
