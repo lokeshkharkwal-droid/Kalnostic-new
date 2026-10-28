@@ -1500,8 +1500,10 @@ export class LabTestService {
   /**
    * Sync (update-or-create-or-delete) all active lab tests from a Tenant Master
    * Data into a Branch Master Data, keyed on `sourceMasterLabTestId` (falling
-   * back to `testCode` to adopt a legacy branch row and avoid a unique
-   * collision). A matched branch test has its scalars fully overwritten from
+   * back to `testCode`, then `testName`, to adopt a legacy or stale-linked
+   * branch row — both are unique per master data, so creating alongside one
+   * would collide; e.g. a tenant test deleted and re-created under the same
+   * name with a new code). Each branch row is adopted at most once. A matched branch test has its scalars fully overwritten from
    * the tenant test (version bumped); its samples are rebuilt (full-replace)
    * but its result params are matched-and-patched by `parameterCode` via
    * `upsertTestChildren`, preserving each matched param's id (and thus any
@@ -1549,11 +1551,18 @@ export class LabTestService {
     });
     const bySource = new Map<string, LabTest>();
     const byCode = new Map<string, LabTest>();
+    const byName = new Map<string, LabTest>();
     for (const t of branchTests) {
       if (t.sourceMasterLabTestId) bySource.set(t.sourceMasterLabTestId, t);
       byCode.set(t.testCode, t);
+      byName.set(t.testName, t);
     }
     const sourceIds = new Set(sourceTests.map((t) => t.id));
+    // Branch rows already adopted by a tenant test this run — never adopted
+    // twice, and never treated as orphans (their stale link is being replaced).
+    const matchedIds = new Set<string>();
+    const unclaimed = (t: LabTest | undefined) =>
+      t && !matchedIds.has(t.id) ? t : undefined;
 
     const testIdMap = new Map<string, string>();
     const tatChanges: {
@@ -1563,9 +1572,14 @@ export class LabTestService {
     }[] = [];
     let created = 0;
     let updated = 0;
+    const toCreate: LabTest[] = [];
     for (const src of sourceTests) {
-      const target = bySource.get(src.id) ?? byCode.get(src.testCode);
+      const target =
+        unclaimed(bySource.get(src.id)) ??
+        unclaimed(byCode.get(src.testCode)) ??
+        unclaimed(byName.get(src.testName));
       if (target) {
+        matchedIds.add(target.id);
         tatChanges.push({
           branchTestId: target.id,
           prev: pickTat(target),
@@ -1608,16 +1622,7 @@ export class LabTestService {
         testIdMap.set(src.id, target.id);
         updated += 1;
       } else {
-        const cloned = await this.clonePersistTest(tx, src, {
-          tenantId,
-          branchId,
-          masterDataId: branchMasterDataId,
-          source: DataSource.TENANT,
-          actorId,
-          sourceMasterLabTestId: src.id,
-        });
-        testIdMap.set(src.id, cloned.id);
-        created += 1;
+        toCreate.push(src);
       }
     }
     // Carry the (possibly new) TAT on into the branch's Lab Test List copies —
@@ -1629,8 +1634,11 @@ export class LabTestService {
       tatChanges,
     );
 
+    // Orphans are soft-deleted BEFORE the clones are created, so an orphan
+    // still holding a name/code can't trip the partial unique indexes.
     const orphans = branchTests.filter(
       (t) =>
+        !matchedIds.has(t.id) &&
         t.sourceMasterLabTestId !== null &&
         !sourceIds.has(t.sourceMasterLabTestId),
     );
@@ -1648,6 +1656,19 @@ export class LabTestService {
         orphans.map((o) => o.id),
         now,
       );
+    }
+
+    for (const src of toCreate) {
+      const cloned = await this.clonePersistTest(tx, src, {
+        tenantId,
+        branchId,
+        masterDataId: branchMasterDataId,
+        source: DataSource.TENANT,
+        actorId,
+        sourceMasterLabTestId: src.id,
+      });
+      testIdMap.set(src.id, cloned.id);
+      created += 1;
     }
 
     return { testIdMap, created, updated, deleted };

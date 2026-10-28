@@ -234,6 +234,65 @@ describe('LabTestService.syncTestsIntoBranch', () => {
     expect(prismaMock.labTest.create).toHaveBeenCalledTimes(1);
   });
 
+  it('adopts a stale-linked branch test by name when the tenant test was re-created under a new code', async () => {
+    // Tenant soft-deleted `old-src` and re-created the same-named test with a
+    // new code; the branch copy still links to `old-src`. Creating a fresh clone
+    // would trip the (tenant, master_data, test_name) unique index.
+    const src = test({
+      id: 'new-src',
+      testCode: 'GGT',
+      testName: 'GGT, Serum',
+    });
+    const branch = test({
+      id: 'branch-1',
+      testCode: 'GGTGS',
+      testName: 'GGT, Serum',
+      sourceMasterLabTestId: 'old-src',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([branch]);
+
+    const result = await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(result).toMatchObject({ created: 0, updated: 1, deleted: 0 });
+    expect(result.testIdMap.get('new-src')).toBe('branch-1');
+    expect(prismaMock.labTest.create).not.toHaveBeenCalled();
+    const [updateArgs] = prismaMock.labTest.update.mock.calls[0] as [
+      { where: { id: string }; data: { sourceMasterLabTestId: string } },
+    ];
+    expect(updateArgs.where).toEqual({ id: 'branch-1' });
+    expect(updateArgs.data.sourceMasterLabTestId).toBe('new-src');
+    // Adopted, so not soft-deleted as an orphan of `old-src`.
+    expect(prismaMock.labTest.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('soft-deletes orphans before cloning new tenant tests', async () => {
+    const src = test({ id: 'src-new', testCode: 'NEW', testName: 'New' });
+    const orphan = test({
+      id: 'branch-orphan',
+      testCode: 'OLD',
+      testName: 'Old',
+      sourceMasterLabTestId: 'gone',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([orphan]);
+
+    const result = await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(result).toMatchObject({ created: 1, updated: 0, deleted: 1 });
+    const [deleteOrder] = prismaMock.labTest.update.mock.invocationCallOrder;
+    const [createOrder] = prismaMock.labTest.create.mock.invocationCallOrder;
+    expect(deleteOrder).toBeLessThan(createOrder!);
+  });
+
   it('fully overwrites a matched branch test in place (update)', async () => {
     const src = test({ id: 'src-1', testCode: 'T1' });
     const branch = test({
