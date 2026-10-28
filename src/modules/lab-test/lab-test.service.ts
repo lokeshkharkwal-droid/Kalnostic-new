@@ -115,6 +115,10 @@ import {
 } from './exceptions/lab-test.exceptions';
 import { FormulaParam, validateFormulaSet } from '../../common/utils/formula';
 import {
+  MASTER_DATA_SYNC_BATCH_SIZE,
+  MasterDataSyncProgressListener,
+} from './master-data-sync-progress';
+import {
   TAT_SELECT,
   TatConfig,
   applyTatChanges,
@@ -1538,6 +1542,7 @@ export class LabTestService {
       branchMasterDataId: string;
       actorId: string | null;
     },
+    onProgress?: MasterDataSyncProgressListener,
   ): Promise<{
     testIdMap: Map<string, string>;
     created: number;
@@ -1626,10 +1631,21 @@ export class LabTestService {
     if (conflicts.length) {
       throw new MasterDataImportConflictException(conflicts);
     }
+    await onProgress?.({
+      type: 'tests-planned',
+      total: sourceTests.length,
+      toUpdate: matches.size,
+      toCreate: sourceTests.length - matches.size,
+    });
 
     // Orphans are soft-deleted BEFORE any update or create, so one still
     // holding a name/code can't trip the partial unique indexes when another
     // test is renamed/re-coded onto it.
+    await onProgress?.({
+      type: 'phase',
+      phase: 'REMOVING',
+      count: orphans.length,
+    });
     const now = new Date();
     let deleted = 0;
     for (const orphan of orphans) {
@@ -1655,6 +1671,16 @@ export class LabTestService {
     let created = 0;
     let updated = 0;
     const toCreate: LabTest[] = [];
+    // Progress is reported per batch of tests processed (updated or cloned);
+    // everything stays inside the caller's transaction.
+    let processed = 0;
+    const tick = async () => {
+      processed += 1;
+      if (processed % MASTER_DATA_SYNC_BATCH_SIZE === 0) {
+        await onProgress?.({ type: 'tests-processed', processed });
+      }
+    };
+    await onProgress?.({ type: 'phase', phase: 'TESTS' });
 
     // Matched rows that must move OFF a name/code another matched row is
     // moving ONTO (e.g. two tenant tests swapped names) first get a unique
@@ -1729,6 +1755,7 @@ export class LabTestService {
         });
         testIdMap.set(src.id, target.id);
         updated += 1;
+        await tick();
       } else {
         toCreate.push(src);
       }
@@ -1753,6 +1780,10 @@ export class LabTestService {
       });
       testIdMap.set(src.id, cloned.id);
       created += 1;
+      await tick();
+    }
+    if (processed % MASTER_DATA_SYNC_BATCH_SIZE !== 0 || processed === 0) {
+      await onProgress?.({ type: 'tests-processed', processed });
     }
 
     return { testIdMap, created, updated, deleted };

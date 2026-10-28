@@ -8,6 +8,14 @@ import {
 } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from '../lab-test/lab-test.service';
+import { MasterDataSyncProgressListener } from '../lab-test/master-data-sync-progress';
+
+/**
+ * Transaction timeout of the Tenant → Branch Master Data sync (see the note at
+ * its use in `runTenantToBranchSync`). Also bounds how long an import job can
+ * legitimately stay RUNNING without a progress write.
+ */
+export const MASTER_DATA_SYNC_TX_TIMEOUT_MS = 300_000;
 import { CreateLabPanelDto } from './dto/create-lab-panel.dto';
 import { UpdateLabPanelDto } from './dto/update-lab-panel.dto';
 import { ListLabPanelsDto } from './dto/list-lab-panels.dto';
@@ -952,6 +960,7 @@ export class LabPanelService {
     tenantId: string,
     branchId: string,
     actorId: string | null,
+    onProgress?: MasterDataSyncProgressListener,
   ): Promise<{
     tests: { created: number; updated: number; deleted: number };
     panels: { created: number; updated: number; deleted: number };
@@ -969,6 +978,7 @@ export class LabPanelService {
         actorId,
         tenantMd.id,
         branchMd.id,
+        onProgress,
       );
     } catch (e) {
       // A unique violation that slipped past the test sync's pre-flight
@@ -1001,6 +1011,7 @@ export class LabPanelService {
     actorId: string | null,
     tenantMasterDataId: string,
     branchMasterDataId: string,
+    onProgress?: MasterDataSyncProgressListener,
   ) {
     return this.prisma.withTenant(
       tenantId,
@@ -1009,13 +1020,18 @@ export class LabPanelService {
         // import waits here until the first commits, then re-syncs against the
         // committed state instead of racing it into a unique violation.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`master-data-import:${branchId}`}))`;
-        const t = await this.labTestService.syncTestsIntoBranch(tx, {
-          tenantId,
-          branchId,
-          tenantMasterDataId,
-          branchMasterDataId,
-          actorId,
-        });
+        const t = await this.labTestService.syncTestsIntoBranch(
+          tx,
+          {
+            tenantId,
+            branchId,
+            tenantMasterDataId,
+            branchMasterDataId,
+            actorId,
+          },
+          onProgress,
+        );
+        await onProgress?.({ type: 'phase', phase: 'PANELS' });
         const p = await this.syncPanelsIntoBranch(
           tx,
           {
@@ -1026,6 +1042,8 @@ export class LabPanelService {
           },
           t.testIdMap,
         );
+        // Everything is written; the commit happens as this callback returns.
+        await onProgress?.({ type: 'phase', phase: 'SAVING' });
         return {
           tests: { created: t.created, updated: t.updated, deleted: t.deleted },
           panels: {
@@ -1055,7 +1073,7 @@ export class LabPanelService {
       // maxWait 30s (was 15s): under load the pool (20 conns) can take longer
       // than 15s to hand out a connection, failing the import before it starts.
       // Note DATABASE_URL's `pool_timeout=20` still caps the connection wait.
-      { timeout: 300_000, maxWait: 30_000 },
+      { timeout: MASTER_DATA_SYNC_TX_TIMEOUT_MS, maxWait: 30_000 },
     );
   }
 

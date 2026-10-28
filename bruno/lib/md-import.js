@@ -98,12 +98,18 @@ async function deleteBranchTest(bru, id) {
   return ok(r, `delete branch test ${id}`);
 }
 
+/** Every active test of a master data (the list endpoint caps pages at 100). */
 async function listTests(bru, mdVar) {
-  const r = await client(bru, 'tenantToken').get(
-    `/master-data/${bru.getVar(mdVar)}/lab-tests`,
-    { params: { page: 1, limit: 100 } },
-  );
-  return ok(r, `list tests of ${mdVar}`);
+  const all = [];
+  for (let page = 1; ; page++) {
+    const r = await client(bru, 'tenantToken').get(
+      `/master-data/${bru.getVar(mdVar)}/lab-tests`,
+      { params: { page, limit: 100 } },
+    );
+    const rows = ok(r, `list tests of ${mdVar}`);
+    all.push(...rows);
+    if (rows.length < 100) return all;
+  }
 }
 
 /** Active branch tests as [{id, testName, testCode, sourceMasterLabTestId}]. */
@@ -176,6 +182,45 @@ async function runImport(bru) {
   return { status: r.status, body: r.data };
 }
 
+const JOBS = '/master-data/branch/import-from-tenant/jobs';
+
+/** Start a background import job — returns {status, body}, never throws. */
+async function startJob(bru, tokenVar = 'branchToken') {
+  const r = await client(bru, tokenVar).post(JOBS);
+  return { status: r.status, body: r.data };
+}
+
+async function getJob(bru, id) {
+  const r = await client(bru, 'branchToken').get(`${JOBS}/${id}`);
+  return { status: r.status, body: r.data };
+}
+
+async function getActiveJob(bru) {
+  const r = await client(bru, 'branchToken').get(`${JOBS}/active`);
+  return { status: r.status, body: r.data };
+}
+
+/**
+ * Poll a job until it leaves RUNNING. Returns the final job and every distinct
+ * snapshot seen on the way (phase + batch statuses), for progress assertions.
+ */
+async function pollJob(bru, id, { intervalMs = 100, timeoutMs = 120000 } = {}) {
+  const seen = [];
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const r = await getJob(bru, id);
+    if (r.status !== 200) throw new Error(`poll ${id}: HTTP ${r.status}`);
+    const job = r.body.data;
+    const key = `${job.status}|${job.progress.phase}|${job.progress.batches.map((b) => b.status).join(',')}`;
+    if (!seen.length || seen[seen.length - 1].key !== key) {
+      seen.push({ key, status: job.status, phase: job.progress.phase, processed: job.progress.processed });
+    }
+    if (job.status !== 'RUNNING') return { job, seen };
+    if (Date.now() > deadline) throw new Error(`job ${id} still RUNNING after ${timeoutMs}ms`);
+    await new Promise((res) => setTimeout(res, intervalMs));
+  }
+}
+
 function byName(rows) {
   return Object.fromEntries(rows.map((t) => [t.testName, t]));
 }
@@ -202,6 +247,10 @@ module.exports = {
   branchPanels,
   branchPanelDetail,
   runImport,
+  startJob,
+  getJob,
+  getActiveJob,
+  pollJob,
   byName,
   getJson,
   setJson,

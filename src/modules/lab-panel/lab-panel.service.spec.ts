@@ -352,6 +352,28 @@ describe('LabPanelService.syncTenantToBranch', () => {
     expect(lockOrder).toBeLessThan(syncOrder!);
   });
 
+  it('passes the progress listener to the test sync, then reports PANELS and SAVING', async () => {
+    const events: unknown[] = [];
+    const listener = (e: unknown) => {
+      events.push(e);
+    };
+
+    await service.syncTenantToBranch(
+      'tenant-1',
+      'branch-1',
+      'actor-1',
+      listener,
+    );
+
+    const [, , passed] = labTestServiceMock.syncTestsIntoBranch.mock
+      .calls[0] as unknown[];
+    expect(passed).toBe(listener);
+    expect(events).toEqual([
+      { type: 'phase', phase: 'PANELS' },
+      { type: 'phase', phase: 'SAVING' },
+    ]);
+  });
+
   it('maps a unique violation (P2002) to a 409 naming the constraint', async () => {
     labTestServiceMock.syncTestsIntoBranch.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {

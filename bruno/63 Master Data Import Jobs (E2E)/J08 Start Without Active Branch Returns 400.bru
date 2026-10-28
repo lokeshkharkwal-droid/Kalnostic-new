@@ -1,0 +1,21 @@
+meta {
+  name: J08 Start Without Active Branch Returns 400
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tenantToken}}
+}
+
+tests {
+  test("400 — tenant-level token has no active branch", function () {
+    expect(res.status).to.equal(400);
+  });
+}

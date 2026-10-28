@@ -497,6 +497,54 @@ describe('LabTestService.syncTestsIntoBranch', () => {
     expect(prismaMock.labTestResultParam.updateMany).not.toHaveBeenCalled();
   });
 
+  it('reports progress: plan, removal, tests phase, processed count', async () => {
+    const srcA = test({ id: 'src-a', testCode: 'A', testName: 'A' });
+    const srcB = test({ id: 'src-b', testCode: 'B', testName: 'B' });
+    const branchA = test({
+      id: 'branch-a',
+      testCode: 'A',
+      testName: 'A',
+      sourceMasterLabTestId: 'src-a',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([srcA, srcB])
+      .mockResolvedValueOnce([branchA]);
+    const events: unknown[] = [];
+
+    await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+      (e) => {
+        events.push(e);
+      },
+    );
+
+    expect(events).toEqual([
+      { type: 'tests-planned', total: 2, toUpdate: 1, toCreate: 1 },
+      { type: 'phase', phase: 'REMOVING', count: 0 },
+      { type: 'phase', phase: 'TESTS' },
+      { type: 'tests-processed', processed: 2 },
+    ]);
+  });
+
+  it('reports nothing when the pre-flight rejects the import', async () => {
+    const src = test({ id: 'src-1', testCode: 'X', testName: 'Clash' });
+    const handMade = test({ id: 'hand', testCode: 'Y', testName: 'Clash' });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([handMade]);
+    const listener = jest.fn();
+
+    await expect(
+      service.syncTestsIntoBranch(
+        prismaMock as unknown as Prisma.TransactionClient,
+        baseParams,
+        listener,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it('fully overwrites a matched branch test in place (update)', async () => {
     const src = test({ id: 'src-1', testCode: 'T1' });
     const branch = test({

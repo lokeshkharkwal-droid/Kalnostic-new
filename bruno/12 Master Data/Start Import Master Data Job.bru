@@ -1,0 +1,39 @@
+meta {
+  name: Start Import Master Data Job
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setVar("importJobId", data.id);
+}
+
+docs {
+  Starts the branch-admin **Import Master Data** (Tenant → Branch Master Data) as a
+  background job and returns **202** with the job straight away — the dialog then
+  polls `GET .../jobs/{{importJobId}}` once a second.
+
+  Same sync as `POST /master-data/branch/import-from-tenant` (same matching,
+  pre-flight, permissions), and still ONE atomic transaction: tests are reported in
+  batches of 100, but nothing is saved until the whole import commits. A failure at
+  any point rolls everything back.
+
+  Response `data`: `{ id, branchId, status: "RUNNING", progress, result: null,
+  error: null, startedAt, finishedAt, updatedAt }` — see "Get Import Master Data Job".
+
+  **409 `MASTER_DATA_IMPORT_ALREADY_RUNNING`:** an import is already running for
+  this tenant (imports run one at a time). Same branch → attach via
+  "Get Active Import Master Data Job". **400** without an active branch in the JWT.
+  Permissions: as the synchronous import.
+}
