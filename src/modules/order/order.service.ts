@@ -9,6 +9,7 @@ import {
   DoctorType,
   ExternalIdFormat,
   ExternalIdPurpose,
+  Gender,
   InvoicePaymentStatus,
   LabReportStatus,
   MessagingChannel,
@@ -66,6 +67,7 @@ import {
   resolveOrderLocalDateTime,
   classifyOrderDate,
   buildCollectionProgressWhere,
+  COLLECTION_WORKFLOW_ITEM_WHERE,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -221,6 +223,7 @@ import {
   OrderOutsourceCenterNotFoundException,
   OrderPatientNotFoundException,
   OrderPersonNotFoundException,
+  OrderPregnancyRequiresFemalePatientException,
   OrderReferralDoctorNotFoundException,
   OrderReferralPanelNotFoundException,
   NoActiveOrderPrintTemplateException,
@@ -531,7 +534,8 @@ export class OrderService {
     personId: string | null,
     dto: CreateOrderDto,
   ): Promise<OrderWithRelations> {
-    await this.assertPatient(tenantId, dto.patientId);
+    const patientGender = await this.assertPatient(tenantId, dto.patientId);
+    this.assertPregnancyAllowed(dto.isPregnant, dto.patientId, patientGender);
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
     // Referral Panel Settings credit gate (Section 4): block a NEW finalized
@@ -801,6 +805,7 @@ export class OrderService {
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
             isBillGenerated: dto.isBillGenerated ?? true,
+            isPregnant: dto.isPregnant ?? false,
             orderNotes: dto.orderNotes ?? null,
             orderTime: dto.orderTime ?? null,
             billingDetails:
@@ -1155,6 +1160,7 @@ export class OrderService {
       billingType: source.billingType,
       isUrgentBill: source.isUrgentBill,
       isBillGenerated: source.isBillGenerated,
+      isPregnant: source.isPregnant,
       patientId: source.patientId,
       ...(source.orderNotes ? { orderNotes: source.orderNotes } : {}),
       ...(source.billingDetails
@@ -3686,6 +3692,24 @@ export class OrderService {
       // can never drift (bill-only items are excluded there).
       and.push(buildCollectionProgressWhere(query.sampleStatus));
     }
+    if (query.labReportStatus) {
+      // Per-report status (Order Console "Report Status"): the order has at
+      // least one live report currently in this status — the same reports
+      // `deriveReportStatusCounts` counts for the column (bill-only items
+      // excluded, items with no report yet never match). Pushed before the
+      // `reportStatus` candidate scan below so that scan sees the narrowed set.
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            ...COLLECTION_WORKFLOW_ITEM_WHERE,
+            labReports: {
+              some: { deletedAt: null, status: query.labReportStatus },
+            },
+          },
+        },
+      });
+    }
     if (query.reportStatus) {
       // Reuses `deriveReportStatus` — the same function that computes the
       // displayed "Order Status" — instead of re-expressing its rule as a
@@ -5789,6 +5813,19 @@ export class OrderService {
     }
     // Invoice-lock: an invoiced order is immutable — reject any update.
     await this.assertNotInvoiced(tenantId, id, 'update');
+    // Pregnant is per order and FEMALE-only, checked against the patient's
+    // current gender (Create Order re-saves the patient before this PATCH).
+    if (dto.isPregnant === true) {
+      const patientGender = await this.assertPatient(
+        tenantId,
+        current.patientId,
+      );
+      this.assertPregnancyAllowed(
+        dto.isPregnant,
+        current.patientId,
+        patientGender,
+      );
+    }
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
     if (dto.diagnostics) {
@@ -6301,6 +6338,7 @@ export class OrderService {
           billingType: dto.billingType,
           isUrgentBill: dto.isUrgentBill,
           isBillGenerated: dto.isBillGenerated,
+          isPregnant: dto.isPregnant,
           orderNotes: dto.orderNotes,
           orderTime: dto.orderTime,
           // Replace the billing sub-form when provided; leave untouched otherwise.
@@ -7405,18 +7443,40 @@ export class OrderService {
 
   /**
    * Assert the patient exists (active, same tenant).
+   * @returns the patient's gender (`null` when not recorded), for
+   *          {@link assertPregnancyAllowed}
    * @throws OrderPatientNotFoundException if it doesn't resolve
    */
   private async assertPatient(
     tenantId: string,
     patientId: string,
-  ): Promise<void> {
+  ): Promise<Gender | null> {
     const patient = await this.prisma.patient.findFirst({
       where: { id: patientId, tenantId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, gender: true },
     });
     if (!patient) {
       throw new OrderPatientNotFoundException(patientId);
+    }
+    return patient.gender;
+  }
+
+  /**
+   * An order may be flagged pregnant only when its patient is FEMALE. `false` /
+   * omitted is always allowed.
+   * @param isPregnant the requested `isPregnant` value from the DTO
+   * @param patientId the order's patient (for the error context)
+   * @param gender that patient's current gender
+   * @throws OrderPregnancyRequiresFemalePatientException when `isPregnant` is
+   *         `true` and the patient is not FEMALE
+   */
+  private assertPregnancyAllowed(
+    isPregnant: boolean | undefined,
+    patientId: string,
+    gender: Gender | null,
+  ): void {
+    if (isPregnant === true && gender !== Gender.FEMALE) {
+      throw new OrderPregnancyRequiresFemalePatientException(patientId, gender);
     }
   }
 

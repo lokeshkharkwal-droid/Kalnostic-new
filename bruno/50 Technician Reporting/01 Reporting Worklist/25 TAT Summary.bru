@@ -11,8 +11,8 @@ get {
 }
 
 params:query {
-  ~dateFrom: 2026-07-01T00:00:00.000Z
-  ~dateTo: 2026-07-31T23:59:59.999Z
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-07-31
   ~branchId: {{branchId}}
 }
 
@@ -21,11 +21,18 @@ auth:bearer {
 }
 
 docs {
-  TAT analytics (Turnaround Time.pdf §9) over **approved** reports, read from
-  the frozen `LabReport.tat*` snapshot columns (fast — no per-row recompute).
+  TAT analytics (Turnaround Time.pdf §9) over the reports whose **current status
+  is Approved**, read from the frozen `LabReport.tat*` snapshot columns (fast — no
+  per-row recompute). A report that was Published or marked Error Reported is no
+  longer Approved and is not counted, so `total` equals the Approved tab of the
+  worklist (`GET /lab-reports/counts` -> `approved`) for the same filters.
 
-  Query (all optional): `dateFrom`/`dateTo` bound `approvedAt` (ISO 8601);
-  `branchId` overrides the caller's active branch.
+  Query (all optional): the same filters as `GET /lab-reports/counts` — `branchId`
+  (own branch by default, a branch id or `all`), `dateFrom`/`dateTo` (the ORDER's
+  date, whole days, both ends inclusive), `departmentId`, `branchLabTestId`,
+  `branchLabPanelId`, `referredByDoctorId`, `referralPanelId`, `sampleStatus`,
+  `search`, `urgent`, `homeCollection`, ... `status` is ignored (always Approved).
+  The caller's department/permission scope applies, as on the worklist.
 
   Response:
   `{ total, byBand: { WITHIN, WARNING, CRITICAL, BREACHED, UNKNOWN },
@@ -33,7 +40,7 @@ docs {
 
   - `UNKNOWN` = approved but not computable at approval (no active schedule /
     no Max TAT configured).
-  - `avgNetMinutes` = mean net working minutes across approved reports (null if
+  - `avgNetMinutes` = mean net working minutes across the counted reports (null if
     none).
   - `breachRate` = BREACHED / computable (0..1), null when no computable reports.
 }

@@ -6565,6 +6565,11 @@ model Order {
   billingType     BillingType   @map("billing_type")
   isUrgentBill    Boolean       @default(false) @map("is_urgent_bill")
   isBillGenerated Boolean       @default(false) @map("is_bill_generated")
+  // Patient was pregnant at the time of THIS order (Create Order → Patient
+  // Details). Stored per order, not on the patient, so it never leaks into the
+  // patient's past or future orders. Only valid for a FEMALE patient
+  // (enforced in OrderService).
+  isPregnant      Boolean       @default(false) @map("is_pregnant")
   // Classification of `orderDate` vs. the day the order was created/last saved:
   // CURRENT (today), BACKTRACKED (past), or ADVANCE_DATED (future). Derived
   // server-side in OrderService on create + whenever `orderDate` changes, and
@@ -7279,6 +7284,17 @@ model LabReport {
   limitations             String?
   remarks                 String?
   references              String?
+
+  /// The Notes sections the technician LEFT OUT of this report's printed
+  /// version (keys: useful_for, interpretation, limitations, remarks,
+  /// references). Empty (the default for every report) means all five print,
+  /// exactly as before. Only honoured while the matching Technician setting
+  /// (`TechnicianSetting.isLabTestNotesSelectable` for a test report,
+  /// `isLabPanelNotesSelectable` for a report on a panel order line) is on;
+  /// when it is off every section prints. It never changes the content shown on
+  /// screen, only what the printed/shared PDF contains. Cleared when the report
+  /// is returned for a repeat (like the Notes overrides above); kept on re-run.
+  excludedNoteSections String[] @default([]) @map("excluded_note_sections")
 
   status LabReportStatus @default(PENDING)
 
@@ -8779,6 +8795,15 @@ model TechnicianSetting {
   /// `LabTest` master field — Overall Result has no such master value, it is
   /// always sourced from an `OverallResultTemplate` the technician picks.
   isOverallResultEditable Boolean @default(false) @map("is_overall_result_editable")
+
+  /// Whether the technician may choose, per report, which of the 5 Notes
+  /// sections print (a checkbox beside each section on the report). One switch
+  /// for a single lab test, one for a test that belongs to a lab panel. Both ON
+  /// by default. OFF means every Notes section prints, exactly as before (any
+  /// choice already saved on a report is then ignored). The choice itself is
+  /// stored on the report (`LabReport.excludedNoteSections`).
+  isLabTestNotesSelectable  Boolean @default(true) @map("is_lab_test_notes_selectable")
+  isLabPanelNotesSelectable Boolean @default(true) @map("is_lab_panel_notes_selectable")
 
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated

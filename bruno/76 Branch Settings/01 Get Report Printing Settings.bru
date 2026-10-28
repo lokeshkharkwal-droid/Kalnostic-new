@@ -1,0 +1,42 @@
+meta {
+  name: 01 Get Report Printing Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/branch-settings/report-printing
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns both switches as booleans", function () {
+    const d = res.getBody().data;
+    expect(d.isLabTestNotesSelectable).to.be.a("boolean");
+    expect(d.isLabPanelNotesSelectable).to.be.a("boolean");
+  });
+}
+
+docs {
+  The active branch's report-printing settings:
+
+  - `isLabTestNotesSelectable` (default `true`) - the technician may choose, per
+    report, which Notes sections print, for a **single lab test**.
+  - `isLabPanelNotesSelectable` (default `true`) - the same, for a test that
+    **belongs to a lab panel** (ordered as part of a panel).
+
+  OFF means every Notes section prints, as before, and any choice already saved on
+  a report is ignored. A branch that has never saved gets both `true`; this call
+  never creates a row.
+
+  Needs `branch_admin:branch_settings__view_branch_settings` (a Branch Admin holds
+  it by default; lab roles do not - 403). Tenant and branch come from the JWT.
+}

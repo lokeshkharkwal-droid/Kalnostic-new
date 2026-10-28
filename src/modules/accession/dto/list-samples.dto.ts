@@ -32,7 +32,7 @@ export type OrderMode = (typeof ORDER_MODES)[number];
 /**
  * Query parameters for the accession sample listing (`GET /accession/samples`) —
  * the §A.3 filter panel, §A.5 status tabs and §A.4 TAT bar. Extends the shared
- * pagination DTO. `search` matches the accession number, barcode, patient name
+ * pagination DTO. `search` matches the accession number, barcode, order id, patient name
  * (first/middle/last, independently — not a concatenated full-name match),
  * patient UHID (`umId`) or patient mobile number (case-insensitive). `tatStatus`
  * filters by the derived TAT band (translated to a `createdAt` range in the
@@ -41,8 +41,8 @@ export type OrderMode = (typeof ORDER_MODES)[number];
  */
 export class ListSamplesDto extends PaginationQueryDto {
   /**
-   * Case-insensitive match against the accession number, barcode, patient
-   * name, patient UHID, or patient mobile number.
+   * Case-insensitive match against the accession number, barcode, order id
+   * (`orderCode`), patient name, patient UHID, or patient mobile number.
    */
   @IsOptional()
   @IsString()

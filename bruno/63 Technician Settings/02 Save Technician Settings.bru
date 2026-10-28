@@ -57,4 +57,15 @@ docs {
   before TAT Max); `authoritySignatures` 1-3; `signatoryBasis` must be one of
   `department` | `category` | `subCategory`; `tatAdjustmentReasons` a non-empty
   string array (reason options for the "Adjust TAT" audit-log dropdown).
+
+  **Notes printing is NOT saved here.** `isLabTestNotesSelectable` and
+  `isLabPanelNotesSelectable` are owned by the Branch Admin: changing them is
+  `PUT /branch-settings/report-printing` (needs the Branch Settings permission,
+  which lab roles do not hold). Sending either field here is rejected with 400
+  (unknown field).
+
+  Other toggles (`isUsefulForEditable`, `isInterpretationEditable`,
+  `isLimitationsEditable`, `isRemarksEditable`, `isReferencesEditable`,
+  `isOverallResultEditable`) are also accepted; they control whether the
+  technician may EDIT that section, not whether it prints.
 }

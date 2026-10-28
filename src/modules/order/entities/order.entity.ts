@@ -105,14 +105,15 @@ export function deriveRefundStatus(
 
 /**
  * Order-level reporting progress, derived per-test from each item's `LabReport`.
- * Ordered `PENDING < PARTIALLY_COMPLETED < COMPLETED < APPROVED`. This is the
- * "Order Status" the Order Console renders (and can filter by).
+ * Ordered `PENDING < PARTIALLY_COMPLETED < COMPLETED < APPROVED < PUBLISHED`.
+ * This is the "Order Status" the Order Console renders (and can filter by).
  */
 export type OrderReportStatus =
   | 'PENDING'
   | 'PARTIALLY_COMPLETED'
   | 'COMPLETED'
-  | 'APPROVED';
+  | 'APPROVED'
+  | 'PUBLISHED';
 
 /** Report statuses that count a test as having reached "Result Done". */
 const REPORT_DONE_STATUSES: readonly LabReportStatus[] = [
@@ -162,8 +163,10 @@ const REPORT_APPROVED_STATUSES: readonly LabReportStatus[] = [
  * It contributes nothing to `doneCount`, only to the total, mirroring
  * `REPORT_DONE_STATUSES`'s all-or-nothing per-unit rule.
  *
- * - `APPROVED` — every report on the order reached Approved/Published, and
- *   every item has at least one report.
+ * - `PUBLISHED` — every report on the order is Published, and every item has
+ *   at least one report.
+ * - `APPROVED` — every report on the order reached Approved/Published (same
+ *   item-coverage rule), but not all are Published.
  * - `COMPLETED` — every report reached Result Done (same item-coverage rule),
  *   but not all are Approved.
  * - `PARTIALLY_COMPLETED` — at least one report reached Result Done, but not
@@ -208,6 +211,10 @@ export function deriveReportStatus(
   const approvedCount = reports.filter((r) =>
     REPORT_APPROVED_STATUSES.includes(r.status),
   ).length;
+  const publishedCount = reports.filter(
+    (r) => r.status === LabReportStatus.PUBLISHED,
+  ).length;
+  if (publishedCount === totalUnits) return 'PUBLISHED';
   if (approvedCount === totalUnits) return 'APPROVED';
   if (doneCount === totalUnits) return 'COMPLETED';
   if (doneCount >= 1) return 'PARTIALLY_COMPLETED';
