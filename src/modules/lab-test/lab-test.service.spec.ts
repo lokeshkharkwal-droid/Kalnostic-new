@@ -121,6 +121,7 @@ describe('LabTestService.syncTestsIntoBranch', () => {
       source: DataSource.TENANT,
       sourceMasterLabTestId: null,
       versionHistory: [],
+      createdAt: new Date('2026-01-01'),
       ...overrides,
     }) as unknown as LabTest;
 
@@ -143,6 +144,7 @@ describe('LabTestService.syncTestsIntoBranch', () => {
     labTestResultParam: {
       findMany: jest.Mock;
       create: jest.Mock;
+      update: jest.Mock;
       deleteMany: jest.Mock;
       updateMany: jest.Mock;
     };
@@ -186,6 +188,7 @@ describe('LabTestService.syncTestsIntoBranch', () => {
       labTestResultParam: {
         findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
         deleteMany: jest.fn(),
         updateMany: jest.fn(),
       },
@@ -360,6 +363,139 @@ describe('LabTestService.syncTestsIntoBranch', () => {
       expect(updateOrder).toBeLessThan(createOrder!);
     },
   );
+
+  it('parks swapped names on a placeholder so two tenant tests can swap names', async () => {
+    const srcA = test({ id: 'src-a', testCode: 'A', testName: 'Beta' });
+    const srcB = test({ id: 'src-b', testCode: 'B', testName: 'Alpha' });
+    const branchA = test({
+      id: 'branch-a',
+      testCode: 'A',
+      testName: 'Alpha',
+      sourceMasterLabTestId: 'src-a',
+    });
+    const branchB = test({
+      id: 'branch-b',
+      testCode: 'B',
+      testName: 'Beta',
+      sourceMasterLabTestId: 'src-b',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([srcA, srcB])
+      .mockResolvedValueOnce([branchA, branchB]);
+
+    const result = await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(result).toMatchObject({ created: 0, updated: 2, deleted: 0 });
+    const calls = (
+      prismaMock.labTest.update.mock.calls as [
+        { where: { id: string }; data: { testName?: string } },
+      ][]
+    ).map(([args]) => [args.where.id, args.data.testName]);
+    expect(calls).toEqual([
+      ['branch-a', '__import__branch-a'],
+      ['branch-b', '__import__branch-b'],
+      ['branch-a', 'Beta'],
+      ['branch-b', 'Alpha'],
+    ]);
+  });
+
+  it('keeps the oldest of two branch rows linked to the same tenant test and soft-deletes the other', async () => {
+    const src = test({ id: 'src-1', testCode: 'T1', testName: 'T1' });
+    const newer = test({
+      id: 'branch-newer',
+      testCode: 'T1-COPY',
+      testName: 'T1 copy',
+      sourceMasterLabTestId: 'src-1',
+      createdAt: new Date('2026-06-01'),
+    });
+    const older = test({
+      id: 'branch-older',
+      testCode: 'T1-OLD',
+      testName: 'T1 old',
+      sourceMasterLabTestId: 'src-1',
+      createdAt: new Date('2026-01-01'),
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([newer, older]);
+
+    const result = await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(result).toMatchObject({ created: 0, updated: 1, deleted: 1 });
+    expect(result.testIdMap.get('src-1')).toBe('branch-older');
+    const updatedIds = (
+      prismaMock.labTest.update.mock.calls as [{ where: { id: string } }][]
+    ).map(([args]) => args.where.id);
+    expect(updatedIds).toEqual(['branch-newer', 'branch-older']);
+  });
+
+  it('never adopts a hand-created branch test by name — rejects with a 409 before any write', async () => {
+    const src = test({ id: 'src-1', testCode: 'GGT', testName: 'GGT, Serum' });
+    const handMade = test({
+      id: 'branch-hand',
+      testCode: 'MY-GGT',
+      testName: 'GGT, Serum',
+      sourceMasterLabTestId: null,
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([handMade]);
+
+    await expect(
+      service.syncTestsIntoBranch(
+        prismaMock as unknown as Prisma.TransactionClient,
+        baseParams,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { error: { code: 'MASTER_DATA_IMPORT_CONFLICT' } },
+    });
+    expect(prismaMock.labTest.update).not.toHaveBeenCalled();
+    expect(prismaMock.labTest.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps a param whose code changed upstream by matching it on name', async () => {
+    const src = test({ id: 'src-1', testCode: 'T1' });
+    const branch = test({
+      id: 'branch-1',
+      testCode: 'T1',
+      sourceMasterLabTestId: 'src-1',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([src])
+      .mockResolvedValueOnce([branch]);
+    prismaMock.labTestResultParam.findMany
+      .mockResolvedValueOnce([
+        { id: 'old-param', parameterCode: 'HB', parameterName: 'Haemoglobin' },
+      ]) // existing branch params
+      .mockResolvedValueOnce([
+        {
+          id: 'src-param',
+          parameterCode: 'HGB',
+          parameterName: 'haemoglobin ',
+        },
+      ]); // source params
+
+    await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    // Patched in place (same id, new code) — not recreated, not dropped.
+    expect(prismaMock.labTestResultParam.create).not.toHaveBeenCalled();
+    expect(prismaMock.labTestResultParam.update).toHaveBeenCalledTimes(1);
+    const [paramUpdate] = prismaMock.labTestResultParam.update.mock
+      .calls[0] as [{ where: { id: string }; data: { parameterCode: string } }];
+    expect(paramUpdate.where).toEqual({ id: 'old-param' });
+    expect(paramUpdate.data.parameterCode).toBe('HGB');
+    expect(prismaMock.labTestResultParam.updateMany).not.toHaveBeenCalled();
+  });
 
   it('fully overwrites a matched branch test in place (update)', async () => {
     const src = test({ id: 'src-1', testCode: 'T1' });

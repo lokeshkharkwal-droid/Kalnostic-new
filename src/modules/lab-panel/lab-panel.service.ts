@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, LabPanel, LabPanelTest, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
-import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import {
+  ConflictException,
+  ValidationException,
+} from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from '../lab-test/lab-test.service';
 import { CreateLabPanelDto } from './dto/create-lab-panel.dto';
@@ -959,14 +962,58 @@ export class LabPanelService {
       tenantId,
       branchId,
     );
+    try {
+      return await this.runTenantToBranchSync(
+        tenantId,
+        branchId,
+        actorId,
+        tenantMd.id,
+        branchMd.id,
+      );
+    } catch (e) {
+      // A unique violation that slipped past the test sync's pre-flight
+      // (e.g. data changed mid-import) — surface which constraint as a 409
+      // instead of a generic 500. The transaction has already rolled back.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        const rawTarget = (e.meta as { target?: unknown } | undefined)?.target;
+        const target = Array.isArray(rawTarget)
+          ? rawTarget.join(', ')
+          : typeof rawTarget === 'string'
+            ? rawTarget
+            : 'unknown';
+        throw new ConflictException(
+          'MASTER_DATA_IMPORT_CONFLICT',
+          `Import failed: a duplicate value on (${target}) in the branch master data. Nothing was changed.`,
+          { target },
+        );
+      }
+      throw e;
+    }
+  }
+
+  /** The single atomic transaction behind `syncTenantToBranch`. */
+  private runTenantToBranchSync(
+    tenantId: string,
+    branchId: string,
+    actorId: string | null,
+    tenantMasterDataId: string,
+    branchMasterDataId: string,
+  ) {
     return this.prisma.withTenant(
       tenantId,
       async (tx) => {
+        // Serialise imports per branch (double-click, two admins): a second
+        // import waits here until the first commits, then re-syncs against the
+        // committed state instead of racing it into a unique violation.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`master-data-import:${branchId}`}))`;
         const t = await this.labTestService.syncTestsIntoBranch(tx, {
           tenantId,
           branchId,
-          tenantMasterDataId: tenantMd.id,
-          branchMasterDataId: branchMd.id,
+          tenantMasterDataId,
+          branchMasterDataId,
           actorId,
         });
         const p = await this.syncPanelsIntoBranch(
@@ -974,8 +1021,8 @@ export class LabPanelService {
           {
             tenantId,
             branchId,
-            tenantMasterDataId: tenantMd.id,
-            branchMasterDataId: branchMd.id,
+            tenantMasterDataId,
+            branchMasterDataId,
           },
           t.testIdMap,
         );
@@ -1004,7 +1051,11 @@ export class LabPanelService {
       // observed failure point to leave real headroom as the catalogue
       // keeps growing, rather than re-tuning this again at the next size
       // milestone.
-      { timeout: 300_000, maxWait: 15_000 },
+      //
+      // maxWait 30s (was 15s): under load the pool (20 conns) can take longer
+      // than 15s to hand out a connection, failing the import before it starts.
+      // Note DATABASE_URL's `pool_timeout=20` still caps the connection wait.
+      { timeout: 300_000, maxWait: 30_000 },
     );
   }
 
