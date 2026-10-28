@@ -1,14 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
   DayOfWeek,
-  OrderStatus,
   Prisma,
   ScheduleStatus,
   TatBand,
   TatUnit,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   classifyTat,
   evaluateTat,
@@ -713,43 +711,15 @@ export class TatService {
   }
 
   /**
-   * TAT analytics over **approved** reports in a period (SRS §9), read straight
-   * from the frozen snapshot columns (fast — no per-row recompute). Grouped by
-   * band, with the average net working time and the breach rate among
-   * computable reports.
-   * @param tenantId tenant scope
-   * @param branchId active branch (or the explicit `branchId` filter)
-   * @param filters optional `approvedAt` date range + branch override
+   * TAT analytics (SRS §9) over the reports `where` selects, read straight from
+   * the frozen snapshot columns (fast — no per-row recompute). Grouped by band,
+   * with the average net working time and the breach rate among computable
+   * reports. The caller builds `where` (see `LabReportService.getTatSummary`:
+   * the worklist's own filters + branch/department scope, status Approved), so
+   * `total` is the same number the worklist's Approved tab shows.
+   * @param where report selection (tenant, branch/department scope, filters)
    */
-  async summary(
-    tenantId: string,
-    branchId: string | null,
-    filters: { dateFrom?: string; dateTo?: string; branchId?: string },
-  ): Promise<TatSummary> {
-    const resolvedBranch = this.requireBranch(filters.branchId ?? branchId);
-
-    const approvedAt: Prisma.DateTimeNullableFilter = {};
-    if (filters.dateFrom) approvedAt.gte = new Date(filters.dateFrom);
-    if (filters.dateTo) approvedAt.lte = new Date(filters.dateTo);
-    const where: Prisma.LabReportWhereInput = {
-      tenantId,
-      branchId: resolvedBranch,
-      deletedAt: null,
-      approvedAt:
-        filters.dateFrom || filters.dateTo ? approvedAt : { not: null },
-    };
-
-    // B2B Referral Panel isolation: constrain the analytics to the panel's own
-    // reports (nested via orderItem.order), same as the worklist.
-    const panelId = getReferralPanelId();
-    // Cancelled orders are not live work: left out of the analytics.
-    where.orderItem = {
-      order: {
-        status: { not: OrderStatus.CANCELLED },
-        ...(panelId ? { referralPanelId: panelId } : {}),
-      },
-    };
-
+  async summarize(where: Prisma.LabReportWhereInput): Promise<TatSummary> {
     const grouped = await this.prisma.labReport.groupBy({
       by: ['tatBand'],
       where,

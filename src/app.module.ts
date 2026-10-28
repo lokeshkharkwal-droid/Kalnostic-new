@@ -73,6 +73,7 @@ import { AppointmentModule } from './modules/appointment/appointment.module';
 import { AccessionModule } from './modules/accession/accession.module';
 import { AppointmentSettingsModule } from './modules/appointment-settings/appointment-settings.module';
 import { TechnicianSettingsModule } from './modules/technician-settings/technician-settings.module';
+import { BranchSettingsModule } from './modules/branch-settings/branch-settings.module';
 import { DoctorScheduleModule } from './modules/doctor-schedule/doctor-schedule.module';
 import { PhlebotomistScheduleModule } from './modules/phlebotomist-schedule/phlebotomist-schedule.module';
 import { PhlebotomistCollectionModule } from './modules/phlebotomist-collection/phlebotomist-collection.module';
@@ -189,6 +190,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     AppointmentModule,
     AppointmentSettingsModule,
     TechnicianSettingsModule,
+    BranchSettingsModule,
     AccessionModule,
     DoctorScheduleModule,
     PhlebotomistScheduleModule,

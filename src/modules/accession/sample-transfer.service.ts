@@ -26,6 +26,7 @@ import { OrderSampleService } from './accession-sample.service';
 import {
   TransferAction,
   nextTransferStatus,
+  previousTransferStatus,
 } from './constants/transfer-transitions.constant';
 import { TransferDispatchDto } from './dto/transfer-dispatch.dto';
 import { SendSampleDto } from './dto/send-sample.dto';
@@ -99,6 +100,16 @@ interface CenterChangeActor {
   roleKey?: string | null;
   roleLabel?: string | null;
 }
+
+/** Human-readable text for a transfer status, used in the Retrieve history note. */
+const TRANSFER_STATUS_TEXT: Readonly<Record<TransferStatus, string>> = {
+  [TransferStatus.IN_TRANSIT]: 'In Transit',
+  [TransferStatus.PICKED_UP]: 'Picked Up',
+  [TransferStatus.RECEIVED]: 'Received',
+  [TransferStatus.ACCEPTED]: 'Accepted',
+  [TransferStatus.REPEAT]: 'Repeat',
+  [TransferStatus.REJECTED]: 'Rejected',
+};
 
 /** A deadlock or write conflict reported by the database (the request was rolled back). */
 function isDatabaseConflict(e: unknown): boolean {
@@ -343,6 +354,163 @@ export class SampleTransferService {
       skipInvalid,
       dto.rejectionReason,
     );
+  }
+
+  /**
+   * Retrieve (§B.13 undo): move each transfer **back exactly one status step** along
+   * the receiving lifecycle — `ACCEPTED → RECEIVED → PICKED_UP → IN_TRANSIT`, and the
+   * send-backs `REPEAT`/`REJECTED → RECEIVED`. Repeatable until `IN_TRANSIT`, where
+   * there is nothing left to undo and the action is refused (or skipped, in a group).
+   * Each step writes a `retrieve` history row. This changes only `transferStatus`
+   * (and clears the just-undone step's own timestamp for a coherent record) — it does
+   * **not** void the accept-time clone or reverse a sender-side return (deliberately
+   * scoped out; those are the heavy recall path). Mirrors the forward engine's
+   * per-id lock order, optimistic status claim, and `skipInvalid` behaviour.
+   * @throws SampleTransferNotFoundException / TransferWrongBranchException
+   * @throws TransferItemRemovedException / InvalidTransferTransitionException
+   */
+  async retrieveTransfer(
+    transferIds: string[],
+    tenantId: string,
+    personId: string | null,
+    actingBranchId: string | null,
+    _dto: SampleNoteDto,
+    skipInvalid = false,
+  ): Promise<BulkActionResult<SampleTransferWithRelations>> {
+    const skipped: BulkSkippedItem[] = [];
+    let changed: string[];
+    try {
+      changed = await this.prisma.withTenant(tenantId, async (tx) => {
+        // Pre-read id → accession no so a skipped transfer can be named in the result.
+        const accNoById = new Map<string, string | null>();
+        if (skipInvalid) {
+          const metaRows = await tx.sampleTransfer.findMany({
+            where: { id: { in: transferIds }, tenantId, deletedAt: null },
+            select: { id: true, sample: { select: { accessionNo: true } } },
+          });
+          for (const r of metaRows) {
+            accNoById.set(r.id, r.sample?.accessionNo ?? null);
+          }
+        }
+        const done: string[] = [];
+        // Fixed (sorted) id order, like the forward engine, so two overlapping group
+        // actions never deadlock — the second waits on the first instead.
+        for (const id of inLockOrder(transferIds)) {
+          const transfer = await tx.sampleTransfer.findFirst({
+            where: { id, tenantId, deletedAt: null },
+          });
+          if (!transfer) throw new SampleTransferNotFoundException(id);
+          // Only the RECEIVING branch of an INTERNAL transfer may act on it; a group
+          // action must not touch another branch's transfers (always an error).
+          if (
+            transfer.kind === TransferKind.INTERNAL &&
+            transfer.destinationBranchId &&
+            transfer.destinationBranchId !== actingBranchId
+          ) {
+            throw new TransferWrongBranchException(
+              transfer.id,
+              'retrieve',
+              'receiver',
+            );
+          }
+          // A transfer whose test was removed from the order is frozen.
+          if (await isSampleItemRemoved(tx, tenantId, transfer.sampleId)) {
+            const refusal = new TransferItemRemovedException(
+              transfer.id,
+              'retrieve',
+            );
+            if (skipInvalid) {
+              skipped.push({
+                id,
+                accessionNo: accNoById.get(id) ?? null,
+                reason: refusalMessage(refusal),
+                code: refusal.errorCode,
+              });
+              continue;
+            }
+            throw refusal;
+          }
+          const to = previousTransferStatus(transfer.transferStatus);
+          if (!to) {
+            // IN_TRANSIT — nothing for the receiver to undo.
+            if (skipInvalid) {
+              skipped.push({
+                id,
+                accessionNo: accNoById.get(id) ?? null,
+                reason: `Transfer action "retrieve" is not allowed from status ${transfer.transferStatus}`,
+                code: 'INVALID_TRANSFER_TRANSITION',
+              });
+              continue;
+            }
+            throw new InvalidTransferTransitionException(
+              'retrieve',
+              transfer.transferStatus,
+            );
+          }
+          // Clear the just-undone step's own fields so the record stays coherent.
+          const clear: Prisma.SampleTransferUpdateManyMutationInput = {};
+          if (transfer.transferStatus === TransferStatus.PICKED_UP) {
+            clear.pickedUpAt = null;
+            clear.pickedUpBy = null;
+          } else if (transfer.transferStatus === TransferStatus.RECEIVED) {
+            clear.receivedAt = null;
+            clear.receiveCondition = null;
+          } else if (transfer.transferStatus === TransferStatus.ACCEPTED) {
+            clear.acceptedAt = null;
+          }
+          // Conditional on the status we validated: a concurrent action that already
+          // moved the transfer makes this a no-op → refuse instead of overwriting.
+          const updated = await tx.sampleTransfer.updateMany({
+            where: {
+              id: transfer.id,
+              deletedAt: null,
+              transferStatus: transfer.transferStatus,
+            },
+            data: { ...clear, transferStatus: to, updatedBy: personId },
+          });
+          if (updated.count !== 1) {
+            throw new InvalidTransferTransitionException(
+              'retrieve',
+              transfer.transferStatus,
+            );
+          }
+          // Document the step-back on the sample's history timeline (the transfer's
+          // own status change; the sample's status is unchanged by a transfer undo).
+          const sample = await tx.orderSample.findFirst({
+            where: { id: transfer.sampleId, tenantId },
+            select: { id: true, branchId: true, status: true },
+          });
+          if (sample) {
+            await tx.orderSampleStatusHistory.create({
+              data: {
+                tenantId,
+                branchId: sample.branchId,
+                sampleId: sample.id,
+                action: 'retrieve',
+                fromStatus: sample.status,
+                toStatus: sample.status,
+                notes: `Transfer moved back from ${TRANSFER_STATUS_TEXT[transfer.transferStatus]} to ${TRANSFER_STATUS_TEXT[to]} (Retrieve)`,
+                changedBy: personId,
+              },
+            });
+          }
+          done.push(transfer.id);
+        }
+        return done;
+      });
+    } catch (e) {
+      this.rethrowConflict(e);
+      throw e;
+    }
+    const succeeded = await Promise.all(
+      inRequestOrder(changed, transferIds, (x) => x).map((id) =>
+        this.findTransferById(id, tenantId),
+      ),
+    );
+    return {
+      succeeded,
+      skipped: inRequestOrder(skipped, transferIds, (x) => x.id),
+    };
   }
 
   // ── Destination management & manual outsource status ───────────────────────

@@ -120,6 +120,12 @@ export type ListRowTransfer = OrderSampleListRowRaw['transfers'][number] & {
 /** An accession sample list row with its test links + order/patient context. */
 export type OrderSampleListRow = Omit<OrderSampleListRowRaw, 'transfers'> & {
   transfers: ListRowTransfer[];
+  /**
+   * The Discard Method picked when the sample was discarded (the Discarded tab's column).
+   * Not a column on the sample: read from its latest `discard` history entry, only for a
+   * sample that is Discarded right now; absent / null otherwise.
+   */
+  discardMethod?: string | null;
 };
 
 /** A fully-composed accession sample (tests + history + transfers + order). */

@@ -29,4 +29,25 @@ docs {
   Production path: renders report `{{labReportId}}` with the `lab_panel`
   template. Same endpoint as Lab Report — `type: "lab_panel"` only affects
   fallback template resolution when `templateId` is omitted.
+
+  ## Notes sections left out of the print
+
+  The five Notes tags (`{useful_for}`, `{interpretation}`, `{limitations}`,
+  `{remarks}`, `{references}`) are blank for any section the technician left out
+  of THIS report (`PATCH /lab-reports/:id/note-print-sections`). It applies only
+  while the matching Branch Setting (Branch Admin > Branch Settings > Technician Settings > Report Printing) is on (Lab Panel switch for a report on a
+  panel order line, Lab Test switch otherwise, read from the branch that holds the
+  report); while it is off every section prints. A flat template hides the heading
+  and box of a blank section by wrapping the block in `{{#if useful_for}}...{{/if}}`
+  (see docs/PRINT-TEMPLATES.md); a Latte template uses `{if $test->useful_for}`.
+
+  ## Lab panel tags
+
+  `{is_lab_panel}` is `Yes` when the test being printed belongs to a lab panel (its
+  order line was ordered as a panel: each member test of a panel, and an old
+  combined panel report) and empty otherwise; `{lab_panel_name}` and
+  `{lab_panel_code}` give the panel. Use `{{#if is_lab_panel}}...{{/if}}` in the
+  header, body or footer to show a block only for panel tests. A Latte template
+  uses `{if $test->is_lab_panel}...{else}...{/if}` (a real boolean). Nothing is
+  stored: the tags are read from the report's order line when it is printed.
 }

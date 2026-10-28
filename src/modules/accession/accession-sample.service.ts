@@ -1226,7 +1226,10 @@ export class OrderSampleService {
       tenantId,
       data.map((r) => r.id),
     );
-    const named = await this.withTransferNames(tenantId, data);
+    const named = await this.withDiscardMethods(
+      tenantId,
+      await this.withTransferNames(tenantId, data),
+    );
     const items: OrderSampleListItem[] = named.map((row) => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
@@ -1366,7 +1369,10 @@ export class OrderSampleService {
     );
 
     // The destination / center names the "Send details" column shows (one lookup per page).
-    const namedRows = await this.withTransferNames(tenantId, rows);
+    const namedRows = await this.withDiscardMethods(
+      tenantId,
+      await this.withTransferNames(tenantId, rows),
+    );
 
     // Assemble one InHouseOrderGroup per paged order id (order-first).
     const groups: InHouseOrderGroup[] = [];
@@ -4725,6 +4731,12 @@ export class OrderSampleService {
         OR: [
           { accessionNo: { contains: s, mode: 'insensitive' } },
           { barcode: { contains: s, mode: 'insensitive' } },
+          // The Order ID column (`ORD-00717`): finds every sample of that order.
+          {
+            order: {
+              is: { orderCode: { contains: s, mode: 'insensitive' } },
+            },
+          },
           {
             order: {
               is: {
@@ -4877,6 +4889,45 @@ export class OrderSampleService {
           : null,
       })),
     }));
+  }
+
+  /**
+   * Add the Discard Method the Discarded tab shows. The method is stored only as the `reason` of
+   * the `discard` history entry, so one batched lookup per page reads the latest entry of each
+   * sample that is Discarded right now (a sample retrieved and discarded again shows its newest
+   * method). Pages without a Discarded sample cost nothing.
+   */
+  private async withDiscardMethods(
+    tenantId: string,
+    rows: OrderSampleListRow[],
+  ): Promise<OrderSampleListRow[]> {
+    const discardedIds = rows
+      .filter((r) => r.status === SampleStatus.DISCARDED)
+      .map((r) => r.id);
+    if (discardedIds.length === 0) return rows;
+    const history = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.orderSampleStatusHistory.findMany({
+        where: {
+          tenantId,
+          sampleId: { in: discardedIds },
+          action: 'discard',
+          deletedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { sampleId: true, reason: true },
+      }),
+    );
+    const methodBySample = new Map<string, string | null>();
+    for (const h of history) {
+      if (!methodBySample.has(h.sampleId)) {
+        methodBySample.set(h.sampleId, h.reason);
+      }
+    }
+    return rows.map((r) =>
+      r.status === SampleStatus.DISCARDED
+        ? { ...r, discardMethod: methodBySample.get(r.id) ?? null }
+        : r,
+    );
   }
 
   /**

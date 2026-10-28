@@ -1,0 +1,29 @@
+meta {
+  name: 76 Branch Settings
+  seq: 76
+}
+
+docs {
+  # Branch Settings
+
+  Branch Admin › Branch Settings — branch-wide behaviour switches that the Branch
+  Admin owns (not the lab staff who use the Technician screens). Tenant-scoped
+  (RLS) + branch-level: the branch is always the caller's ACTIVE branch from the
+  JWT, never a body field.
+
+  In the app: Branch Admin sidebar > BRANCH SETTINGS > Technician Settings
+  (`/branch-admin/branch-settings/technician-settings`).
+
+  Today it holds **Report Printing**: whether the technician may choose, per
+  report, which Notes sections print (one switch for a single lab test, one for a
+  test that belongs to a lab panel). The values are stored in the branch's
+  `technician_settings` row, which the print code reads.
+
+  Permissions (module `branch_admin`, section "Branch Settings"):
+  - `branch_admin:branch_settings__view_branch_settings` - read
+  - `branch_admin:branch_settings__update_branch_settings` - save
+
+  A Branch Admin holds both by default; lab technician, Registration and Accession
+  roles do not. Business Admin has no active branch, so use a Branch Admin token
+  (`{{businessAccessToken}}` logged in as a Branch Admin).
+}

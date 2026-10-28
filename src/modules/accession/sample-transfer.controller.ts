@@ -38,6 +38,7 @@ import {
   BulkTransferAcceptDto,
   BulkTransferRejectDto,
   BulkTransferRepeatDto,
+  BulkTransferRetrieveDto,
 } from './dto/bulk-transfer-action.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -262,6 +263,26 @@ export class SampleTransferController {
     );
   }
 
+  /** Bulk Retrieve — move each transfer back one status step (§B.13 undo). */
+  @Post('transfers/bulk/retrieve')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.RETRIEVE)
+  @Audit(auditUpdate('Bulk retrieved transfers (moved back one step)'))
+  bulkRetrieve(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Body() dto: BulkTransferRetrieveDto,
+  ) {
+    return this.transfers.retrieveTransfer(
+      dto.ids,
+      tenantId,
+      personId,
+      profile.branchId,
+      dto,
+      dto.skipInvalid,
+    );
+  }
+
   /**
    * Fetch one transfer (with sample + order context). Limited to the branches with
    * a stake in it (404 otherwise); a tenant-wide caller is not limited.
@@ -376,6 +397,28 @@ export class SampleTransferController {
   ) {
     return (
       await this.transfers.reject(
+        [id],
+        tenantId,
+        personId,
+        profile.branchId,
+        dto,
+      )
+    ).succeeded[0];
+  }
+
+  /** Retrieve (§B.13) — move the transfer back one status step. */
+  @Post('transfers/:id/retrieve')
+  @RequireAnyPermission(...ACCESSION_TRANSFER_KEY_GROUPS.RETRIEVE)
+  @Audit(auditUpdate('Retrieved a transfer (moved back one step)'))
+  async retrieve(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Body() dto: SampleNoteDto,
+  ) {
+    return (
+      await this.transfers.retrieveTransfer(
         [id],
         tenantId,
         personId,

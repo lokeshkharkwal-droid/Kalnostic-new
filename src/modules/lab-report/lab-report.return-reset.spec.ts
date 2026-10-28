@@ -139,6 +139,17 @@ describe('LabReportService.resetReportsForReturn', () => {
     });
   });
 
+  it('clears the saved choice of which Notes sections print (all five print again)', async () => {
+    const { service, tx } = build();
+    tx.labReport.findMany.mockResolvedValue([
+      { id: 'r1', status: LabReportStatus.SAVED },
+    ]);
+    await service.resetReportsForReturn(tx as never, 't1', ['r1'], 'u1');
+    expect(firstArg<WithData>(tx.labReport.updateMany).data).toMatchObject({
+      excludedNoteSections: [],
+    });
+  });
+
   it('soft-deletes the technician and automatic notes but never ORDER or SAMPLE notes', async () => {
     const { service, tx } = build();
     tx.labReport.findMany.mockResolvedValue([

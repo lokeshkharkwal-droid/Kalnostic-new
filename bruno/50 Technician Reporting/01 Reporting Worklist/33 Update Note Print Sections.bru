@@ -1,0 +1,64 @@
+meta {
+  name: 33 Update Note Print Sections
+  type: http
+  seq: 33
+}
+
+patch {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/note-print-sections
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "excludedSections": ["limitations", "references"]
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the report's notes-print state", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("enabled");
+    expect(d).to.have.property("isPanelMember");
+    expect(d.excludedSections).to.be.an("array");
+  });
+}
+
+docs {
+  Choose which of the five Notes sections are LEFT OUT of this report's
+  printed version (the checkbox beside each section on the report: checked
+  prints, unchecked is left out).
+
+  Body: `excludedSections` - the FULL list of section keys to leave out; it
+  replaces the stored list. Allowed keys: `useful_for`, `interpretation`,
+  `limitations`, `remarks`, `references` (anything else is a 400; duplicates
+  are a 400). An empty list means all five print (the default for every report).
+  The list is stored on this report only (`lab_reports.excluded_note_sections`).
+
+  It only changes the PRINTED and SHARED PDF (single print, Print All, Share
+  Email / WhatsApp attachment). It never changes what the screen shows.
+
+  It only counts while the matching Branch Setting (Branch Admin > Branch Settings > Technician Settings > Report Printing) is ON: the **Lab Panel**
+  switch (`isLabPanelNotesSelectable`) for a report whose order line is a
+  panel, the **Lab Test** switch (`isLabTestNotesSelectable`) for a single test,
+  read from the branch that HOLDS the report. While the switch is OFF nothing is
+  saved and the current state comes back unchanged (same "silently ignore"
+  convention as `content-sections`); every section then prints.
+
+  Response: `{ enabled, isPanelMember, excludedSections }`. The same object is
+  returned as `notesPrint` by `GET /lab-reports/:id`.
+
+  No permission key by design. The report's write locks still apply: 409
+  `LAB_REPORT_LOCKED` if locked; a sent-out, cancelled-order or removed-test
+  report is refused; 404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
+  The choice is cleared when the report is returned for a repeat, and kept on
+  Re-Run.
+}
