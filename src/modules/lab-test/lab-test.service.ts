@@ -1503,8 +1503,12 @@ export class LabTestService {
    * back to `testCode`, then `testName`, to adopt a legacy or stale-linked
    * branch row — both are unique per master data, so creating alongside one
    * would collide; e.g. a tenant test deleted and re-created under the same
-   * name with a new code). Each branch row is adopted at most once. A matched branch test has its scalars fully overwritten from
-   * the tenant test (version bumped); its samples are rebuilt (full-replace)
+   * name with a new code). Matching is tiered across all tenant tests and
+   * each branch row is adopted at most once. Runs in order: match, delete
+   * orphans, update matched, clone unmatched — so no step trips the
+   * name/code unique indexes on a row a later step would have removed. A
+   * matched branch test has its scalars fully overwritten from the tenant
+   * test (version bumped); its samples are rebuilt (full-replace)
    * but its result params are matched-and-patched by `parameterCode` via
    * `upsertTestChildren`, preserving each matched param's id (and thus any
    * `LabReportResultValue` already saved against it) — see that method's doc.
@@ -1549,20 +1553,61 @@ export class LabTestService {
     const branchTests = await tx.labTest.findMany({
       where: { masterDataId: branchMasterDataId, tenantId, deletedAt: null },
     });
-    const bySource = new Map<string, LabTest>();
-    const byCode = new Map<string, LabTest>();
-    const byName = new Map<string, LabTest>();
-    for (const t of branchTests) {
-      if (t.sourceMasterLabTestId) bySource.set(t.sourceMasterLabTestId, t);
-      byCode.set(t.testCode, t);
-      byName.set(t.testName, t);
-    }
     const sourceIds = new Set(sourceTests.map((t) => t.id));
-    // Branch rows already adopted by a tenant test this run — never adopted
-    // twice, and never treated as orphans (their stale link is being replaced).
+
+    // Match in tiers across ALL tenant tests — every source link first, then
+    // every code, then every name — so a weaker key (e.g. a re-created test's
+    // name) can never claim a branch row that a stronger key of another tenant
+    // test points at, whatever order `sourceTests` comes back in. Each branch
+    // row is adopted at most once.
+    const matches = new Map<string, LabTest>(); // tenant test id → branch row
     const matchedIds = new Set<string>();
-    const unclaimed = (t: LabTest | undefined) =>
-      t && !matchedIds.has(t.id) ? t : undefined;
+    const tiers: [(t: LabTest) => string | null, (s: LabTest) => string][] = [
+      [(t) => t.sourceMasterLabTestId, (s) => s.id],
+      [(t) => t.testCode, (s) => s.testCode],
+      [(t) => t.testName, (s) => s.testName],
+    ];
+    for (const [branchKey, sourceKey] of tiers) {
+      const index = new Map<string, LabTest>();
+      for (const t of branchTests) {
+        const key = branchKey(t);
+        if (key && !matchedIds.has(t.id)) index.set(key, t);
+      }
+      for (const src of sourceTests) {
+        if (matches.has(src.id)) continue;
+        const target = index.get(sourceKey(src));
+        if (target && !matchedIds.has(target.id)) {
+          matches.set(src.id, target);
+          matchedIds.add(target.id);
+        }
+      }
+    }
+
+    // Orphans (branch rows whose tenant source is gone and that weren't
+    // adopted above) are soft-deleted BEFORE any update or create, so one still
+    // holding a name/code can't trip the partial unique indexes when another
+    // test is renamed/re-coded onto it.
+    const orphans = branchTests.filter(
+      (t) =>
+        !matchedIds.has(t.id) &&
+        t.sourceMasterLabTestId !== null &&
+        !sourceIds.has(t.sourceMasterLabTestId),
+    );
+    const now = new Date();
+    let deleted = 0;
+    for (const orphan of orphans) {
+      await this.cascadeDeleteTest(tx, orphan.id, tenantId, now);
+      deleted += 1;
+    }
+    if (orphans.length) {
+      await this.cascadeDeleteBranchLabTestCopies(
+        tx,
+        tenantId,
+        branchId,
+        orphans.map((o) => o.id),
+        now,
+      );
+    }
 
     const testIdMap = new Map<string, string>();
     const tatChanges: {
@@ -1574,12 +1619,8 @@ export class LabTestService {
     let updated = 0;
     const toCreate: LabTest[] = [];
     for (const src of sourceTests) {
-      const target =
-        unclaimed(bySource.get(src.id)) ??
-        unclaimed(byCode.get(src.testCode)) ??
-        unclaimed(byName.get(src.testName));
+      const target = matches.get(src.id);
       if (target) {
-        matchedIds.add(target.id);
         tatChanges.push({
           branchTestId: target.id,
           prev: pickTat(target),
@@ -1633,30 +1674,6 @@ export class LabTestService {
       branchId,
       tatChanges,
     );
-
-    // Orphans are soft-deleted BEFORE the clones are created, so an orphan
-    // still holding a name/code can't trip the partial unique indexes.
-    const orphans = branchTests.filter(
-      (t) =>
-        !matchedIds.has(t.id) &&
-        t.sourceMasterLabTestId !== null &&
-        !sourceIds.has(t.sourceMasterLabTestId),
-    );
-    const now = new Date();
-    let deleted = 0;
-    for (const orphan of orphans) {
-      await this.cascadeDeleteTest(tx, orphan.id, tenantId, now);
-      deleted += 1;
-    }
-    if (orphans.length) {
-      await this.cascadeDeleteBranchLabTestCopies(
-        tx,
-        tenantId,
-        branchId,
-        orphans.map((o) => o.id),
-        now,
-      );
-    }
 
     for (const src of toCreate) {
       const cloned = await this.clonePersistTest(tx, src, {
