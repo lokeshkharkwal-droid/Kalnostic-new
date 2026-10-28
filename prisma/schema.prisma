@@ -6565,6 +6565,11 @@ model Order {
   billingType     BillingType   @map("billing_type")
   isUrgentBill    Boolean       @default(false) @map("is_urgent_bill")
   isBillGenerated Boolean       @default(false) @map("is_bill_generated")
+  // Patient was pregnant at the time of THIS order (Create Order → Patient
+  // Details). Stored per order, not on the patient, so it never leaks into the
+  // patient's past or future orders. Only valid for a FEMALE patient
+  // (enforced in OrderService).
+  isPregnant      Boolean       @default(false) @map("is_pregnant")
   // Classification of `orderDate` vs. the day the order was created/last saved:
   // CURRENT (today), BACKTRACKED (past), or ADVANCE_DATED (future). Derived
   // server-side in OrderService on create + whenever `orderDate` changes, and
