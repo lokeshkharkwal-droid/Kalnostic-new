@@ -11,8 +11,8 @@ get {
 }
 
 params:query {
-  ~dateFrom: 2026-07-01T00:00:00.000Z
-  ~dateTo: 2026-12-31T23:59:59.999Z
+  ~dateFrom: 2026-07-01
+  ~dateTo: 2026-12-31
 }
 
 auth:bearer {
@@ -35,6 +35,8 @@ tests {
 docs {
   **TAT 10 — Branch TAT analytics** over approved reports (SRS §9). Returns
   `{ total, byBand: { WITHIN, WARNING, CRITICAL, BREACHED, UNKNOWN },
-  avgNetMinutes, breachRate }` for the active branch. Includes the report just
-  approved. Optional `dateFrom`/`dateTo` (toggle the `~`) bound `approvedAt`.
+  avgNetMinutes, breachRate }` for the active branch, over reports whose current
+  status is Approved (same set as the worklist's Approved tab). Includes the report
+  just approved. Optional `dateFrom`/`dateTo` (toggle the `~`, `YYYY-MM-DD`) bound
+  the ORDER's date, inclusive.
 }

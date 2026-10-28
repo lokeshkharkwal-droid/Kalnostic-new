@@ -568,6 +568,13 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
       label: 'Machines',
       permissions: ['Add machine', 'Edit machine', 'Delete machine'],
     },
+    {
+      // Branch-wide behaviour switches a Branch Admin owns (not the lab staff): today
+      // the two "choose which Notes sections print" switches. A role with the
+      // `branch_admin` module holds both by default; lab roles do not.
+      label: 'Branch Settings',
+      permissions: ['View branch settings', 'Update branch settings'],
+    },
   ],
 
   finance: [
@@ -1055,6 +1062,9 @@ export const PERMISSION_KEYS = {
   BR_MACHINE_ADD: 'branch_admin:machines__add_machine',
   BR_MACHINE_EDIT: 'branch_admin:machines__edit_machine',
   BR_MACHINE_DELETE: 'branch_admin:machines__delete_machine',
+
+  BR_SETTINGS_VIEW: 'branch_admin:branch_settings__view_branch_settings',
+  BR_SETTINGS_UPDATE: 'branch_admin:branch_settings__update_branch_settings',
 } as const;
 
 /** Laboratory resubmit is allowed from the Rejected OR Error-Reported queue. */
