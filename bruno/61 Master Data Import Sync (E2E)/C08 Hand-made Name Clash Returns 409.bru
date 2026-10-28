@@ -1,0 +1,50 @@
+meta {
+  name: C08 Hand-made Name Clash Returns 409
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const ids = h.getJson(bru, 'tenantIds');
+  bru.setVar('handMadeId', await h.createBranchTest(bru, 'Foxtrot Test', 'FOX-HAND'));
+  ids.F = await h.createTenantTest(bru, 'Foxtrot Test', 'FOX');
+  h.setJson(bru, 'tenantIds', ids);
+  h.setJson(bru, 'before', await h.branchTests(bru));
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+}
+
+tests {
+  test("409 MASTER_DATA_IMPORT_CONFLICT naming the clash", function () {
+    expect(res.status).to.equal(409);
+    expect(res.getBody().error.code).to.equal('MASTER_DATA_IMPORT_CONFLICT');
+    expect(res.getBody().error.message).to.include('name "Foxtrot Test"');
+  });
+  test("nothing changed in the branch", function () {
+    const h = require('./lib/md-import.js');
+    const sort = (rows) => rows.slice().sort((a, b) => a.id.localeCompare(b.id));
+    expect(sort(h.getJson(bru, 'after'))).to.eql(sort(h.getJson(bru, 'before')));
+    const hand = h.getJson(bru, 'after').find((t) => t.id === bru.getVar('handMadeId'));
+    expect(hand.sourceMasterLabTestId).to.equal(null);
+  });
+}
+
+docs {
+  A hand-created branch test (no source link) shares a name with a tenant test. It is never adopted by name; the import is rejected before any write.
+}

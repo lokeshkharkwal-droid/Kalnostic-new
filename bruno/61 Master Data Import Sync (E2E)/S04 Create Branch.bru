@@ -1,0 +1,37 @@
+meta {
+  name: S04 Create Branch
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/branches
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tenantToken}}
+}
+
+body:json {
+  {
+    "name": "Import Branch {{e2eSuffix}}",
+    "shortName": "IMP",
+    "branchType": "DIAGNOSTIC",
+    "phone": "+919800000001",
+    "email": "branch.{{e2eSuffix}}@md-import.test",
+    "addressLine": "1 Test Street",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "pincode": "411038"
+  }
+}
+
+script:post-response {
+  bru.setVar('e2eBranchId', res.getBody().data.id);
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.be.oneOf([200, 201]); });
+}

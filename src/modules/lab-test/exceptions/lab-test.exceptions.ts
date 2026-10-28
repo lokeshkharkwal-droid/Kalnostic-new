@@ -25,6 +25,26 @@ export class LabTestNameConflictException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a Tenant → Branch Master Data import would leave two active branch
+ * tests sharing a name or code (e.g. a hand-created branch test with the same
+ * name as a tenant test, or two tenant tests swapping names). Raised before any
+ * write, so nothing is changed.
+ */
+export class MasterDataImportConflictException extends KaltrosException {
+  constructor(conflicts: { field: 'name' | 'code'; value: string }[]) {
+    const list = conflicts
+      .map((c) => `${c.field === 'name' ? 'name' : 'code'} "${c.value}"`)
+      .join(', ');
+    super(
+      'MASTER_DATA_IMPORT_CONFLICT',
+      `Import would create duplicate branch tests (${list}). Rename or remove the conflicting test and try again.`,
+      { conflicts },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — another active lab test in this master data already uses this code. */
 export class LabTestCodeConflictException extends KaltrosException {
   constructor(testCode: string) {

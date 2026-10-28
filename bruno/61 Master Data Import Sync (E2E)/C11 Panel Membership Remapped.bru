@@ -1,0 +1,53 @@
+meta {
+  name: C11 Panel Membership Remapped
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const ids = h.getJson(bru, 'tenantIds');
+  await h.createTenantPanel(bru, 'Alpha Echo Panel', 'AEP', [ids.A, ids.E]);
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+
+  const panels = await h.branchPanels(bru);
+  const panel = panels.find((p) => p.panelName === 'Alpha Echo Panel');
+  const detail = panel ? await h.branchPanelDetail(bru, panel.id) : null;
+  const members = detail ? (detail.tests || detail.labPanelTests || []) : [];
+  h.setJson(bru, 'panelMembers', members.map((m) => m.labTestId || (m.labTest && m.labTest.id)).sort());
+}
+
+tests {
+  test("201 Created, panel created", function () {
+    expect(res.status).to.equal(201);
+    expect(res.getBody().data.panels.created).to.equal(1);
+  });
+  test("members point at the branch copies of the tenant tests", function () {
+    const h = require('./lib/md-import.js');
+    const ids = h.getJson(bru, 'tenantIds');
+    const rows = h.getJson(bru, 'after');
+    const expected = rows.filter((r) => [ids.A, ids.E].includes(r.sourceMasterLabTestId)).map((r) => r.id).sort();
+    expect(expected.length).to.equal(2);
+    expect(h.getJson(bru, 'panelMembers')).to.eql(expected);
+  });
+}
+
+docs {
+  Tenant panel over Alpha/Echo → the branch panel's members are the branch test ids.
+}

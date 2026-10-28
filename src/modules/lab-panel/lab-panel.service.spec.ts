@@ -292,3 +292,144 @@ describe('LabPanelService.syncPanelsIntoBranch', () => {
     expect(prismaMock.labPanelTest.updateMany).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * `syncTenantToBranch` orchestration: the per-branch advisory lock is taken
+ * first inside the transaction, and a unique violation that slips past the
+ * test sync's pre-flight surfaces as a 409 instead of a generic 500.
+ */
+describe('LabPanelService.syncTenantToBranch', () => {
+  let txMock: { $executeRaw: jest.Mock };
+  let labTestServiceMock: { syncTestsIntoBranch: jest.Mock };
+  let service: LabPanelService;
+
+  beforeEach(() => {
+    txMock = { $executeRaw: jest.fn().mockResolvedValue(1) };
+    const prismaMock = {
+      withTenant: jest.fn(
+        (_tenantId: string, work: (tx: unknown) => Promise<unknown>) =>
+          work(txMock),
+      ),
+    };
+    const masterDataMock = {
+      getOrCreateTenantMasterData: jest.fn().mockResolvedValue({ id: 'tmd' }),
+      getOrCreateBranchMasterData: jest.fn().mockResolvedValue({ id: 'bmd' }),
+    };
+    labTestServiceMock = {
+      syncTestsIntoBranch: jest.fn().mockResolvedValue({
+        testIdMap: new Map(),
+        created: 0,
+        updated: 0,
+        deleted: 0,
+      }),
+    };
+    service = new LabPanelService(
+      prismaMock as unknown as PrismaService,
+      masterDataMock as unknown as MasterDataService,
+      labTestServiceMock as unknown as LabTestService,
+    );
+    jest
+      .spyOn(
+        service as unknown as { syncPanelsIntoBranch: () => Promise<unknown> },
+        'syncPanelsIntoBranch',
+      )
+      .mockResolvedValue({ created: 0, updated: 0, deleted: 0 });
+  });
+
+  it('takes the per-branch advisory lock before syncing tests', async () => {
+    await service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1');
+
+    expect(txMock.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, key] = txMock.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      string,
+    ];
+    expect(strings.join('?')).toContain('pg_advisory_xact_lock');
+    expect(key).toBe('master-data-import:branch-1');
+    const [lockOrder] = txMock.$executeRaw.mock.invocationCallOrder;
+    const [syncOrder] =
+      labTestServiceMock.syncTestsIntoBranch.mock.invocationCallOrder;
+    expect(lockOrder).toBeLessThan(syncOrder!);
+  });
+
+  it('passes the progress listener to the test sync, then reports PANELS and SAVING', async () => {
+    const events: unknown[] = [];
+    const listener = (e: unknown) => {
+      events.push(e);
+    };
+
+    await service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1', {
+      onProgress: listener,
+    });
+
+    const [, , passed] = labTestServiceMock.syncTestsIntoBranch.mock
+      .calls[0] as unknown[];
+    expect(passed).toBe(listener);
+    expect(events).toEqual([
+      { type: 'phase', phase: 'PANELS' },
+      { type: 'phase', phase: 'SAVING' },
+    ]);
+  });
+
+  it('runs beforeCommit inside the transaction, after SAVING, with the result', async () => {
+    const order: string[] = [];
+    const beforeCommit = jest.fn((tx: unknown, result: unknown) => {
+      order.push('beforeCommit');
+      expect(tx).toBe(txMock);
+      expect(result).toEqual({
+        tests: { created: 0, updated: 0, deleted: 0 },
+        panels: { created: 0, updated: 0, deleted: 0 },
+      });
+      return Promise.resolve();
+    });
+
+    await service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1', {
+      onProgress: (e) => {
+        if (e.type === 'phase') order.push(e.phase);
+      },
+      beforeCommit,
+    });
+
+    expect(order).toEqual(['PANELS', 'SAVING', 'beforeCommit']);
+  });
+
+  it('a throwing beforeCommit fails (rolls back) the import', async () => {
+    const boom = new Error('job row write failed');
+    await expect(
+      service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1', {
+        beforeCommit: () => Promise.reject(boom),
+      }),
+    ).rejects.toBe(boom);
+  });
+
+  it('maps a unique violation (P2002) to a 409 naming the constraint', async () => {
+    labTestServiceMock.syncTestsIntoBranch.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { target: ['tenant_id', 'master_data_id', 'test_name'] },
+      }),
+    );
+
+    await expect(
+      service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1'),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        error: {
+          code: 'MASTER_DATA_IMPORT_CONFLICT',
+          message: expect.stringContaining('test_name') as unknown,
+        },
+      },
+    });
+  });
+
+  it('rethrows any other error unchanged', async () => {
+    const boom = new Error('boom');
+    labTestServiceMock.syncTestsIntoBranch.mockRejectedValue(boom);
+
+    await expect(
+      service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1'),
+    ).rejects.toBe(boom);
+  });
+});

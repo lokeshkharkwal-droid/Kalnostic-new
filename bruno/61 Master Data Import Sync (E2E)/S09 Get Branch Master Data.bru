@@ -1,0 +1,23 @@
+meta {
+  name: S09 Get Branch Master Data
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:post-response {
+  bru.setVar('branchMdId', res.getBody().data.id);
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}
