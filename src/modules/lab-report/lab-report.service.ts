@@ -70,8 +70,22 @@ import {
 } from '../pdf-report-template/services/pdf-document.util';
 import { observedValueHtml } from './utils/print-value.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
-import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
+import {
+  DEFAULT_NOTES_PRINT_SWITCHES,
+  NotesPrintSwitches,
+  TechnicianSettingsService,
+} from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateNotePrintSectionsDto } from './dto/update-note-print-sections.dto';
+import {
+  excludedSectionsToApply,
+  NoteSectionKey,
+  normaliseNoteSections,
+  NotesSwitchCache,
+  notesSelectableFor,
+  reportKindOfItem,
+} from './utils/note-sections.util';
+import { labPanelTags } from './utils/lab-panel-tag.util';
 import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
 import { OverallResultTemplateService } from '../overall-result-template/overall-result-template.service';
 import {
@@ -87,6 +101,7 @@ import {
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
   LabReportListRow,
+  LabReportNotesPrint,
   LabReportOverallResult,
   LabReportResultParam,
   LabReportSignatoryCandidate,
@@ -171,7 +186,7 @@ import {
   pickReportSample,
 } from './utils/print-barcode.util';
 import { code128DataUri } from '../../common/utils/barcode-image.util';
-import { TatService } from './tat.service';
+import { TatService, TatSummary } from './tat.service';
 import {
   canWorkAtHolder,
   ruleWhere,
@@ -575,6 +590,9 @@ export class LabReportService {
         limitations: null,
         remarks: null,
         references: null,
+        // The repeat starts a new cycle: every Notes section prints again until
+        // the technician chooses otherwise (like the Notes edits above).
+        excludedNoteSections: [],
         status: LabReportStatus.PENDING,
         savedAt: null,
         savedBy: null,
@@ -2091,6 +2109,41 @@ export class LabReportService {
   }
 
   /**
+   * TAT analytics for the reports the worklist's **Approved** tab counts: the same
+   * filters, branch scope and department scope as `getCounts` (status forced to
+   * Approved), so `total` equals that tab's number. A Published or Error Reported
+   * report is no longer "Approved", so it is not counted here either. Cancelled
+   * orders stay out of the analytics, as before.
+   */
+  async getTatSummary(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    filters: ListLabReportsDto,
+    personId: string,
+  ): Promise<TatSummary> {
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const where = this.buildListWhere(
+      tenantId,
+      scope,
+      { ...filters, status: LabReportStatus.APPROVED },
+      scopeIds,
+    );
+    const existingAnd = where.AND
+      ? Array.isArray(where.AND)
+        ? where.AND
+        : [where.AND]
+      : [];
+    where.AND = [
+      ...existingAnd,
+      { orderItem: { order: { status: { not: OrderStatus.CANCELLED } } } },
+    ];
+    return this.tatService.summarize(where);
+  }
+
+  /**
    * Everything the Reporting Worklist's filter row needs in one call
    * (LABORATORY.docx §3.1) — real tenant/branch-scoped lookups for
    * Branches/Ref By/Panels/Departments, plus the two static lists
@@ -2540,9 +2593,68 @@ export class LabReportService {
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
       contentSections: report.contentSections,
+      notesPrint: await this.resolveNotesPrint(tenantId, report),
       overallResults: report.overallResults,
       resultParams: report.resultParams,
     };
+  }
+
+  /**
+   * Which Notes sections print on a report, and whether the technician may
+   * choose. The setting that applies is the Lab Panel switch for a report on a
+   * panel order line, the Lab Test switch for a single test, read from the branch
+   * that HOLDS the report. While it is off nothing is left out (every section
+   * prints), whatever choice was saved earlier.
+   * @param shared per-print cache of the settings already read, so a Print All
+   *   reads each branch's switches once instead of once per report
+   */
+  private async resolveNotesPrint(
+    tenantId: string,
+    report: {
+      branchId: string | null;
+      excludedNoteSections: string[];
+      orderItem: {
+        branchLabPanelId: string | null;
+        branchLabTestId: string | null;
+      };
+    },
+    shared?: NotesSwitchCache,
+  ): Promise<LabReportNotesPrint> {
+    const kind = reportKindOfItem(report.orderItem);
+    // A free-text line has no Notes, so no setting applies (and none is read).
+    if (kind === 'DIRECT') {
+      return { enabled: false, isPanelMember: false, excludedSections: [] };
+    }
+    const switches = await this.notesSwitchesFor(
+      tenantId,
+      report.branchId,
+      shared,
+    );
+    const enabled = notesSelectableFor(kind, switches);
+    return {
+      enabled,
+      isPanelMember: kind === 'PANEL',
+      excludedSections: [
+        ...excludedSectionsToApply(enabled, report.excludedNoteSections),
+      ],
+    };
+  }
+
+  /** The branch's notes-print switches, read once per print through `shared`. */
+  private notesSwitchesFor(
+    tenantId: string,
+    branchId: string | null,
+    shared?: NotesSwitchCache,
+  ): Promise<NotesPrintSwitches> {
+    if (!branchId) return Promise.resolve({ ...DEFAULT_NOTES_PRINT_SWITCHES });
+    const cached = shared?.get(branchId);
+    if (cached) return cached;
+    const pending = this.technicianSettingsService.getNotesPrintSwitches(
+      tenantId,
+      branchId,
+    );
+    shared?.set(branchId, pending);
+    return pending;
   }
 
   /**
@@ -2668,6 +2780,47 @@ export class LabReportService {
       remarks: updated.remarks,
       references: updated.references,
     });
+  }
+
+  /**
+   * Save which Notes sections to LEAVE OUT of this report's printed version (the
+   * checkbox beside each section on the report). The list replaces the stored one;
+   * a section not in it prints. It never changes what the screen shows, only the
+   * printed and shared PDF.
+   *
+   * Same write rules as editing the notes (a locked, sent-out or cancelled report
+   * is refused), but no permission key. While the matching Technician setting (Lab
+   * Test / Lab Panel) is off, nothing is saved and the current state comes back
+   * unchanged, the same "silently ignore" convention as `updateContentSections`.
+   * @returns the report's resulting notes-print state
+   */
+  async updateNotePrintSections(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: UpdateNotePrintSectionsDto,
+  ): Promise<LabReportNotesPrint> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: report.orderItemId, tenantId },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+    });
+    const item = orderItem ?? { branchLabPanelId: null, branchLabTestId: null };
+
+    const current = await this.resolveNotesPrint(tenantId, {
+      branchId: report.branchId,
+      excludedNoteSections: report.excludedNoteSections,
+      orderItem: item,
+    });
+    if (!current.enabled) return current;
+
+    const excludedNoteSections = normaliseNoteSections(dto.excludedSections);
+    await this.prisma.labReport.update({
+      where: { id: report.id },
+      data: { excludedNoteSections },
+    });
+    return { ...current, excludedSections: excludedNoteSections };
   }
 
   /**
@@ -4057,7 +4210,7 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     allBranches = false,
-    opts: { maskUnfinished?: boolean } = {},
+    opts: { maskUnfinished?: boolean; notesSwitches?: NotesSwitchCache } = {},
   ): Promise<GeneratePdfDto> {
     const report = allBranches
       ? await this.loadReportDetail(id, tenantId, null)
@@ -4349,9 +4502,21 @@ export class LabReportService {
     const results = hideResults
       ? [pendingResultRow(printedTestName)]
       : realResults;
-    // Free-text sections and uploaded files can hold unsigned findings too.
-    const section = (value: string | null | undefined): string =>
-      hideResults ? '' : (value ?? '');
+    // Which Notes sections the technician left out of this report's print (only
+    // while the matching Lab Test / Lab Panel switch is on; otherwise none).
+    const notesPrint = await this.resolveNotesPrint(
+      tenantId,
+      report,
+      opts.notesSwitches,
+    );
+    const leftOut = new Set<string>(notesPrint.excludedSections);
+    // Free-text sections and uploaded files can hold unsigned findings too. A
+    // left-out Notes section prints as empty, so a template that wraps it in an
+    // `{{#if …}}` block (or a Latte `{if}`) drops the heading too.
+    const section = (
+      key: NoteSectionKey,
+      value: string | null | undefined,
+    ): string => (hideResults || leftOut.has(key) ? '' : (value ?? ''));
 
     return {
       variables: {
@@ -4396,15 +4561,23 @@ export class LabReportService {
           : '',
         referral_panel: order.referralPanel?.name ?? '',
         test_name: printedTestName,
+        // Does this test belong to a lab panel: `{is_lab_panel}` ("Yes" or empty,
+        // for `{{#if is_lab_panel}}`) plus `{lab_panel_name}` / `{lab_panel_code}`.
+        // From the order line (`branchLabPanelId`), so a panel's member reports and
+        // an old combined panel report all carry it; a single test does not.
+        ...labPanelTags(report.orderItem),
         report_status: hideResults ? LabReportStatus.PENDING : report.status,
-        useful_for: section(report.contentSections.usefulFor),
-        interpretation: section(report.contentSections.interpretation),
-        limitations: section(report.contentSections.limitations),
+        useful_for: section('useful_for', report.contentSections.usefulFor),
+        interpretation: section(
+          'interpretation',
+          report.contentSections.interpretation,
+        ),
+        limitations: section('limitations', report.contentSections.limitations),
         // Bug fix: `remarks` was fetched into `contentSections` (screen/API
         // already show it) but never assigned into the print `variables` here
         // — `{remarks}` could never resolve in a lab_report template.
-        remarks: section(report.contentSections.remarks),
-        references: section(report.contentSections.references),
+        remarks: section('remarks', report.contentSections.remarks),
+        references: section('references', report.contentSections.references),
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
@@ -4507,6 +4680,7 @@ export class LabReportService {
     type: 'lab_report' | 'lab_panel' = 'lab_report',
     allBranches = false,
     maskUnfinished = false,
+    notesSwitches?: NotesSwitchCache,
   ): Promise<Buffer> {
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
@@ -4522,7 +4696,7 @@ export class LabReportService {
       tenantId,
       branchId,
       wholeOrder,
-      { maskUnfinished },
+      { maskUnfinished, notesSwitches },
     );
     const resolvedTemplateId =
       templateId ??
@@ -4823,6 +4997,7 @@ export class LabReportService {
     };
 
     // Per-report body + dates, reusing the single-report context builder.
+    const notesSwitches: NotesSwitchCache = new Map();
     const contexts = await Promise.all(
       // Each report is rendered through ITS OWN branch (settings, templates);
       // the order-owner branch reads every report on the order.
@@ -4832,7 +5007,7 @@ export class LabReportService {
           tenantId,
           r.branchId ?? branchId,
           allBranches,
-          { maskUnfinished: true },
+          { maskUnfinished: true, notesSwitches },
         ),
       ),
     );
@@ -4848,6 +5023,11 @@ export class LabReportService {
             r.branchId ?? branchId,
             c,
           ),
+          // Does this test belong to a lab panel (`$report->is_lab_panel`, a real
+          // boolean for `{if}`), and which one.
+          is_lab_panel: toText(c?.variables?.is_lab_panel) !== '',
+          lab_panel_name: toText(c?.variables?.lab_panel_name),
+          lab_panel_code: toText(c?.variables?.lab_panel_code),
           sample_collected_date: toText(c?.variables?.sample_collected_date),
           sample_received_date: toText(c?.variables?.sample_received_date),
           report_prepared_on: preparedOn
@@ -4889,6 +5069,12 @@ export class LabReportService {
         // Same reasoning for the append variant — blank at the top level; use
         // `{test_file_attachment_without_header}` inside `{{#each reports}}`.
         test_file_attachment_without_header: '',
+        // Test-scoped too: whether a test belongs to a panel is not a property of the
+        // whole order. Use `{is_lab_panel}` / `{lab_panel_name}` / `{lab_panel_code}`
+        // (and `{{#if is_lab_panel}}`) inside `{{#each reports}}`.
+        is_lab_panel: '',
+        lab_panel_name: '',
+        lab_panel_code: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -4897,6 +5083,9 @@ export class LabReportService {
           const rows = contexts[idx]?.sections?.results ?? [];
           return {
             test_name: toText(v.test_name),
+            is_lab_panel: toText(v.is_lab_panel),
+            lab_panel_name: toText(v.lab_panel_name),
+            lab_panel_code: toText(v.lab_panel_code),
             report_status: toText(v.report_status),
             sample_collected_date: rep.sample_collected_date,
             sample_received_date: rep.sample_received_date,
@@ -5031,6 +5220,10 @@ export class LabReportService {
     }));
     const test = {
       test_name: toText(v.test_name),
+      // A real boolean so `{if $test->is_lab_panel}` branches; name/code are text.
+      is_lab_panel: toText(v.is_lab_panel) !== '',
+      lab_panel_name: toText(v.lab_panel_name),
+      lab_panel_code: toText(v.lab_panel_code),
       sample_type: toText(v.sample_type),
       sample_note: toText(v.sample_note),
       useful_for: toText(v.useful_for),
@@ -5228,7 +5421,9 @@ export class LabReportService {
     }
 
     // A report this caller cannot read is skipped, not allowed to fail the whole
-    // document; unfinished ones print as "Result pending".
+    // document; unfinished ones print as "Result pending". The Notes-print
+    // switches are read once per branch for the whole document.
+    const notesSwitches: NotesSwitchCache = new Map();
     const rendered = await Promise.all(
       reportRows.map(async (r) => {
         try {
@@ -5240,6 +5435,7 @@ export class LabReportService {
             'lab_report',
             allBranches,
             true,
+            notesSwitches,
           );
         } catch (e) {
           if (e instanceof LabReportNotFoundException) return null;

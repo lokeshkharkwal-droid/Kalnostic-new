@@ -128,10 +128,11 @@ ${PATIENT_LINE}
 <div>Test: <b>{test_name}</b> &nbsp; Status: {report_status}</div>
 <table><thead><tr><th>Result</th><th>Abnormal?</th><th>Result 2</th><th>Abnormal 2?</th><th>Unit</th><th>Method</th><th>Reference</th></tr></thead>
 <tbody>{{#each results}}<tr><td>{observed1}</td><td>{is_observed_1_abnormal}</td><td>{observed2}</td><td>{is_observed_2_abnormal}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</tbody></table>
-<div class="muted">Useful For: {useful_for}</div>
-<div class="muted">Interpretation: {interpretation}</div>
-<div class="muted">Limitations: {limitations}</div>
-<div class="muted">References: {references}</div>`,
+{{#if useful_for}}<div class="muted">Useful For: {useful_for}</div>{{/if}}
+{{#if interpretation}}<div class="muted">Interpretation: {interpretation}</div>{{/if}}
+{{#if limitations}}<div class="muted">Limitations: {limitations}</div>{{/if}}
+{{#if remarks}}<div class="muted">Remarks: {remarks}</div>{{/if}}
+{{#if references}}<div class="muted">References: {references}</div>{{/if}}`,
       '<signing_authority_tag><div style="display:inline-block;margin-right:24px"><b>{name}</b><div class="muted">{designation}</div></div></signing_authority_tag>',
     ),
   },
@@ -145,7 +146,7 @@ ${PATIENT_LINE}
 <div>Panel: <b>{test_name}</b> &nbsp; Status: {report_status}</div>
 <table><thead><tr><th>Result</th><th>Abnormal?</th><th>Result 2</th><th>Abnormal 2?</th><th>Unit</th><th>Method</th><th>Reference</th></tr></thead>
 <tbody>{{#each results}}<tr><td>{observed1}</td><td>{is_observed_1_abnormal}</td><td>{observed2}</td><td>{is_observed_2_abnormal}</td><td>{unit}</td><td>{methodology}</td><td>{reference_display}</td></tr>{{/each}}</tbody></table>
-<div class="muted">Interpretation: {interpretation}</div>`,
+{{#if interpretation}}<div class="muted">Interpretation: {interpretation}</div>{{/if}}`,
       '<signing_authority_tag><div style="display:inline-block;margin-right:24px"><b>{name}</b><div class="muted">{designation}</div></div></signing_authority_tag>',
     ),
   },

@@ -13,6 +13,7 @@ import {
   SampleStatus,
   TatBand,
 } from '@prisma/client';
+import type { NoteSectionKey } from '../utils/note-sections.util';
 
 /**
  * Compact Analytical-TAT figure attached to each worklist row (SRS §6.2/§8).
@@ -73,6 +74,22 @@ export interface LabReportContentSections {
   limitations: string | null;
   remarks: string | null;
   references: string | null;
+}
+
+/**
+ * Which Notes sections print on this report, as the Test Entry / Report View
+ * screens need to show it. Resolved on the server so the screen never has to
+ * work out which Branch Setting applies (the Lab Panel switch for a report on
+ * a panel order line, the Lab Test switch otherwise, read from the branch that
+ * HOLDS the report).
+ */
+export interface LabReportNotesPrint {
+  /** The matching Technician setting is on: the checkboxes show and the choice is honoured. */
+  enabled: boolean;
+  /** The report belongs to a lab panel order line (not a single test). */
+  isPanelMember: boolean;
+  /** Section keys left out of the printed report (empty = all print). */
+  excludedSections: NoteSectionKey[];
 }
 
 /**
@@ -183,6 +200,8 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
       LabReportDetail['resultValues'][number] & { analyzerName?: string | null }
     >;
     contentSections: LabReportContentSections;
+    /** Which Notes sections print, and whether the technician may choose. */
+    notesPrint: LabReportNotesPrint;
     overallResults: LabReportOverallResult[];
     resultParams: LabReportResultParam[];
   };

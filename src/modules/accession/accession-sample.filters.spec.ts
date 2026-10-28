@@ -121,6 +121,23 @@ describe('OrderSampleService — referral / outsource / transfer-date filters', 
     },
   );
 
+  it('search matches the accession number, barcode AND the order id (orderCode), plus the patient fields', async () => {
+    const w = await whereFor({ search: 'ord-007' });
+    const or = (andOf(w).find((c) => 'OR' in c) as { OR: unknown[] }).OR;
+    expect(or).toContainEqual({
+      accessionNo: { contains: 'ord-007', mode: 'insensitive' },
+    });
+    expect(or).toContainEqual({
+      barcode: { contains: 'ord-007', mode: 'insensitive' },
+    });
+    expect(or).toContainEqual({
+      order: {
+        is: { orderCode: { contains: 'ord-007', mode: 'insensitive' } },
+      },
+    });
+    expect(JSON.stringify(or)).toContain('umId');
+  });
+
   it('combines several filters with AND without clobbering each other', async () => {
     const w = await whereFor({
       search: 'ram',
