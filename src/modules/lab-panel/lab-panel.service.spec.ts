@@ -358,12 +358,9 @@ describe('LabPanelService.syncTenantToBranch', () => {
       events.push(e);
     };
 
-    await service.syncTenantToBranch(
-      'tenant-1',
-      'branch-1',
-      'actor-1',
-      listener,
-    );
+    await service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1', {
+      onProgress: listener,
+    });
 
     const [, , passed] = labTestServiceMock.syncTestsIntoBranch.mock
       .calls[0] as unknown[];
@@ -372,6 +369,37 @@ describe('LabPanelService.syncTenantToBranch', () => {
       { type: 'phase', phase: 'PANELS' },
       { type: 'phase', phase: 'SAVING' },
     ]);
+  });
+
+  it('runs beforeCommit inside the transaction, after SAVING, with the result', async () => {
+    const order: string[] = [];
+    const beforeCommit = jest.fn((tx: unknown, result: unknown) => {
+      order.push('beforeCommit');
+      expect(tx).toBe(txMock);
+      expect(result).toEqual({
+        tests: { created: 0, updated: 0, deleted: 0 },
+        panels: { created: 0, updated: 0, deleted: 0 },
+      });
+      return Promise.resolve();
+    });
+
+    await service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1', {
+      onProgress: (e) => {
+        if (e.type === 'phase') order.push(e.phase);
+      },
+      beforeCommit,
+    });
+
+    expect(order).toEqual(['PANELS', 'SAVING', 'beforeCommit']);
+  });
+
+  it('a throwing beforeCommit fails (rolls back) the import', async () => {
+    const boom = new Error('job row write failed');
+    await expect(
+      service.syncTenantToBranch('tenant-1', 'branch-1', 'actor-1', {
+        beforeCommit: () => Promise.reject(boom),
+      }),
+    ).rejects.toBe(boom);
   });
 
   it('maps a unique violation (P2002) to a 409 naming the constraint', async () => {

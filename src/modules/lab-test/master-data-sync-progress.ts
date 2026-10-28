@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 /**
  * Progress events emitted by the Tenant → Branch Master Data sync
  * (`LabTestService.syncTestsIntoBranch` + `LabPanelService.syncTenantToBranch`).
@@ -31,3 +33,23 @@ export type MasterDataSyncProgressEvent =
 export type MasterDataSyncProgressListener = (
   event: MasterDataSyncProgressEvent,
 ) => Promise<void> | void;
+
+/** Counts returned by the Tenant → Branch Master Data sync. */
+export interface MasterDataSyncResult {
+  tests: { created: number; updated: number; deleted: number };
+  panels: { created: number; updated: number; deleted: number };
+}
+
+/** Optional hooks into `LabPanelService.syncTenantToBranch`. */
+export interface MasterDataSyncHooks {
+  onProgress?: MasterDataSyncProgressListener;
+  /**
+   * Runs INSIDE the sync transaction after every write, just before commit —
+   * anything it writes through `tx` commits (or rolls back) together with the
+   * import. A throw rolls the whole import back.
+   */
+  beforeCommit?: (
+    tx: Prisma.TransactionClient,
+    result: MasterDataSyncResult,
+  ) => Promise<void>;
+}

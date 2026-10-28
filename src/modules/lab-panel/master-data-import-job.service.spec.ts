@@ -1,7 +1,10 @@
 import { MasterDataImportJobStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MasterDataImportConflictException } from '../lab-test/exceptions/lab-test.exceptions';
-import { MasterDataSyncProgressListener } from '../lab-test/master-data-sync-progress';
+import {
+  MasterDataSyncHooks,
+  MasterDataSyncProgressEvent,
+} from '../lab-test/master-data-sync-progress';
 import { LabPanelService } from './lab-panel.service';
 import {
   MASTER_DATA_IMPORT_STALE_MS,
@@ -120,6 +123,18 @@ describe('toJobError', () => {
     expect(err.message).toContain('at batch 2 of 3');
   });
 
+  it('reports "could not start a transaction" (pool busy) as DB busy, not a 5-minute timeout', () => {
+    const err = toJobError(
+      new Prisma.PrismaClientKnownRequestError(
+        'Transaction API error: Unable to start a transaction in the given time.',
+        { code: 'P2028', clientVersion: 'test' },
+      ),
+      fresh(),
+    );
+    expect(err.code).toBe('MASTER_DATA_IMPORT_DB_BUSY');
+    expect(err.message).not.toContain('took longer than');
+  });
+
   it('hides unexpected errors behind a generic message', () => {
     const err = toJobError(new Error('socket hang up'), midTests());
     expect(err.code).toBe('MASTER_DATA_IMPORT_FAILED');
@@ -157,6 +172,7 @@ describe('MasterDataImportJobService', () => {
     runWithTenant: jest.Mock;
   };
   let sync: jest.Mock;
+  let tx: { masterDataImportJob: { update: jest.Mock } };
   let service: MasterDataImportJobService;
   /** `run` is private — exercised directly so the test can await it. */
   let run: (
@@ -179,6 +195,7 @@ describe('MasterDataImportJobService', () => {
       runWithTenant: jest.fn((_t: string, work: () => unknown) => work()),
     };
     sync = jest.fn();
+    tx = { masterDataImportJob: { update: jest.fn().mockResolvedValue({}) } };
     service = new MasterDataImportJobService(
       prisma as unknown as PrismaService,
       { syncTenantToBranch: sync } as unknown as LabPanelService,
@@ -186,19 +203,49 @@ describe('MasterDataImportJobService', () => {
     run = (service as unknown as { run: typeof run }).run.bind(service);
   });
 
-  const lastUpdate = () =>
+  type Data = {
+    status?: string;
+    progress: MasterDataImportProgress;
+    result?: unknown;
+    error?: { code: string; batch?: number };
+  };
+  type Where = { id: string; status?: string };
+  /** Outside-the-transaction writes (progress + failure), in order. */
+  const outsideWrites = () =>
     (
-      prisma.masterDataImportJob.update.mock.calls.at(-1) as [
-        {
-          data: {
-            status?: string;
-            progress: MasterDataImportProgress;
-            result?: unknown;
-            error?: { code: string };
-          };
-        },
-      ]
-    )[0].data;
+      prisma.masterDataImportJob.updateMany.mock.calls as [
+        { where: Where; data: Data },
+      ][]
+    ).map(([x]) => x);
+  const result = {
+    tests: { created: 0, updated: 150, deleted: 0 },
+    panels: { created: 1, updated: 0, deleted: 0 },
+  };
+  /** A sync double that emits `events`, then commits via `beforeCommit` (unless `fail`). */
+  const fakeSync =
+    (
+      events: MasterDataSyncProgressEvent[],
+      fail?: { at: 'before' | 'after'; error: unknown },
+    ) =>
+    async (_t: string, _b: string, _a: string, hooks: MasterDataSyncHooks) => {
+      for (const e of events) await hooks.onProgress?.(e);
+      if (fail?.at === 'before') throw fail.error;
+      await hooks.beforeCommit?.(
+        tx as unknown as Prisma.TransactionClient,
+        result,
+      );
+      if (fail?.at === 'after') throw fail.error; // commit ok, but its ack lost
+      return result;
+    };
+  const planned150: MasterDataSyncProgressEvent[] = [
+    { type: 'tests-planned', total: 150, toUpdate: 150, toCreate: 0 },
+    { type: 'phase', phase: 'REMOVING', count: 0 },
+    { type: 'phase', phase: 'TESTS' },
+    { type: 'tests-processed', processed: 100 },
+    { type: 'tests-processed', processed: 150 },
+    { type: 'phase', phase: 'PANELS' },
+    { type: 'phase', phase: 'SAVING' },
+  ];
 
   it('start() creates a RUNNING job and returns it without waiting for the sync', async () => {
     sync.mockReturnValue(new Promise(() => undefined)); // never settles
@@ -213,7 +260,10 @@ describe('MasterDataImportJobService', () => {
         }) as unknown,
       }),
     );
-    expect(sync).toHaveBeenCalledWith('t1', 'b1', 'p1', expect.any(Function));
+    expect(sync).toHaveBeenCalledWith('t1', 'b1', 'p1', {
+      onProgress: expect.any(Function) as unknown,
+      beforeCommit: expect.any(Function) as unknown,
+    });
   });
 
   it.each([
@@ -245,111 +295,120 @@ describe('MasterDataImportJobService', () => {
     },
   );
 
-  it('run() writes progress per batch and records the result', async () => {
-    sync.mockImplementation(
-      async (
-        _t: string,
-        _b: string,
-        _a: string,
-        onProgress: MasterDataSyncProgressListener,
-      ) => {
-        await onProgress({
-          type: 'tests-planned',
-          total: 150,
-          toUpdate: 150,
-          toCreate: 0,
-        });
-        await onProgress({ type: 'phase', phase: 'REMOVING', count: 0 });
-        await onProgress({ type: 'phase', phase: 'TESTS' });
-        await onProgress({ type: 'tests-processed', processed: 100 });
-        await onProgress({ type: 'tests-processed', processed: 150 });
-        await onProgress({ type: 'phase', phase: 'PANELS' });
-        await onProgress({ type: 'phase', phase: 'SAVING' });
-        return {
-          tests: { created: 0, updated: 150, deleted: 0 },
-          panels: { created: 1, updated: 0, deleted: 0 },
-        };
-      },
-    );
+  it('run() writes SUCCEEDED + result INSIDE the sync transaction', async () => {
+    sync.mockImplementation(fakeSync(planned150));
 
     await run('job-1', 't1', 'b1', 'p1');
 
-    // 7 progress writes + the final one, all tenant-scoped (outside the sync tx).
-    expect(prisma.masterDataImportJob.update).toHaveBeenCalledTimes(8);
-    expect(prisma.runWithTenant).toHaveBeenCalledTimes(8);
-    const mid = (
-      prisma.masterDataImportJob.update.mock.calls[3] as [
-        { data: { progress: MasterDataImportProgress } },
-      ]
-    )[0].data.progress;
-    expect(mid.batches.map((b) => b.status)).toEqual(['completed', 'running']);
-    const final = lastUpdate();
-    expect(final.status).toBe('SUCCEEDED');
-    expect(final.result).toEqual({
-      tests: { created: 0, updated: 150, deleted: 0 },
-      panels: { created: 1, updated: 0, deleted: 0 },
-    });
-    expect(final.progress.phase).toBe('DONE');
+    const [[final]] = tx.masterDataImportJob.update.mock.calls as [
+      [{ where: Where; data: Data }],
+    ];
+    expect(final.where).toEqual({ id: 'job-1' });
+    expect(final.data.status).toBe('SUCCEEDED');
+    expect(final.data.result).toEqual(result);
+    expect(final.data.progress.phase).toBe('DONE');
+    expect(final.data.progress.batches.map((b) => b.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+    // Nothing outside the transaction claims the outcome.
+    expect(outsideWrites().some((w) => w.data.status)).toBe(false);
   });
 
-  it('run() marks a failed import FAILED with the failing batch, earlier ones rolled back', async () => {
+  it('run() progress writes are tenant-scoped, ordered, and only apply while RUNNING', async () => {
+    sync.mockImplementation(fakeSync(planned150));
+
+    await run('job-1', 't1', 'b1', 'p1');
+
+    const writes = outsideWrites();
+    expect(writes).toHaveLength(planned150.length);
+    expect(prisma.runWithTenant).toHaveBeenCalledTimes(planned150.length);
+    for (const w of writes)
+      expect(w.where).toEqual({ id: 'job-1', status: 'RUNNING' });
+    expect(writes[3]!.data.progress.batches.map((b) => b.status)).toEqual([
+      'completed',
+      'running',
+    ]);
+    expect(writes.at(-1)!.data.progress.phase).toBe('SAVING');
+  });
+
+  it('run() never makes the sync wait for a progress write', async () => {
+    let release!: () => void;
+    prisma.masterDataImportJob.updateMany.mockImplementationOnce(
+      () => new Promise((res) => (release = () => res({ count: 1 }))),
+    );
+    sync.mockImplementation(fakeSync(planned150));
+
+    const done = run('job-1', 't1', 'b1', 'p1');
+    // The sync got all the way to its commit while the first write still hangs.
+    await new Promise((r) => setImmediate(r));
+    expect(tx.masterDataImportJob.update).toHaveBeenCalled();
+    release();
+    await done;
+  });
+
+  it('run() marks a failed import FAILED (only if still RUNNING), failing batch + rolled-back ones', async () => {
     sync.mockImplementation(
-      async (
-        _t: string,
-        _b: string,
-        _a: string,
-        onProgress: MasterDataSyncProgressListener,
-      ) => {
-        await onProgress({
-          type: 'tests-planned',
-          total: 250,
-          toUpdate: 250,
-          toCreate: 0,
-        });
-        await onProgress({ type: 'phase', phase: 'TESTS' });
-        await onProgress({ type: 'tests-processed', processed: 100 });
-        throw new Error('boom');
-      },
+      fakeSync(
+        [
+          { type: 'tests-planned', total: 250, toUpdate: 250, toCreate: 0 },
+          { type: 'phase', phase: 'TESTS' },
+          { type: 'tests-processed', processed: 100 },
+        ],
+        { at: 'before', error: new Error('boom') },
+      ),
     );
 
     await run('job-1', 't1', 'b1', 'p1');
 
-    const final = lastUpdate();
-    expect(final.status).toBe('FAILED');
-    expect(final.error).toMatchObject({
+    expect(tx.masterDataImportJob.update).not.toHaveBeenCalled();
+    const final = outsideWrites().at(-1)!;
+    expect(final.where).toEqual({ id: 'job-1', status: 'RUNNING' });
+    expect(final.data.status).toBe('FAILED');
+    expect(final.data.error).toMatchObject({
       code: 'MASTER_DATA_IMPORT_FAILED',
       batch: 2,
     });
-    expect(final.progress.batches.map((b) => b.status)).toEqual([
+    expect(final.data.progress.batches.map((b) => b.status)).toEqual([
       'rolled_back',
       'failed',
       'pending',
     ]);
-    expect(final.progress.phase).toBe('FAILED');
+    expect(final.data.progress.phase).toBe('FAILED');
   });
 
-  it('run() keeps going when a progress write fails', async () => {
-    prisma.masterDataImportJob.update
-      .mockRejectedValueOnce(new Error('db blip'))
-      .mockResolvedValue(job());
+  it('run(): if the commit succeeded but its acknowledgement was lost, the FAILED write cannot overwrite SUCCEEDED', async () => {
     sync.mockImplementation(
-      async (
-        _t: string,
-        _b: string,
-        _a: string,
-        onProgress: MasterDataSyncProgressListener,
-      ) => {
-        await onProgress({ type: 'phase', phase: 'PANELS' });
-        return {
-          tests: { created: 0, updated: 0, deleted: 0 },
-          panels: { created: 0, updated: 0, deleted: 0 },
-        };
-      },
+      fakeSync(planned150, {
+        at: 'after',
+        error: new Error('connection reset'),
+      }),
+    );
+    // Once the in-transaction SUCCEEDED write committed, the row is no longer RUNNING.
+    prisma.masterDataImportJob.updateMany.mockImplementation(
+      ({ where, data }: { where: Where; data: Data }) =>
+        Promise.resolve({
+          count: where.status === 'RUNNING' && data.status ? 0 : 1,
+        }),
     );
 
     await run('job-1', 't1', 'b1', 'p1');
 
-    expect(lastUpdate().status).toBe('SUCCEEDED');
+    expect(tx.masterDataImportJob.update).toHaveBeenCalled();
+    const failed = outsideWrites().find((w) => w.data.status === 'FAILED')!;
+    expect(failed.where.status).toBe('RUNNING'); // conditional → no-op on the SUCCEEDED row
+  });
+
+  it('run() keeps going when a progress write fails', async () => {
+    prisma.masterDataImportJob.updateMany
+      .mockRejectedValueOnce(new Error('db blip'))
+      .mockResolvedValue({ count: 1 });
+    sync.mockImplementation(fakeSync(planned150));
+
+    await run('job-1', 't1', 'b1', 'p1');
+
+    expect(tx.masterDataImportJob.update).toHaveBeenCalled();
+    expect(outsideWrites()).toHaveLength(planned150.length);
   });
 
   it('get() reports a RUNNING job with no progress write for too long as INTERRUPTED', async () => {
@@ -425,7 +484,8 @@ describe('MasterDataImportJobService', () => {
     const [[arg]] = prisma.masterDataImportJob.create.mock.calls as [
       [{ data: { runner: string } }],
     ];
-    expect(arg.data.runner).toMatch(/#/);
+    // host # pm2 app name # pm2 instance
+    expect(arg.data.runner.split('#')).toHaveLength(3);
   });
 
   it('getActive() returns null when nothing runs', async () => {

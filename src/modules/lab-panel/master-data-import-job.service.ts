@@ -98,8 +98,12 @@ export const MASTER_DATA_IMPORT_STALE_MS =
 
 const NO_CHANGES = 'No changes were saved.';
 
-/** This backend process's slot (host + pm2 instance), stored on its jobs. */
-const RUNNER = `${hostname()}#${process.env.NODE_APP_INSTANCE ?? '0'}`;
+/**
+ * This backend process's slot — host + pm2 app name + pm2 instance — stored
+ * on its jobs. The app name keeps another app on the same host (e.g. the
+ * `kalnostics-dev` pm2 app, same .env) from sweeping this app's jobs.
+ */
+const RUNNER = `${hostname()}#${process.env.name ?? 'node'}#${process.env.NODE_APP_INSTANCE ?? '0'}`;
 
 /**
  * Runs "Import Master Data" (Tenant → Branch Master Data) as a background job so
@@ -224,7 +228,19 @@ export class MasterDataImportJobService implements OnApplicationBootstrap {
       : null;
   }
 
-  /** The background run: drives the sync and records its progress/outcome. */
+  /**
+   * The background run: drives the sync and records its progress/outcome.
+   *
+   * - SUCCEEDED + result are written INSIDE the sync transaction
+   *   (`beforeCommit`), so the job can never claim success for a rolled-back
+   *   import, nor report "nothing saved" for one that committed.
+   * - Progress writes go through their own short tenant-scoped transactions
+   *   and are NOT awaited by the sync (a busy pool can't slow the import);
+   *   they apply only while the job is still RUNNING, so a late one can't
+   *   overwrite the final state.
+   * - FAILED is likewise written only if the job is still RUNNING (e.g. the
+   *   commit succeeded but its acknowledgement was lost → stays SUCCEEDED).
+   */
   private async run(
     jobId: string,
     tenantId: string,
@@ -233,47 +249,54 @@ export class MasterDataImportJobService implements OnApplicationBootstrap {
   ): Promise<void> {
     const progress = initialProgress();
     // Progress writes are serialised so they land in order.
-    let writes: Promise<unknown> = Promise.resolve();
-    const save = (data: Prisma.MasterDataImportJobUpdateInput = {}) => {
+    let writes: Promise<void> = Promise.resolve();
+    const saveProgress = () => {
       const snapshot = structuredClone(progress);
-      writes = writes
-        .catch(() => undefined)
-        .then(() =>
-          this.prisma.runWithTenant(tenantId, () =>
-            this.prisma.masterDataImportJob.update({
-              where: { id: jobId },
-              data: {
-                ...data,
-                progress: snapshot as unknown as Prisma.InputJsonValue,
-              },
+      writes = writes.then(() =>
+        this.prisma
+          .runWithTenant(tenantId, () =>
+            this.prisma.masterDataImportJob.updateMany({
+              where: { id: jobId, status: MasterDataImportJobStatus.RUNNING },
+              data: { progress: snapshot as unknown as Prisma.InputJsonValue },
             }),
+          )
+          .then(
+            () => undefined,
+            (e: unknown) =>
+              this.logger.warn(
+                `Import job ${jobId}: progress write failed: ${String(e)}`,
+              ),
           ),
-        );
-      return writes;
+      );
     };
 
     try {
-      const result = await this.labPanelService.syncTenantToBranch(
+      await this.labPanelService.syncTenantToBranch(
         tenantId,
         branchId,
         actorId,
-        async (event) => {
-          applyEvent(progress, event);
-          // A failed progress write must not fail the import itself.
-          await save().catch((e: unknown) =>
-            this.logger.warn(
-              `Import job ${jobId}: progress write failed: ${String(e)}`,
-            ),
-          );
+        {
+          onProgress: (event) => {
+            applyEvent(progress, event);
+            saveProgress();
+          },
+          beforeCommit: async (tx, result) => {
+            progress.phase = 'DONE';
+            progress.currentBatch = 0;
+            await tx.masterDataImportJob.update({
+              where: { id: jobId },
+              data: {
+                status: MasterDataImportJobStatus.SUCCEEDED,
+                result: result as unknown as Prisma.InputJsonValue,
+                progress: structuredClone(
+                  progress,
+                ) as unknown as Prisma.InputJsonValue,
+                finishedAt: new Date(),
+              },
+            });
+          },
         },
       );
-      progress.phase = 'DONE';
-      progress.currentBatch = 0;
-      await save({
-        status: MasterDataImportJobStatus.SUCCEEDED,
-        result: result as unknown as Prisma.InputJsonValue,
-        finishedAt: new Date(),
-      });
     } catch (e) {
       const error = toJobError(e, progress);
       markFailed(progress);
@@ -281,15 +304,26 @@ export class MasterDataImportJobService implements OnApplicationBootstrap {
         `Import job ${jobId} (branch ${branchId}) failed in ${error.phase}: ${error.code}`,
         e instanceof Error ? e.stack : String(e),
       );
-      await save({
-        status: MasterDataImportJobStatus.FAILED,
-        error: error as unknown as Prisma.InputJsonValue,
-        finishedAt: new Date(),
-      }).catch((writeErr: unknown) =>
-        this.logger.error(
-          `Import job ${jobId}: could not record failure: ${String(writeErr)}`,
-        ),
-      );
+      await writes;
+      await this.prisma
+        .runWithTenant(tenantId, () =>
+          this.prisma.masterDataImportJob.updateMany({
+            where: { id: jobId, status: MasterDataImportJobStatus.RUNNING },
+            data: {
+              status: MasterDataImportJobStatus.FAILED,
+              error: error as unknown as Prisma.InputJsonValue,
+              progress: progress as unknown as Prisma.InputJsonValue,
+              finishedAt: new Date(),
+            },
+          }),
+        )
+        .catch((writeErr: unknown) =>
+          this.logger.error(
+            `Import job ${jobId}: could not record failure: ${String(writeErr)}`,
+          ),
+        );
+    } finally {
+      await writes;
     }
   }
 
@@ -458,6 +492,18 @@ export function toJobError(
     };
   }
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    // P2028 covers both "couldn't START a transaction within maxWait" (pool
+    // busy) and "transaction timed out / already closed".
+    if (
+      e.code === 'P2028' &&
+      /unable to start a transaction/i.test(e.message)
+    ) {
+      return {
+        ...base,
+        code: 'MASTER_DATA_IMPORT_DB_BUSY',
+        message: `The database was too busy to run the import. ${NO_CHANGES} Please try again in a few minutes.`,
+      };
+    }
     if (e.code === 'P2028') {
       return {
         ...base,

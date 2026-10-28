@@ -545,6 +545,58 @@ describe('LabTestService.syncTestsIntoBranch', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it('tenant test deleted and re-created under a NEW name with the SAME code → branch row adopted by code, renamed, never removed', async () => {
+    // Tenant: A, B, and CA (code C) replacing a deleted C. Branch: A, B, C (code C) still linked to the deleted C.
+    // Deployed code (d179396) renamed the branch C to CA and then soft-deleted it as an orphan, in the same import.
+    const a = test({ id: 'src-a', testCode: 'A', testName: 'A' });
+    const b = test({ id: 'src-b', testCode: 'B', testName: 'B' });
+    const ca = test({ id: 'src-ca', testCode: 'C', testName: 'CA' });
+    const brA = test({
+      id: 'br-a',
+      testCode: 'A',
+      testName: 'A',
+      sourceMasterLabTestId: 'src-a',
+    });
+    const brB = test({
+      id: 'br-b',
+      testCode: 'B',
+      testName: 'B',
+      sourceMasterLabTestId: 'src-b',
+    });
+    const brC = test({
+      id: 'br-c',
+      testCode: 'C',
+      testName: 'C',
+      sourceMasterLabTestId: 'src-c-deleted',
+    });
+    prismaMock.labTest.findMany
+      .mockResolvedValueOnce([a, b, ca])
+      .mockResolvedValueOnce([brA, brB, brC]);
+
+    const result = await service.syncTestsIntoBranch(
+      prismaMock as unknown as Prisma.TransactionClient,
+      baseParams,
+    );
+
+    expect(result).toMatchObject({ created: 0, updated: 3, deleted: 0 });
+    expect(result.testIdMap.get('src-ca')).toBe('br-c');
+    expect(prismaMock.labTest.create).not.toHaveBeenCalled();
+    const brCWrites = (
+      prismaMock.labTest.update.mock.calls as [
+        { where: { id: string }; data: Record<string, unknown> },
+      ][]
+    )
+      .map(([x]) => x)
+      .filter((x) => x.where.id === 'br-c');
+    expect(brCWrites).toHaveLength(1);
+    expect(brCWrites[0]!.data).toMatchObject({
+      testName: 'CA',
+      testCode: 'C',
+      sourceMasterLabTestId: 'src-ca',
+    });
+    expect(brCWrites[0]!.data.deletedAt).toBeUndefined();
+  });
+
   it('fully overwrites a matched branch test in place (update)', async () => {
     const src = test({ id: 'src-1', testCode: 'T1' });
     const branch = test({

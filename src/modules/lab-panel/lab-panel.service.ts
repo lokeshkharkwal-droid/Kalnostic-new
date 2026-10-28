@@ -8,7 +8,10 @@ import {
 } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from '../lab-test/lab-test.service';
-import { MasterDataSyncProgressListener } from '../lab-test/master-data-sync-progress';
+import {
+  MasterDataSyncHooks,
+  MasterDataSyncResult,
+} from '../lab-test/master-data-sync-progress';
 
 /**
  * Transaction timeout of the Tenant → Branch Master Data sync (see the note at
@@ -960,11 +963,8 @@ export class LabPanelService {
     tenantId: string,
     branchId: string,
     actorId: string | null,
-    onProgress?: MasterDataSyncProgressListener,
-  ): Promise<{
-    tests: { created: number; updated: number; deleted: number };
-    panels: { created: number; updated: number; deleted: number };
-  }> {
+    hooks: MasterDataSyncHooks = {},
+  ): Promise<MasterDataSyncResult> {
     const tenantMd =
       await this.masterDataService.getOrCreateTenantMasterData(tenantId);
     const branchMd = await this.masterDataService.getOrCreateBranchMasterData(
@@ -978,7 +978,7 @@ export class LabPanelService {
         actorId,
         tenantMd.id,
         branchMd.id,
-        onProgress,
+        hooks,
       );
     } catch (e) {
       // A unique violation that slipped past the test sync's pre-flight
@@ -1011,8 +1011,8 @@ export class LabPanelService {
     actorId: string | null,
     tenantMasterDataId: string,
     branchMasterDataId: string,
-    onProgress?: MasterDataSyncProgressListener,
-  ) {
+    { onProgress, beforeCommit }: MasterDataSyncHooks,
+  ): Promise<MasterDataSyncResult> {
     return this.prisma.withTenant(
       tenantId,
       async (tx) => {
@@ -1044,7 +1044,7 @@ export class LabPanelService {
         );
         // Everything is written; the commit happens as this callback returns.
         await onProgress?.({ type: 'phase', phase: 'SAVING' });
-        return {
+        const result: MasterDataSyncResult = {
           tests: { created: t.created, updated: t.updated, deleted: t.deleted },
           panels: {
             created: p.created,
@@ -1052,6 +1052,8 @@ export class LabPanelService {
             deleted: p.deleted,
           },
         };
+        await beforeCommit?.(tx, result);
+        return result;
       },
       // Per-test/panel loop (update-or-clone + child-table rebuild) over a
       // full catalogue can run well past Prisma's default 5s transaction
