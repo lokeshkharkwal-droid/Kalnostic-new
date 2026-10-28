@@ -5812,7 +5812,10 @@ export class OrderService {
         branchId: true,
         status: true,
         patientId: true,
+        referredByDoctorId: true,
         referralPanelId: true,
+        internalReferralId: true,
+        externalReferralId: true,
         orderCode: true,
         externalOrderId: true,
         isBillGenerated: true,
@@ -5843,6 +5846,35 @@ export class OrderService {
         ? dto.referralPanelId
         : (existing?.referralPanelId ?? null);
     const isB2bOrder = Boolean(effectiveReferralPanelId);
+
+    // Referral Panel Settings credit gate (Section 4) on the UPDATE path — mirrors
+    // create() so finalizing a DRAFT/QUOTE/APPOINTMENT to ORDER (or adding items
+    // to an existing order) cannot bypass a linked Cash/Postpaid referral's Credit
+    // Limit / Credit Allowed Days. Bites only when the effective status is ORDER.
+    // Excludes THIS order from the balance (it is the one being edited); effective
+    // referral ids use the patched value, else the stored one (same resolution as
+    // effectiveReferralPanelId above).
+    if (effectiveStatus === OrderStatus.ORDER) {
+      await this.referralCredit.assertOrderCreationAllowed(
+        tenantId,
+        {
+          referredByDoctorId:
+            dto.referredByDoctorId !== undefined
+              ? dto.referredByDoctorId
+              : (existing?.referredByDoctorId ?? null),
+          referralPanelId: effectiveReferralPanelId,
+          internalReferralId:
+            dto.internalReferralId !== undefined
+              ? dto.internalReferralId
+              : (existing?.internalReferralId ?? null),
+          externalReferralId:
+            dto.externalReferralId !== undefined
+              ? dto.externalReferralId
+              : (existing?.externalReferralId ?? null),
+        },
+        id,
+      );
+    }
 
     // Billing-menu permission gates (branch Registration Settings, keyed on the
     // record's original creator). Loaded once; only consulted when the order has
