@@ -18,7 +18,8 @@ docs {
   Fetch one order fully composed: patient ref, active `items` (with their resolved
   test/panel and the per-line `discount`), the `diagnostics`/`opd`/`radiology`
   sections with resolved refs, and the active `payments` ledger. Also returns
-  `orderTime` and the `billingDetails` sub-form. 404 `ORDER_NOT_FOUND` if missing,
+  `orderTime`, the `billingDetails` sub-form and `isPregnant` (this order's own
+  "Pregnant" flag — per order, never the patient's other orders). 404 `ORDER_NOT_FOUND` if missing,
   soft-deleted, or owned by another tenant.
 
   Each item's `unitPrice` is the per-line price snapshotted at order or quotation

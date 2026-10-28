@@ -26,6 +26,7 @@ body:json {
     "billingType": "CASH_CLIENT",
     "isUrgentBill": false,
     "isBillGenerated": true,
+    "isPregnant": false,
     "orderNotes": "Fasting sample; collect in the morning",
     "orderTime": "09:30",
     "billingDetails": {
@@ -199,6 +200,13 @@ docs {
     below are **skipped** for a no-bill order, and no cross-order dues settlement
     runs. The frontend also disables the entire Payment Details section. The order
     total and details are still stored/visible.
+  - `isPregnant` — optional, defaults `false`. The "Pregnant" checkbox in
+    Create Order → Patient Details. Stored **per order** (not on the patient), so
+    it never changes the patient's past or future orders; `GET /orders/:id`
+    returns it so the edit form shows this order's own value. `true` is only
+    allowed when the patient's current gender is `FEMALE` — otherwise 422
+    `ORDER_PREGNANCY_REQUIRES_FEMALE` (male / other / prefer-not-to-say / no
+    gender recorded).
   - `orderDateType` — **read-only, server-derived** classification of `orderDate`
     vs. the day the order is created (server "today"): `BACKTRACKED` when dated in
     the past, `ADVANCE_DATED` when dated in the future, `CURRENT` when today.

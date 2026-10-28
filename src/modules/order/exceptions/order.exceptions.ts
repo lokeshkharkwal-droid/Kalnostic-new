@@ -33,6 +33,21 @@ export class OrderPatientNotFoundException extends KaltrosException {
 }
 
 /**
+ * 422 — `isPregnant: true` was sent for an order whose patient is not FEMALE
+ * (male, other, prefer-not-to-say, or no gender recorded).
+ */
+export class OrderPregnancyRequiresFemalePatientException extends KaltrosException {
+  constructor(patientId: string, gender: string | null) {
+    super(
+      'ORDER_PREGNANCY_REQUIRES_FEMALE',
+      'Pregnant can only be set for a female patient',
+      { patientId, gender },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — an order item is malformed: it must reference exactly one of a branch
  * lab test, a branch lab panel, or a direct entry (never none, never more than
  * one).

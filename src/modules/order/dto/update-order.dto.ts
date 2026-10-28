@@ -80,6 +80,15 @@ export class UpdateOrderDto {
   @IsBoolean()
   isBillGenerated?: boolean;
 
+  /**
+   * Patient is pregnant at the time of this order; omit to leave it unchanged.
+   * `true` is only allowed when the patient's gender is FEMALE — otherwise 422
+   * `ORDER_PREGNANCY_REQUIRES_FEMALE`.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isPregnant?: boolean;
+
   @IsOptional()
   @IsString()
   @MaxLength(2048)
