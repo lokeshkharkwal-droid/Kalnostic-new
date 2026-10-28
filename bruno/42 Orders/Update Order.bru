@@ -24,6 +24,7 @@ body:json {
     "quotationStatus": "DRAFT",
     "quotationValidTill": "2026-07-25",
     "isBillGenerated": true,
+    "isPregnant": false,
     "orderNotes": "Rescheduled collection",
     "items": [
       { "id": "{{existingOrderItemId}}", "branchLabTestId": "{{branchLabTestId}}" },
@@ -114,6 +115,15 @@ docs {
   `radiologistCategoryId`.
   `quotationStatus` (`DRAFT`/`CONVERTED`/`EXPIRED`) and `quotationValidTill`
   (ISO date) are patchable for quotes; omit them to leave existing values intact.
+
+  ## isPregnant
+
+  `isPregnant` (boolean) is this order's own "Pregnant" flag; omit it to leave
+  the stored value unchanged. `true` is checked against the patient's **current**
+  gender (Create Order saves the patient first) and is refused with 422
+  `ORDER_PREGNANCY_REQUIRES_FEMALE` unless that gender is `FEMALE`. The frontend
+  sends `false` whenever gender isn't Female, so changing gender away from Female
+  and saving clears it.
 
   ## payments[] — immutable history, reconcile-in-place
 
