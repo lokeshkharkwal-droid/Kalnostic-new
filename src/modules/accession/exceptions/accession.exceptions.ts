@@ -155,7 +155,10 @@ export class SampleItemRemovedException extends InvalidSampleTransitionException
  * (nor have its center assigned).
  */
 export class TransferItemRemovedException extends KaltrosException {
-  constructor(transferId: string, action: TransferAction | 'assign-center') {
+  constructor(
+    transferId: string,
+    action: TransferAction | 'retrieve' | 'assign-center',
+  ) {
     super(
       'TRANSFER_ITEM_REMOVED',
       'This test was removed from the order, so no further work is allowed on it.',
@@ -360,7 +363,7 @@ export class SampleTransferNotFoundException extends KaltrosException {
  * transfer's current status (per the PDF §B.10 transfer state machine).
  */
 export class InvalidTransferTransitionException extends KaltrosException {
-  constructor(action: TransferAction, from: TransferStatus) {
+  constructor(action: TransferAction | 'retrieve', from: TransferStatus) {
     super(
       'INVALID_TRANSFER_TRANSITION',
       `Transfer action "${action}" is not allowed from status ${from}`,

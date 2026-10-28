@@ -53,13 +53,14 @@ const INCIDENT: string[] = [
   'Close the incident',
 ];
 
-/** The eight referral-order sample actions, reused across referral sub-sections. */
+/** The nine referral-order sample actions, reused across referral sub-sections. */
 const REFERRAL_ORDER: string[] = [
   'Pick up the sample',
   'Receive the sample',
   'Accept the sample',
   'Reject the sample',
   'Repeat the sample',
+  'Retrieve the sample',
   'Update sample notes',
   'Assign the barcode',
   'Allow multiple action',
@@ -814,6 +815,9 @@ export const PERMISSION_KEYS = {
   ACC_INT_REPEAT: 'accession:internal_referral_order__repeat_the_sample',
   ACC_EXT_REPEAT: 'accession:external_referral_order__repeat_the_sample',
   ACC_OUT_REPEAT: 'accession:outsource_orders__repeat_the_sample',
+  ACC_INT_RETRIEVE: 'accession:internal_referral_order__retrieve_the_sample',
+  ACC_EXT_RETRIEVE: 'accession:external_referral_order__retrieve_the_sample',
+  ACC_OUT_RETRIEVE: 'accession:outsource_orders__retrieve_the_sample',
 
   // ── Laboratory (lab_operations) — Reporting worklist access + actions.
   //    The spec has no explicit validate/approve/publish keys: working a queue
@@ -1094,6 +1098,11 @@ export const ACCESSION_TRANSFER_KEY_GROUPS = {
     PERMISSION_KEYS.ACC_INT_REPEAT,
     PERMISSION_KEYS.ACC_EXT_REPEAT,
     PERMISSION_KEYS.ACC_OUT_REPEAT,
+  ],
+  RETRIEVE: [
+    PERMISSION_KEYS.ACC_INT_RETRIEVE,
+    PERMISSION_KEYS.ACC_EXT_RETRIEVE,
+    PERMISSION_KEYS.ACC_OUT_RETRIEVE,
   ],
   ASSIGN_CENTER: [
     PERMISSION_KEYS.ACC_IH_ASSIGN_INTERNAL_CENTER,

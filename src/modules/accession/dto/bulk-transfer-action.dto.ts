@@ -116,3 +116,16 @@ export class BulkTransferRejectDto extends TransferRejectDto {
   @IsBoolean()
   skipInvalid?: boolean;
 }
+
+/** Bulk Retrieve — move each transfer back one status step (transfer ids). */
+export class BulkTransferRetrieveDto extends SampleNoteDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  ids: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  skipInvalid?: boolean;
+}
