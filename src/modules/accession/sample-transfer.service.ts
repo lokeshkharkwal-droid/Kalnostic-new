@@ -69,6 +69,7 @@ import {
   TransferItemRemovedException,
   TransferLogisticsMissingException,
   TransferOutsourceNotAssignedException,
+  TransferRetrieveBlockedException,
   TransferWrongBranchException,
   refusalMessage,
   OutsourceCenterNotFoundException,
@@ -447,6 +448,14 @@ export class SampleTransferService {
               transfer.transferStatus,
             );
           }
+          // The source (sender's) sample — for the history row and, when undoing an
+          // accept, the branch its report(s) return to. Its own `branchId` is the
+          // IMMEDIATE sender of this hop (where the report sat before the receiver
+          // accepted) — for a chain A→B→C that is B, not the true origin A.
+          const sample = await tx.orderSample.findFirst({
+            where: { id: transfer.sampleId, tenantId },
+            select: { id: true, branchId: true, status: true },
+          });
           // Clear the just-undone step's own fields so the record stays coherent.
           const clear: Prisma.SampleTransferUpdateManyMutationInput = {};
           if (transfer.transferStatus === TransferStatus.PICKED_UP) {
@@ -457,6 +466,51 @@ export class SampleTransferService {
             clear.receiveCondition = null;
           } else if (transfer.transferStatus === TransferStatus.ACCEPTED) {
             clear.acceptedAt = null;
+            // Undoing an accepted INTERNAL transfer: the accept materialised a copy
+            // in the receiving branch's In-House list (RULE 1). Unwind it so a later
+            // re-Accept does not create a DUPLICATE — soft-delete the copy + move its
+            // report(s) back to origin (`removeTransferCloneInTx`, idempotent) and
+            // clear the link. Refuse (422) if the receiver has already started working
+            // the copy (status past ACCEPTED): undoing would lose that work.
+            if (
+              transfer.kind === TransferKind.INTERNAL &&
+              transfer.clonedSampleId
+            ) {
+              const clone = await tx.orderSample.findFirst({
+                where: {
+                  id: transfer.clonedSampleId,
+                  tenantId,
+                  deletedAt: null,
+                },
+                select: { id: true, status: true },
+              });
+              if (clone) {
+                if (clone.status !== SampleStatus.ACCEPTED) {
+                  const refusal = new TransferRetrieveBlockedException(
+                    transfer.id,
+                    clone.status,
+                  );
+                  if (skipInvalid) {
+                    skipped.push({
+                      id,
+                      accessionNo: accNoById.get(id) ?? null,
+                      reason: refusalMessage(refusal),
+                      code: refusal.errorCode,
+                    });
+                    continue;
+                  }
+                  throw refusal;
+                }
+                await this.samples.removeTransferCloneInTx(
+                  tx,
+                  tenantId,
+                  personId,
+                  clone.id,
+                  sample?.branchId ?? null,
+                );
+              }
+              clear.clonedSampleId = null;
+            }
           }
           // Conditional on the status we validated: a concurrent action that already
           // moved the transfer makes this a no-op → refuse instead of overwriting.
@@ -476,10 +530,6 @@ export class SampleTransferService {
           }
           // Document the step-back on the sample's history timeline (the transfer's
           // own status change; the sample's status is unchanged by a transfer undo).
-          const sample = await tx.orderSample.findFirst({
-            where: { id: transfer.sampleId, tenantId },
-            select: { id: true, branchId: true, status: true },
-          });
           if (sample) {
             await tx.orderSampleStatusHistory.create({
               data: {

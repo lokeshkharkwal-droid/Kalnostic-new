@@ -10,6 +10,7 @@ import {
   SendBlockedException,
   TransferNotEditableException,
   TransferNotOutsourceException,
+  TransferRetrieveBlockedException,
   TransferWrongBranchException,
   refusalMessage,
 } from './exceptions/accession.exceptions';
@@ -1299,5 +1300,63 @@ describe('SampleTransferService — Retrieve (one-step-back undo)', () => {
     await expect(
       svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
     ).rejects.toBeInstanceOf(TransferWrongBranchException);
+  });
+
+  it('undoing an ACCEPTED transfer unwinds the untouched clone and clears the link', async () => {
+    const { svc, tx, samples } = setup({
+      transferStatus: TransferStatus.ACCEPTED,
+      clonedSampleId: 'copy1',
+    });
+    // Source sample read vs clone read, keyed on the queried id.
+    tx.orderSample.findFirst.mockImplementation(
+      (args: { where: { id: string } }) =>
+        Promise.resolve(
+          args.where.id === 'copy1'
+            ? { id: 'copy1', status: SampleStatus.ACCEPTED }
+            : {
+                id: 'sA',
+                branchId: 'A', // the sender's branch — reports return here
+                status: SampleStatus.SENT_INTERNAL,
+              },
+        ),
+    );
+    await svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {});
+    // the clone is soft-deleted + its reports re-homed to the true origin ('A')
+    expect(samples.removeTransferCloneInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      PERSON,
+      'copy1',
+      'A',
+    );
+    const upd = (finalWrites(tx)[0] as unknown[])[0] as {
+      data: { transferStatus: TransferStatus; clonedSampleId?: string | null };
+    };
+    expect(upd.data.transferStatus).toBe(TransferStatus.RECEIVED);
+    expect(upd.data.clonedSampleId).toBeNull();
+  });
+
+  it('refuses to undo an ACCEPTED transfer whose clone has already been worked on', async () => {
+    const { svc, tx, samples } = setup({
+      transferStatus: TransferStatus.ACCEPTED,
+      clonedSampleId: 'copy1',
+    });
+    tx.orderSample.findFirst.mockImplementation(
+      (args: { where: { id: string } }) =>
+        Promise.resolve(
+          args.where.id === 'copy1'
+            ? { id: 'copy1', status: SampleStatus.COLLECTED } // worked on
+            : {
+                id: 'sA',
+                branchId: 'A', // the sender's branch — reports return here
+                status: SampleStatus.SENT_INTERNAL,
+              },
+        ),
+    );
+    await expect(
+      svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
+    ).rejects.toBeInstanceOf(TransferRetrieveBlockedException);
+    expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
+    expect(finalWrites(tx)).toHaveLength(0);
   });
 });
