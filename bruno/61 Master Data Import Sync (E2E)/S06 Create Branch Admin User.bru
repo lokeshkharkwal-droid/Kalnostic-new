@@ -1,0 +1,37 @@
+meta {
+  name: S06 Create Branch Admin User
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/users/manage
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tenantToken}}
+}
+
+body:json {
+  {
+    "employeeName": "Import Branch Admin",
+    "username": "mdimport{{e2eSuffix}}",
+    "dateOfBirth": "1995-04-12",
+    "gender": "MALE",
+    "address": "1 Test Street, Pune",
+    "email": "branch.admin.{{e2eSuffix}}@md-import.test",
+    "mobileNumber": "97{{e2eSuffix}}",
+    "password": "Str0ng@Pass1",
+    "userType": "INTERNAL",
+    "status": "ACTIVE",
+    "branches": [
+      { "branchId": "{{e2eBranchId}}", "role": "branch_admin", "modules": ["branch_admin"], "defaultModule": "branch_admin", "defaultBranch": true, "status": "ACTIVE" }
+    ]
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.be.oneOf([200, 201]); });
+}

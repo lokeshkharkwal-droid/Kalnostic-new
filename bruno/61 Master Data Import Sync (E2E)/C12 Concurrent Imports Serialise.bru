@@ -1,0 +1,42 @@
+meta {
+  name: C12 Concurrent Imports Serialise
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  const results = await Promise.all([h.runImport(bru), h.runImport(bru), h.runImport(bru)]);
+  h.setJson(bru, 'parallel', results.map((r) => r.status));
+  h.setJson(bru, 'after', await h.branchTests(bru));
+  bru.setVar('tenantCount', String((await h.tenantTests(bru)).length));
+}
+
+tests {
+  test("every import 201", function () {
+    const h = require('./lib/md-import.js');
+    expect(res.status).to.equal(201);
+    expect(h.getJson(bru, 'parallel')).to.eql([201, 201, 201]);
+  });
+  test("one branch test per tenant test, unique names and codes", function () {
+    const h = require('./lib/md-import.js');
+    const rows = h.getJson(bru, 'after');
+    expect(rows.length).to.equal(Number(bru.getVar('tenantCount')));
+    expect(new Set(rows.map((r) => r.testName)).size).to.equal(rows.length);
+    expect(new Set(rows.map((r) => r.testCode)).size).to.equal(rows.length);
+  });
+}
+
+docs {
+  Three imports at once on the same branch: the per-branch advisory lock serialises them; none fails, nothing is duplicated.
+}

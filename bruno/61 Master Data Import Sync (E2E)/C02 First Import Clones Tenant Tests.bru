@@ -1,0 +1,54 @@
+meta {
+  name: C02 First Import Clones Tenant Tests
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const ids = {};
+  ids.A = await h.createTenantTest(bru, 'Alpha Test', 'ALPHA');
+  ids.B = await h.createTenantTest(bru, 'Bravo Test', 'BRAVO');
+  ids.C = await h.createTenantTest(bru, 'Charlie Test', 'CHARLIE');
+  ids.D = await h.createTenantTest(bru, 'Delta Test', 'DELTA');
+  ids.E = await h.createTenantTest(bru, 'Echo Test', 'ECHO');
+  h.setJson(bru, 'tenantIds', ids);
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+  h.setJson(bru, 'branchIds', Object.fromEntries(rows.map((t) => [t.testName, t.id])));
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 5, updated 0, deleted 0", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 5, updated: 0, deleted: 0 });
+  });
+
+  test("each branch test is linked to its tenant test", function () {
+    const h = require('./lib/md-import.js');
+    const ids = h.getJson(bru, 'tenantIds');
+    const after = h.byName(h.getJson(bru, 'after'));
+    expect(Object.keys(after).sort()).to.eql(['Alpha Test', 'Bravo Test', 'Charlie Test', 'Delta Test', 'Echo Test']);
+    expect(after['Alpha Test'].sourceMasterLabTestId).to.equal(ids.A);
+    expect(after['Echo Test'].sourceMasterLabTestId).to.equal(ids.E);
+  });
+}
+
+docs {
+  Five tenant tests, empty branch → all five cloned and linked.
+}
