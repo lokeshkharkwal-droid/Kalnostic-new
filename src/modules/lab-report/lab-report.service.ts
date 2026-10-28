@@ -142,6 +142,7 @@ import {
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
+import { findReceiverReturns } from '../accession/utils/returned-by-receiver.util';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
@@ -1051,13 +1052,13 @@ export class LabReportService {
         },
       ];
     }
+    where.orderItem = orderItem;
     // Department visibility scope (mandatory, not a user filter): a report is
     // visible when its test/panel's department is unassigned (NULL → everyone) or
-    // one of the caller's mapped departments. Attached via `orderItem.AND` so it
-    // composes with the search `orderItem.OR` above without clobbering it, and is
-    // applied before pagination/counts. Always present, so `orderItem` is set.
-    orderItem.AND = [this.departmentScopeForOrderItem(scopeIds)];
-    where.orderItem = orderItem;
+    // one of the caller's mapped departments - the department of the setup the
+    // branch that is LOOKING uses (see `applyDepartmentScope`). Applied before
+    // pagination/counts.
+    this.applyDepartmentScope(where, scope, scopeIds);
 
     // B2B Referral Panel isolation: constrain reports to the panel's orders
     // (nested via orderItem.order). Runs last so it merges with any filters above.
@@ -1068,6 +1069,56 @@ export class LabReportService {
     // booking-level flag on the whole Order, joined through OrderItem.order).
     // TAT alert pills are explicitly out of scope per LABORATORY.docx.
     return where;
+  }
+
+  /**
+   * Department visibility, per branch (each branch applies ITS OWN department for the
+   * test): for the reports a branch HOLDS, the department of the entry that branch
+   * works the test with - the order line's own entry until the report was sent to it,
+   * then the entry it chose on Accept (`LabReport.performingBranchLabTestId`); for the
+   * reports it only SENT (the sender view), the order line's entry. Unassigned
+   * (NULL department) entries are visible to all; a user with no department sees only
+   * those. ANDed with the branch scope, so a row must pass both.
+   */
+  private applyDepartmentScope(
+    where: Prisma.LabReportWhereInput,
+    scope: WorklistBranchScope,
+    scopeIds: string[],
+  ): void {
+    const rules = usableRules(scope);
+    if (rules.length === 0) return; // the branch scope already matches nothing
+    const lineOk: Prisma.LabReportWhereInput = {
+      orderItem: { is: this.departmentScopeForOrderItem(scopeIds) },
+    };
+    const entryOk: Prisma.BranchLabTestWhereInput =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
+    const heldOk: Prisma.LabReportWhereInput = {
+      OR: [
+        { performingBranchLabTestId: null, ...lineOk },
+        {
+          performingBranchLabTestId: { not: null },
+          performingEntry: { is: entryOk },
+        },
+      ],
+    };
+    const perBranch = rules.map(
+      (rule): Prisma.LabReportWhereInput =>
+        rule.senderLinked
+          ? {
+              OR: [
+                { branchId: rule.branchId, ...heldOk },
+                { branchId: { not: rule.branchId }, ...lineOk },
+              ],
+            }
+          : { branchId: rule.branchId, ...heldOk },
+    );
+    const and = where.AND;
+    where.AND = [
+      ...(Array.isArray(and) ? and : and ? [and] : []),
+      { OR: perBranch },
+    ];
   }
 
   /**
@@ -1138,6 +1189,7 @@ export class LabReportService {
       scope,
       worklistRows,
     );
+    worklistRows = await this.attachReturnedByReceiver(tenantId, worklistRows);
     worklistRows = await this.attachAccessMode(tenantId, scope, worklistRows);
     worklistRows = await this.attachLockedByNames(worklistRows);
 
@@ -1413,6 +1465,14 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
       select: {
         branchId: true,
+        // the entry the holding branch works the test with (null = the order line's)
+        performingEntry: {
+          select: {
+            departmentId: true,
+            categoryId: true,
+            subCategoryId: true,
+          },
+        },
         orderItem: {
           select: {
             branchLabTest: {
@@ -1430,6 +1490,16 @@ export class LabReportService {
       },
     });
     if (!report) throw new LabReportNotFoundException(id);
+    // Approval signatories follow the HOLDING branch's own setup: once the report was
+    // sent to another branch, that branch's entry decides department / category.
+    if (report.performingEntry) {
+      return {
+        departmentId: report.performingEntry.departmentId,
+        categoryId: report.performingEntry.categoryId,
+        subCategoryId: report.performingEntry.subCategoryId,
+        report: { branchId: report.branchId },
+      };
+    }
     return {
       departmentId:
         report.orderItem.branchLabTest?.departmentId ??
@@ -1797,6 +1867,38 @@ export class LabReportService {
         sampleBarcodes: entries.map(([, info]) => info.barcode),
         sampleBranchIds: entries.map(([, info]) => info.branchId),
       };
+    });
+  }
+
+  /**
+   * Marks each row whose report the receiving branch has sent back: the holder
+   * branch's own live sample is still Sent and its latest INTERNAL transfer is
+   * closed as REPEAT or REJECTED by the receiving branch (see
+   * {@link findReceiverReturns}). The report is already reset and back at the
+   * sender but stays view-only until the sender decides (Repeat / Error /
+   * Retrieve), so the screen can say so instead of "sent to another branch". Needs
+   * the sample columns, so it runs after {@link attachSampleStatuses}; one batched
+   * transfer lookup per page.
+   */
+  private async attachReturnedByReceiver(
+    tenantId: string,
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const sentIdsOf = (row: LabReportWorklistRow): string[] =>
+      row.sampleIds.filter(
+        (id, i) =>
+          row.sampleStatuses[i] === SampleStatus.SENT_INTERNAL &&
+          row.sampleBranchIds[i] === row.branchId,
+      );
+    const sentIds = rows.flatMap(sentIdsOf);
+    if (sentIds.length === 0) return rows;
+    const returns = await findReceiverReturns(this.prisma, tenantId, sentIds);
+    if (returns.size === 0) return rows;
+    return rows.map((row) => {
+      const back = sentIdsOf(row)
+        .map((id) => returns.get(id))
+        .find((r) => r !== undefined);
+      return { ...row, returnedByReceiver: back ?? null };
     });
   }
 
@@ -4508,6 +4610,10 @@ export class LabReportService {
     const report = await this.prisma.labReport.findFirst({
       where: { id: reportId, tenantId, deletedAt: null },
       select: {
+        // the entry the holding branch works the test with (null = the order line's)
+        performingEntry: {
+          select: { reportTemplateId: true, sourceLabTestId: true },
+        },
         orderItem: {
           select: {
             branchLabTest: {
@@ -4517,7 +4623,11 @@ export class LabReportService {
         },
       },
     });
-    const branchTest = report?.orderItem?.branchLabTest;
+    // The processing branch's own mapping applies once the report was sent to it
+    // (a panel item keeps its no-per-test-template behaviour).
+    const branchTest = report?.orderItem?.branchLabTest
+      ? (report.performingEntry ?? report.orderItem.branchLabTest)
+      : null;
     if (!branchTest) return null;
 
     // 1. Branch copy's own mapping (branch-admin Master Data).

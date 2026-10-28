@@ -1,10 +1,14 @@
 import { BranchType } from '@prisma/client';
+import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsIn,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
@@ -59,4 +63,19 @@ export class BranchOptionsQueryDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   excludeCurrentBranch?: boolean;
+
+  /**
+   * Accession sample ids (comma separated) the caller wants to send there. When given, every
+   * option also says whether that branch OFFERS every test on those tubes (`offersAll`) and
+   * which tests it lacks (`missingTests`), so the picker can grey out a branch the tubes
+   * cannot go to.
+   */
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.split(',').filter(Boolean) : value,
+  )
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsUUID('all', { each: true })
+  forSampleIds?: string[];
 }

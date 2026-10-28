@@ -16,6 +16,10 @@ import { BranchModuleItemDto } from './dto/set-branch-modules.dto';
 import { UpdateBranchSettingDto } from './dto/update-branch-setting.dto';
 import { SYSTEM_MODULES } from '../permissions/constants/system-modules.constant';
 import {
+  describeMissing,
+  missingTestsAtBranches,
+} from '../accession/utils/destination-offers.util';
+import {
   BranchNameConflictException,
   BranchNotFoundException,
   CannotDeleteMainBranchException,
@@ -348,6 +352,32 @@ export class BranchService {
     });
     const total = await this.prisma.branch.count({ where });
     return { data, total, page, limit };
+  }
+
+  /**
+   * Adds, to each branch option, whether it OFFERS every test on the given accession tubes
+   * (an active Lab Test List entry for each) and the names of the tests it lacks. Used by the
+   * destination picker to grey out a branch a tube cannot be sent to.
+   */
+  async withOfferStatus<T extends { id: string }>(
+    tenantId: string,
+    rows: T[],
+    sampleIds: string[],
+  ): Promise<Array<T & { offersAll: boolean; missingTests: string[] }>> {
+    const missing = await missingTestsAtBranches(
+      this.prisma,
+      tenantId,
+      sampleIds,
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => {
+      const m = missing.get(r.id) ?? [];
+      return {
+        ...r,
+        offersAll: m.length === 0,
+        missingTests: m.length === 0 ? [] : [describeMissing(m)],
+      };
+    });
   }
 
   /**

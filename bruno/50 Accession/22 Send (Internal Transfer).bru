@@ -55,4 +55,17 @@ docs {
   §A.9 legality check. `skipInvalid: true` instead skips ids not in a legal
   (Accepted) state rather than failing the batch. Same flags apply to
   `bulk/forward` and `bulk/outsource`.
+
+  **The destination must OFFER every test on the tube (Phase 1).** A tube can only go to a branch that has an
+  ACTIVE Lab Test List entry for each of its tests. The match goes through the tenant test both branches copied
+  (the sender's Branch Master Data test -> `sourceMasterLabTestId` -> the destination's Branch Master Data test
+  with the same tenant test -> an active, not deleted list entry); any of the destination's lists counts. A test
+  with no tenant link (hand-created at the branch) cannot be matched and counts as NOT offered. A free-text tube
+  test (no catalogue test) is skipped. Otherwise: 422 `DESTINATION_LACKS_TEST`, "<Branch> does not offer: <tests>.
+  Choose another branch." (at most five test names, then "and N more"); nothing is changed.
+  Where it applies: here (only when a `destinationBranchId` is given - Send without a destination stays allowed and
+  is checked when the centre is assigned), Assign / Edit Center, `apply-center-changes` and Accept. In a group send
+  with `skipInvalid` the tube is skipped with this reason and code; a strict group send is refused as a whole.
+  Forward / Outsource are not affected. `GET /branches/options?forSampleIds=` tells the picker which branches
+  qualify.
 }

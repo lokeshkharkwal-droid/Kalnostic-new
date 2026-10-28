@@ -211,4 +211,22 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsDateString({ strict: true })
   @Matches(DATE_ONLY, { message: 'outsourceDate must be YYYY-MM-DD' })
   outsourceDate?: string;
+
+  /**
+   * Only samples currently Sent (INTERNAL transfer) to this branch - the sender's "where did I
+   * send it" filter. A sample the receiving branch sent back ("Sent - Repeated") still counts,
+   * because it stays Sent until the sender decides; one that was retrieved or repeated does not.
+   */
+  @IsOptional()
+  @IsUUID()
+  destinationBranchId?: string;
+
+  /**
+   * Only samples currently Forwarded (EXTERNAL transfer) to a partner whose name contains this
+   * text (case-insensitive).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  externalPartnerName?: string;
 }

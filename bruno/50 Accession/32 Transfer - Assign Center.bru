@@ -54,4 +54,52 @@ docs {
 
   `externalPartnerName`, when given, must contain at least one visible character
   (400 `VALIDATION_ERROR` otherwise).
+
+  **Assign Center vs Edit Center.** The same endpoint serves both: with no destination
+  yet it is "Assign Center" (permission group ASSIGN_CENTER); with a destination already
+  set it is "Edit Center" (UPDATE_CENTER). Allowed while the transfer is IN_TRANSIT or
+  PICKED_UP, refused once the receiving branch has received it. Editing the destination
+  changes the SAME transfer (nothing is deleted): it drops out of the old branch's
+  Internal Transfer list and appears in the new branch's.
+  `logisticsType` is optional here, but while the transfer is In-Transit with no logistics
+  type the receiving branch does not see it and cannot pick it up; setting it (now or
+  through a later Edit Center) makes it appear. `sendDate` / `sendTime` are written only
+  when sent (the screen pre-fills the current date and time).
+
+  **Dialog (INTERNAL).** The screen now opens a per-tube dialog: each tube has its own center,
+  un-ticking a tube retrieves it, and Confirm sends one all-or-nothing request to
+  `POST transfers/apply-center-changes` (see `50 Accession/45`). This single-transfer endpoint stays
+  for other callers and for External / Outsource transfers.
+
+  **Re-addressing a transfer the first branch already Picked Up.** Changing the destination of
+  an INTERNAL transfer to a DIFFERENT branch while it is Picked Up starts it over: it goes back
+  to IN_TRANSIT and the old pick-up (`pickedUpBy` / `pickedUpAt`) is cleared, because the new
+  branch has not picked it up (it must Pick Up before it can Receive; the old branch can do
+  nothing with it). Every change of destination (also a first assignment) is recorded in the same
+  transaction: a row on the sender sample's history (action `assign-center`, "Center changed from
+  X to Y while <stage>", plus "it had been picked up, so it starts over at In-Transit" when reset)
+  and Audit-log entries (module ACCESSION, `metadata.side`): `sender` under the sending branch
+  always; `old-receiver` under the old destination when it had been able to see the transfer (it
+  now loses it); `new-receiver` under the new destination once it can see it (an In-Transit
+  transfer needs a logistics type first). Saving the same destination again (a logistics-only
+  edit) is not a re-address and writes none of this.
+
+  **The destination must OFFER every test on the tube (Phase 1).** A tube can only go to a branch that has an
+  ACTIVE Lab Test List entry for each of its tests. The match goes through the tenant test both branches copied
+  (the sender's Branch Master Data test -> `sourceMasterLabTestId` -> the destination's Branch Master Data test
+  with the same tenant test -> an active, not deleted list entry); any of the destination's lists counts. A test
+  with no tenant link (hand-created at the branch) cannot be matched and counts as NOT offered. A free-text tube
+  test (no catalogue test) is skipped. Otherwise: 422 `DESTINATION_LACKS_TEST`, "<Branch> does not offer: <tests>.
+  Choose another branch." (at most five test names, then "and N more"); nothing is changed.
+  Checked when the destination CHANGES (first centre or Edit Center), not on a logistics-only save that keeps the
+  destination it already had. `apply-center-changes` refuses the whole batch naming the tube
+  (`CENTER_CHANGES_REFUSED`, "Nothing was changed. Tube ACC-...: <Branch> does not offer: ...").
+
+  **Outsource transfers:** the center and the logistics type set here are what unlock Pick Up (center + logistics type)
+  and Receive / Accept (center) - see `TRANSFER_OUTSOURCE_NOT_ASSIGNED` on those steps. Send `logisticsType` together
+  with `outsourceCenterId` (a logistics-only change needs the center again, as for the other kinds).
+  An OUTSOURCE transfer follows the same window as an INTERNAL one: Assign / Edit Center is allowed only while it is
+  IN_TRANSIT or PICKED_UP; once the outside lab has it (RECEIVED / ACCEPTED) or sent it back (REPEAT / REJECTED) the
+  call is refused with 422 `TRANSFER_NOT_EDITABLE` ("The center of this outsource transfer can no longer be changed
+  ..."). Retrieve and Repeat on the sample are unaffected. EXTERNAL (Forward) transfers have no such window.
 }

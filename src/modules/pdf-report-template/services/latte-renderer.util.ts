@@ -55,7 +55,29 @@
 //   use `->` (Latte) but also tolerate `.`. A `{define}` block renders against
 //   `[rootData, paramFrame]` so it sees globals plus its bound parameters.
 
-import { imageSizeStyleAttr, toText } from './pdf-document.util';
+import {
+  escapeHtmlKeepLines,
+  imageSizeStyleAttr,
+  toText,
+} from './pdf-document.util';
+
+/**
+ * Keeps the line breaks of a value that is printed WITHOUT escaping (`|noescape`): a value written over several lines
+ * is wrapped in a `white-space:pre-wrap` span, with blank lines at the start and end dropped. The text itself is left
+ * exactly as it is, so any HTML in it still works. A value with no line break is returned unchanged.
+ */
+function keepLinesRaw(value: string): string {
+  const text = value.replace(/\r\n?/g, '\n');
+  if (!text.includes('\n')) return value;
+  const trimmed = text
+    .replace(/^(?:[ \t]*\n)+/, '')
+    .replace(/(?:\n[ \t]*)+$/, '');
+  if (!trimmed.includes('\n')) return trimmed;
+  return `<span style="white-space:pre-wrap">${trimmed}</span>`;
+}
+
+/** An output expression that prints a reference range's Display text (`$r->reference_display`, `$row['reference_display']`). */
+const REFERENCE_DISPLAY_EXPR = /\breference_display\b/;
 
 type Scope = Record<string, unknown>;
 
@@ -557,7 +579,8 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
     case 'token': {
       const pageToken = PAGE_NUMBER_TOKENS[n.name];
       if (pageToken !== undefined) return pageToken;
-      return toText(lookupScope(n.name, scopes));
+      const text = toText(lookupScope(n.name, scopes));
+      return n.name === 'reference_display' ? escapeHtmlKeepLines(text) : text;
     }
     case 'out': {
       let v: unknown;
@@ -572,14 +595,26 @@ function renderNode(n: Node, scopes: Scope[], ctx: RenderCtx): string {
       // transforms the string (unknown ones pass through unchanged).
       let str = toText(v);
       let escape = true;
+      let breakLines = false;
       for (const filter of n.filters) {
         if (filter === 'noescape') {
           escape = false;
+        } else if (filter === 'nl2br') {
+          breakLines = true;
         } else {
           str = applyFilter(filter, str);
         }
       }
-      return escape ? escapeHtml(str) : str;
+      if (!escape) {
+        // `{$row->reference_display|noescape}` (what the production templates use) prints the value as typed, so a
+        // range typed over several lines would still be joined by HTML: keep its lines, leave the text itself raw.
+        return REFERENCE_DISPLAY_EXPR.test(n.expr) ? keepLinesRaw(str) : str;
+      }
+      // `|nl2br`: escape first, then turn each typed line break into <br />.
+      if (breakLines) return escapeHtml(str).replace(/\r\n|\r|\n/g, '<br />');
+      // A reference range typed over several lines keeps its lines, as in the flat engine.
+      if (REFERENCE_DISPLAY_EXPR.test(n.expr)) return escapeHtmlKeepLines(str);
+      return escapeHtml(str);
     }
     case 'if': {
       let cond: unknown;
