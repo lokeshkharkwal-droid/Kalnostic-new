@@ -5175,6 +5175,13 @@ export class LabReportService {
     actorId: string,
   ) {
     const ctx = await this.loadOrderForShare(orderId, tenantId);
+    // Referral Panel Settings credit gate — sharing releases the report, so block
+    // it over ANY channel (incl. IAM) when a linked Cash/Postpaid referral has
+    // reached its Credit Limit / Credit Allowed Days, mirroring print/print-all.
+    await this.referralCredit.assertReportAccessAllowedByOrderId(
+      tenantId,
+      orderId,
+    );
     const getPdf = this.makeSharePdfProvider(orderId, tenantId, branchId);
 
     if (dto.channel === MessagingChannel.IAM) {
@@ -5229,6 +5236,13 @@ export class LabReportService {
     actorId: string,
   ): Promise<ShareAllResult> {
     const ctx = await this.loadOrderForShare(orderId, tenantId);
+    // Referral Panel Settings credit gate — sharing releases the report, so block
+    // every channel when a linked Cash/Postpaid referral has reached its Credit
+    // Limit / Credit Allowed Days, mirroring print/print-all and single-share.
+    await this.referralCredit.assertReportAccessAllowedByOrderId(
+      tenantId,
+      orderId,
+    );
     const getPdf = this.makeSharePdfProvider(orderId, tenantId, branchId);
 
     const overrideFor = (channel: MessagingChannel): string | undefined =>

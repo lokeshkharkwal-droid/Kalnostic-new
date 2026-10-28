@@ -38,7 +38,7 @@ export class ReferralReportCreditLimitException extends KaltrosException {
   constructor(settingName: string, outstanding: number, creditLimit: number) {
     super(
       'REFERRAL_REPORT_CREDIT_LIMIT_BLOCKED',
-      `Report access is restricted: this referral's outstanding balance (${outstanding}) has reached its credit limit (${creditLimit}).`,
+      `This report can't be opened: the referral panel's outstanding dues (${outstanding}) have reached its credit limit (${creditLimit}). Please clear the pending dues or contact your administrator to view or download the report.`,
       { settingName, outstanding, creditLimit },
       HttpStatus.FORBIDDEN,
     );
@@ -50,7 +50,7 @@ export class ReferralReportCreditDaysException extends KaltrosException {
   constructor(settingName: string, ageDays: number, creditAllowedDays: number) {
     super(
       'REFERRAL_REPORT_CREDIT_DAYS_BLOCKED',
-      `Report access is restricted: this referral has an outstanding balance unpaid for ${ageDays} day(s), beyond the allowed ${creditAllowedDays} day(s).`,
+      `This report can't be opened: the referral panel has dues unpaid for ${ageDays} day(s), beyond the allowed credit period of ${creditAllowedDays} day(s). Please clear the pending dues or contact your administrator to view or download the report.`,
       { settingName, ageDays, creditAllowedDays },
       HttpStatus.FORBIDDEN,
     );

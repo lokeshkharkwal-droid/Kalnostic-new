@@ -41,4 +41,14 @@ docs {
   Errors: 422 `SHARE_TEMPLATE_NOT_ACTIVATED` (no activated template for the channel),
   400 `SHARE_RECIPIENT_MISSING` (no address/number), 404 `ORDER_REPORTS_NOT_FOUND`.
   Returns the queued communication_logs row(s); the worker delivers via Exchange.
+
+  ## Referral Panel Settings credit gate
+
+  Sharing releases the report, so the same credit gate as print / print-all runs
+  first (on every channel, incl. IAM): when the order's linked Cash/Postpaid
+  referral has `isRestrictReportCreditLimit` / `isRestrictReportCreditDays` on and
+  has breached its `creditLimitAmount` / `creditAllowedDays`, the request is
+  refused with 403 `REFERRAL_REPORT_CREDIT_LIMIT_BLOCKED` /
+  `REFERRAL_REPORT_CREDIT_DAYS_BLOCKED` before any PDF is rendered or dispatched.
+  Non-B2B orders (no referral, or a Prepaid referral) are unaffected.
 }

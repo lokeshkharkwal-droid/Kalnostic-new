@@ -46,4 +46,13 @@ docs {
 
   Prereqs: activated messaging templates (per channel) for the feature, and an
   active `lab_all_report` PDF template so Email/WhatsApp can render.
+
+  ## Referral Panel Settings credit gate
+
+  Like print / print-all and single-share, the whole request is refused up-front
+  with 403 `REFERRAL_REPORT_CREDIT_LIMIT_BLOCKED` /
+  `REFERRAL_REPORT_CREDIT_DAYS_BLOCKED` (no channel attempted, no PDF rendered)
+  when the order's linked Cash/Postpaid referral has breached its credit limit /
+  allowed days with the matching `isRestrictReport…` flag on. Non-B2B orders are
+  unaffected.
 }
