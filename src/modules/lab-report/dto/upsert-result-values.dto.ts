@@ -1,9 +1,11 @@
+import { AbnormalFlag } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsOptional,
   IsString,
   IsUUID,
@@ -45,6 +47,24 @@ export class ResultValueItemDto {
   @IsOptional()
   @IsString()
   referenceDisplay?: string;
+
+  /**
+   * Technician request to highlight this parameter's observed value(s) in the
+   * generated report. Honoured only for QUALITATIVE / SEMI_QUANTITATIVE
+   * parameters — quantitative values are flagged automatically from their
+   * numeric reference range, so the print builder ignores this flag for them.
+   */
+  @IsOptional()
+  @IsBoolean()
+  highlightInReport?: boolean;
+
+  /**
+   * Which styling to apply when `highlightInReport` is true. Reuses the
+   * `AbnormalFlag` palette; only `BOLD_AND_RED` is offered in the UI today.
+   */
+  @IsOptional()
+  @IsEnum(AbnormalFlag)
+  highlightLogic?: AbnormalFlag;
 
   /**
    * For a dynamic/calculated parameter: `true` when the technician has manually

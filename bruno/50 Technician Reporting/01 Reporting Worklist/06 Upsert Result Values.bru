@@ -63,6 +63,18 @@ docs {
   Both fields are optional; older clients that omit them keep working. Unknown
   fields are rejected (400), so deploy the backend before a frontend that sends them.
 
+  **Report highlighting (QUALITATIVE / SEMI_QUANTITATIVE only).** The Test Entry
+  grid lets the technician highlight a categorical parameter's observed value(s)
+  on the generated report:
+  - `highlightInReport` (optional boolean, default false): when true, this
+    parameter's Observed 1 and Observed 2 render in the chosen style on the report.
+  - `highlightLogic` (optional enum, `AbnormalFlag`): which style to apply — only
+    `BOLD_AND_RED` is offered in the UI today. Read only when `highlightInReport`
+    is true.
+  These are honoured for qualitative/semi-quantitative parameters only; for a
+  quantitative parameter they are ignored by the print builder (its out-of-range
+  values are flagged automatically from the numeric reference range instead).
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED` if the report is locked.
   409 `LAB_REPORT_VALUE_CHANGED` if an analyzer value changed since `loadedUpdatedAt`.
 }
