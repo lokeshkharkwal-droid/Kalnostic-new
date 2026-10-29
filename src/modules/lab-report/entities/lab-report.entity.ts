@@ -113,6 +113,18 @@ export interface LabReportOverallResult {
 }
 
 /**
+ * The technician's own text for ONE result parameter's Note on this report
+ * (`LabReportParameterNote`). A parameter with no entry here keeps showing the
+ * parameter's configured Note (`LabReportResultParam.notes`); an entry replaces it
+ * for this report only. `content` is rich-text HTML and may be `''` (the
+ * technician blanked the note on purpose).
+ */
+export interface LabReportParameterNote {
+  resultParamId: string;
+  content: string;
+}
+
+/**
  * One entry-grid row's *definition* (LABORATORY.docx §4.3) — what parameters
  * this test has, independent of whether any value has been entered yet.
  * `LabReportResultValue` rows only exist once a technician has saved at
@@ -169,6 +181,11 @@ export interface LabReportResultParam {
    * .findAll`'s `groupName`/`groupNames` filter). Empty array = this
    * parameter isn't tagged into any Overall Result group. */
   overallResultGroups: string[];
+  /** The parameter's configured Note (Master Data > Add Test > Add Result >
+   * Notes), PLAIN text, or null when it has none. It is only the default: the
+   * technician's own text for this report (`LabReportParameterNote`) replaces it
+   * on this report. Never written from the technician screen. */
+  notes: string | null;
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
@@ -183,6 +200,9 @@ export type LabReportDetailWithContent = LabReportDetail & {
    * NOT one per report (see `LabReportOverallResult`'s doc comment). A
    * parameter with nothing applied simply has no entry here. */
   overallResults: LabReportOverallResult[];
+  /** One entry per result parameter whose Note the technician changed on THIS
+   * report (see `LabReportParameterNote`); the rest inherit the configured Note. */
+  parameterNotes: LabReportParameterNote[];
   resultParams: LabReportResultParam[];
 };
 
@@ -203,6 +223,7 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
     /** Which Notes sections print, and whether the technician may choose. */
     notesPrint: LabReportNotesPrint;
     overallResults: LabReportOverallResult[];
+    parameterNotes: LabReportParameterNote[];
     resultParams: LabReportResultParam[];
   };
 

@@ -1,5 +1,5 @@
 import { IsOptional, IsString } from 'class-validator';
-import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
+import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
 
 /**
  * Body for `PATCH /lab-reports/:id/content-sections`. All 5 fields are
@@ -16,26 +16,26 @@ import { NoteMaxLength } from '../../../common/validators/note-max-length.valida
 export class UpdateContentSectionsDto {
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Useful For')
+  @RichTextNote('Useful For')
   usefulFor?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Interpretation')
+  @RichTextNote('Interpretation')
   interpretation?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Limitations')
+  @RichTextNote('Limitations')
   limitations?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Remarks')
+  @RichTextNote('Remarks')
   remarks?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('References')
+  @RichTextNote('References')
   references?: string;
 }
