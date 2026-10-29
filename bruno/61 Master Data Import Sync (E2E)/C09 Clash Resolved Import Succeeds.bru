@@ -1,0 +1,45 @@
+meta {
+  name: C09 Clash Resolved Import Succeeds
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  await h.deleteBranchTest(bru, bru.getVar('handMadeId'));
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 1, updated 4, deleted 0", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 1, updated: 4, deleted: 0 });
+  });
+
+  test("Foxtrot cloned and linked", function () {
+    const h = require('./lib/md-import.js');
+    const after = h.byName(h.getJson(bru, 'after'));
+    expect(after['Foxtrot Test'].sourceMasterLabTestId).to.equal(h.getJson(bru, 'tenantIds').F);
+    expect(after['Foxtrot Test'].testCode).to.equal('FOX');
+  });
+}
+
+docs {
+  Removing the hand-made test resolves the clash.
+}

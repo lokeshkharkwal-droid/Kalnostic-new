@@ -38,6 +38,7 @@ function build(
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   const recall = (status: SampleStatus) =>
     (

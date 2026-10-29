@@ -1,0 +1,43 @@
+meta {
+  name: S02 Create Tenant
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "name": "MD Import E2E {{e2eSuffix}}",
+    "slug": "md-import-e2e-{{e2eSuffix}}",
+    "adminFirstName": "Import",
+    "adminLastName": "Admin",
+    "adminPhone": "{{e2eAdminPhone}}",
+    "adminPassword": "{{e2eAdminPassword}}",
+    "adminEmail": "admin.{{e2eSuffix}}@md-import.test",
+    "email": "contact.{{e2eSuffix}}@md-import.test",
+    "phone": "+919800000000",
+    "mrnPrefix": "MI",
+    "address": { "line1": "1 Test Street", "city": "Pune", "country": "IN" },
+    "settings": { "timezone": "Asia/Kolkata", "currency": "INR", "date_format": "DD/MM/YYYY", "language": "en" }
+  }
+}
+
+script:pre-request {
+  const n = String(Date.now()).slice(-8);
+  bru.setVar('e2eSuffix', n);
+  bru.setVar('e2eAdminPhone', '98' + n);
+  bru.setVar('e2eAdminPassword', 'E2e@Pass123');
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.be.oneOf([200, 201]); });
+}

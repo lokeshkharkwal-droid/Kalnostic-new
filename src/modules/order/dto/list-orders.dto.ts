@@ -105,6 +105,20 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsBoolean()
   hideUnpaidAppointments?: boolean;
 
+  /**
+   * `true` additionally surfaces appointment orders that have been **checked in**
+   * (linked `Appointment.status` ∈ CHECKED_IN / IN_PROGRESS / COMPLETED) alongside
+   * whatever `statuses` the caller asked for. The Order Console sends this so a
+   * checked-in appointment (which stays `status = APPOINTMENT`) appears next to
+   * real orders without pulling in not-yet-checked-in appointments. When set, the
+   * `statuses` filter is widened by OR-ing in checked-in appointments rather than
+   * being applied as a hard `status IN (...)`.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeCheckedInAppointments?: boolean;
+
   /** Quotation lifecycle filter (EXPIRED derived from `quotationValidTill`). */
   @IsOptional()
   @IsEnum(QuotationStatus)

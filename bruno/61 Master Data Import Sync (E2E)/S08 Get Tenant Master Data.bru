@@ -1,0 +1,23 @@
+meta {
+  name: S08 Get Tenant Master Data
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/master-data/tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tenantToken}}
+}
+
+script:post-response {
+  bru.setVar('tenantMdId', res.getBody().data.id);
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}

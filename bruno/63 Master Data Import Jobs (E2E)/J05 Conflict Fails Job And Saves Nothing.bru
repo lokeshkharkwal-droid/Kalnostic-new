@@ -1,0 +1,51 @@
+meta {
+  name: J05 Conflict Fails Job And Saves Nothing
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  bru.setVar('hotelHandId', await h.createBranchTest(bru, 'Hotel Test', 'HOT-HAND'));
+  await h.createTenantTest(bru, 'Hotel Test', 'HOT');
+  h.setJson(bru, 'before', await h.branchTests(bru));
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  h.setJson(bru, 'final', (await h.pollJob(bru, res.getBody().data.id)).job);
+  h.setJson(bru, 'after', await h.branchTests(bru));
+}
+
+tests {
+  test("202, then FAILED in PREPARING with the clash named", function () {
+    const h = require('./lib/md-import.js');
+    expect(res.status).to.equal(202);
+    const final = h.getJson(bru, 'final');
+    expect(final.status).to.equal('FAILED');
+    expect(final.error.code).to.equal('MASTER_DATA_IMPORT_CONFLICT');
+    expect(final.error.phase).to.equal('PREPARING');
+    expect(final.error.message).to.include('name "Hotel Test"');
+    expect(final.error.message).to.include('No changes were saved.');
+    expect(final.result).to.equal(null);
+  });
+  test("branch unchanged", function () {
+    const h = require('./lib/md-import.js');
+    const sort = (rows) => rows.slice().sort((a, b) => a.id.localeCompare(b.id));
+    expect(sort(h.getJson(bru, 'after'))).to.eql(sort(h.getJson(bru, 'before')));
+  });
+}
+
+docs {
+  A hand-made branch test shares a tenant test's name: the job's pre-flight rejects it before any write.
+}

@@ -1,0 +1,73 @@
+meta {
+  name: J02 Job Imports In Batches Of 100
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  // 150 new tenant tests → with the existing ones, two batches of 100.
+  for (let i = 0; i < 150; i += 10) {
+    await Promise.all(Array.from({ length: 10 }, (_, k) => {
+      const n = String(i + k + 1).padStart(3, '0');
+      return h.createTenantTest(bru, `Bulk Test ${n}`, `BULK-${n}`);
+    }));
+  }
+  bru.setVar('tenantCount', String((await h.tenantTests(bru)).length));
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  h.setJson(bru, 'started', res.getBody().data);
+  const { job, seen } = await h.pollJob(bru, res.getBody().data.id);
+  h.setJson(bru, 'final', job);
+  h.setJson(bru, 'seen', seen);
+  h.setJson(bru, 'after', await h.branchTests(bru));
+}
+
+tests {
+  test("202 Accepted, job RUNNING in PREPARING", function () {
+    const h = require('./lib/md-import.js');
+    expect(res.status).to.equal(202);
+    const started = h.getJson(bru, 'started');
+    expect(started.status).to.equal('RUNNING');
+    expect(started.progress.phase).to.equal('PREPARING');
+  });
+  test("progress was visible while running", function () {
+    const h = require('./lib/md-import.js');
+    expect(h.getJson(bru, 'seen').some((s) => s.status === 'RUNNING')).to.equal(true);
+  });
+  test("SUCCEEDED: 150 created, the rest updated", function () {
+    const h = require('./lib/md-import.js');
+    const final = h.getJson(bru, 'final');
+    const n = Number(bru.getVar('tenantCount'));
+    expect(final.status).to.equal('SUCCEEDED');
+    expect(final.result.tests).to.eql({ created: 150, updated: n - 150, deleted: 0 });
+    expect(final.error).to.equal(null);
+  });
+  test("two batches of 100, all completed", function () {
+    const h = require('./lib/md-import.js');
+    const p = h.getJson(bru, 'final').progress;
+    const n = Number(bru.getVar('tenantCount'));
+    expect(p.phase).to.equal('DONE');
+    expect(p.total).to.equal(n);
+    expect(p.processed).to.equal(n);
+    expect(p.totalBatches).to.equal(Math.ceil(n / 100));
+    expect(p.batches.map((b) => b.status)).to.eql(p.batches.map(() => 'completed'));
+    expect(p.batches.map((b) => b.processed)).to.eql([100, n]);
+  });
+  test("branch has one test per tenant test", function () {
+    const h = require('./lib/md-import.js');
+    expect(h.getJson(bru, 'after').length).to.equal(Number(bru.getVar('tenantCount')));
+  });
+}

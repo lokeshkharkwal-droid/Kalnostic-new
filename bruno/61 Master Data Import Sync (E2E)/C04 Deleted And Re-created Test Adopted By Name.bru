@@ -1,0 +1,56 @@
+meta {
+  name: C04 Deleted And Re-created Test Adopted By Name
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  // The Oct-2026 prod 500: tenant test deleted, re-created with the same name and a new code.
+  const ids = h.getJson(bru, 'tenantIds');
+  await h.deleteTenantTest(bru, ids.B);
+  ids.B = await h.createTenantTest(bru, 'Bravo Test', 'BRAVO-2');
+  h.setJson(bru, 'tenantIds', ids);
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 0, updated 5, deleted 0", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 0, updated: 5, deleted: 0 });
+  });
+
+  test("Bravo keeps its branch id, takes the new code and link", function () {
+    const h = require('./lib/md-import.js');
+    const ids = h.getJson(bru, 'tenantIds');
+    const before = h.getJson(bru, 'branchIds');
+    const after = h.byName(h.getJson(bru, 'after'));
+    expect(Object.keys(after).length).to.equal(5);
+    expect(after['Bravo Test'].id).to.equal(before['Bravo Test']);
+    expect(after['Bravo Test'].testCode).to.equal('BRAVO-2');
+    expect(after['Bravo Test'].sourceMasterLabTestId).to.equal(ids.B);
+  });
+}
+
+docs {
+  Reproduces the production failure (unique violation on
+  `(tenant_id, master_data_id, test_name)`): the branch copy still links to the
+  deleted tenant test, so it matches by neither link nor code — the name tier
+  adopts it instead of cloning a duplicate.
+}

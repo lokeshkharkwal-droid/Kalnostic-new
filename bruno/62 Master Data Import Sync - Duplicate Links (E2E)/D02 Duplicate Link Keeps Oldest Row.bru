@@ -1,0 +1,53 @@
+meta {
+  name: D02 Duplicate Link Keeps Oldest Row
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const src = h.getJson(bru, 'tenantIds').B;
+  const linked = (await h.branchTests(bru)).filter((t) => t.sourceMasterLabTestId === src);
+  h.setJson(bru, 'linkedBefore', linked);
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+  bru.setVar('tenantCount', String((await h.tenantTests(bru)).length));
+}
+
+tests {
+  test("fixture applied: two branch rows share the link", function () {
+    const h = require('./lib/md-import.js');
+    expect(h.getJson(bru, 'linkedBefore').length).to.equal(2);
+  });
+  test("201 Created, the duplicate is removed", function () {
+    expect(res.status).to.equal(201);
+    expect(res.getBody().data.tests.deleted).to.equal(1);
+  });
+  test("the original (oldest) row is kept and updated", function () {
+    const h = require('./lib/md-import.js');
+    const src = h.getJson(bru, 'tenantIds').B;
+    const original = h.getJson(bru, 'linkedBefore').find((t) => !t.testName.endsWith('(dup)'));
+    const linked = h.getJson(bru, 'after').filter((t) => t.sourceMasterLabTestId === src);
+    expect(linked.map((t) => t.id)).to.eql([original.id]);
+    expect(h.getJson(bru, 'after').length).to.equal(Number(bru.getVar('tenantCount')));
+  });
+}
+
+docs {
+  Branch has two rows linked to tenant test B (fixture). The older is kept and updated; the newer is soft-deleted like an orphan.
+}

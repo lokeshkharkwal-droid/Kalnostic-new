@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { AppointmentService } from '../appointment/appointment.service';
 
 /**
  * `sample_name` is snapshotted onto each `OrderSample` when it is generated, so
@@ -26,6 +27,7 @@ describe('OrderSampleService — generateForOrderInTx sample name', () => {
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
 
   /** A tx whose order has one test requiring the given live sample rows. */

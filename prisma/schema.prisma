@@ -9360,3 +9360,43 @@ model SalesSetting {
 
   @@map("sales_settings")
 }
+
+/// One "Import Master Data" run (Tenant → Branch Master Data) executed as a
+/// background job so the branch-admin dialog can poll live progress. The sync
+/// itself is still ONE atomic transaction; `progress` reports the 100-test
+/// batches it walks through (nothing is committed until the end). `progress`
+/// is written from outside that transaction after every batch, which also
+/// refreshes `updatedAt` — a RUNNING row whose `updatedAt` is older than the
+/// sync's transaction timeout can no longer be running (process restarted) and
+/// is reported as INTERRUPTED. At most one RUNNING job per tenant is enforced by
+/// a partial unique index in prisma/rls.sql.
+model MasterDataImportJob {
+  id         String                    @id @default(uuid())
+  tenantId   String                    @map("tenant_id")
+  branchId   String                    @map("branch_id")
+  status     MasterDataImportJobStatus @default(RUNNING)
+  /// `MasterDataImportProgress` (phase, batches, counts) — see the service.
+  progress   Json
+  /// `{ tests: {created, updated, deleted}, panels: {...} }` once SUCCEEDED.
+  result     Json?
+  /// `{ code, message }` once FAILED / INTERRUPTED.
+  error      Json?
+  startedBy  String?                   @map("started_by")
+  /// Backend process running it (`host#pm2-instance`); on startup that process
+  /// marks its own leftover RUNNING jobs INTERRUPTED at once.
+  runner     String?                   @map("runner")
+  startedAt  DateTime                  @default(now()) @map("started_at")
+  finishedAt DateTime?                 @map("finished_at")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+
+  @@index([tenantId, branchId, createdAt])
+  @@map("master_data_import_jobs")
+}
+
+enum MasterDataImportJobStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  INTERRUPTED
+}

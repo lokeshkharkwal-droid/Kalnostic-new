@@ -33,6 +33,7 @@ function build() {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   return { service, tx, rows };
 }
@@ -95,6 +96,7 @@ describe('Repeat / Error of a Sent sample are the SENDING branch’s only (like 
     };
     const service = new OrderSampleService(
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -179,6 +181,7 @@ describe('OrderSampleService.findHistory keeps the sender’s "returned by the r
     };
     const service = new OrderSampleService(
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

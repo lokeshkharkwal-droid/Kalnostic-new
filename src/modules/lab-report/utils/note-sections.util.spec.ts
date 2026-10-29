@@ -30,9 +30,9 @@ describe('notesSelectableFor', () => {
   });
 
   it('a free-text line has no Notes, so no switch applies', () => {
-    expect(notesSelectableFor('DIRECT', { labTest: true, labPanel: true })).toBe(
-      false,
-    );
+    expect(
+      notesSelectableFor('DIRECT', { labTest: true, labPanel: true }),
+    ).toBe(false);
   });
 });
 
@@ -58,8 +58,8 @@ describe('excludedSectionsToApply', () => {
   });
 
   it('leaves nothing out while the switch is off, whatever was saved', () => {
-    expect(excludedSectionsToApply(false, ['limitations', 'remarks']).size).toBe(
-      0,
-    );
+    expect(
+      excludedSectionsToApply(false, ['limitations', 'remarks']).size,
+    ).toBe(0);
   });
 });

@@ -1,0 +1,25 @@
+meta {
+  name: S05 Enable Branch Admin Module
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/branches/{{e2eBranchId}}/modules
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tenantToken}}
+}
+
+body:json {
+  {
+    "modules": [{ "moduleKey": "branch_admin", "isEnabled": true }]
+  }
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}

@@ -1,0 +1,53 @@
+meta {
+  name: C05 Param Code Change Keeps Param Id
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const ids = h.getJson(bru, 'tenantIds');
+  const branchIds = h.getJson(bru, 'branchIds');
+  const detail = await h.branchTestDetail(bru, branchIds['Alpha Test']);
+  bru.setVar('alphaParamId', detail.resultParams.find((p) => p.parameterCode === 'HB').id);
+  await h.updateTenantTest(bru, ids.A, {
+    resultParams: [{
+      parameterName: 'Haemoglobin', parameterCode: 'HGB', reportingUnit: 'g/dL',
+      resultType: 'QUANTITATIVE', parameterType: 'MEASURED', decimalPlaces: 1, sortOrder: 1,
+    }],
+  });
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  const branchIds = h.getJson(bru, 'branchIds');
+  const detail = await h.branchTestDetail(bru, branchIds['Alpha Test']);
+  h.setJson(bru, 'alphaParams', detail.resultParams.map((p) => ({ id: p.id, code: p.parameterCode })));
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 0, updated 5, deleted 0", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 0, updated: 5, deleted: 0 });
+  });
+
+  test("branch param keeps its id and takes the new code", function () {
+    const h = require('./lib/md-import.js');
+    const params = h.getJson(bru, 'alphaParams');
+    expect(params).to.eql([{ id: bru.getVar('alphaParamId'), code: 'HGB' }]);
+  });
+}
+
+docs {
+  Upstream param code HB → HGB (same name): matched by name, so results saved against the branch param stay attached.
+}

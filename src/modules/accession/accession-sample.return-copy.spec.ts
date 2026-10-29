@@ -69,6 +69,7 @@ function build(canReturn: boolean, copyStatus = 'ACCEPTED', cancelled = false) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   const transition = jest.fn(() => {
     calls.push('transition');

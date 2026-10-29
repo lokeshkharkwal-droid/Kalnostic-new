@@ -580,7 +580,7 @@ export class LabReportController {
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
-    description: "Updated which notes sections print on a lab report",
+    description: 'Updated which notes sections print on a lab report',
   })
   updateNotePrintSections(
     @CurrentTenant() tenantId: string,

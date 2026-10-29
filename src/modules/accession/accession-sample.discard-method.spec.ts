@@ -29,6 +29,7 @@ describe('OrderSampleService.withDiscardMethods - Discard Method for the list', 
       undefined as never,
       undefined as never,
       undefined as never,
+      undefined as never,
     );
     const methods = (rows: unknown[]) =>
       (

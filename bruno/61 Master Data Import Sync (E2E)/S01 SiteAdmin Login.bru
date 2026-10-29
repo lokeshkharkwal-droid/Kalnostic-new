@@ -1,0 +1,26 @@
+meta {
+  name: S01 SiteAdmin Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "admin@kalnostics.com",
+    "password": "SuperSecret1"
+  }
+}
+
+script:post-response {
+  bru.setVar('siteAdminToken', res.getBody().data.accessToken);
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}

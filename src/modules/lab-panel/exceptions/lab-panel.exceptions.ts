@@ -51,3 +51,32 @@ export class LabPanelTestNotFoundException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 409 — an "Import Master Data" job is already running for this tenant (imports
+ * run one at a time). `jobId`/`branchId` let the caller attach to that run.
+ */
+export class MasterDataImportAlreadyRunningException extends KaltrosException {
+  constructor(jobId: string, branchId: string, sameBranch: boolean) {
+    super(
+      'MASTER_DATA_IMPORT_ALREADY_RUNNING',
+      sameBranch
+        ? 'An import is already running for this branch.'
+        : 'Another branch of this business is importing master data. Try again when it finishes.',
+      { jobId, branchId, sameBranch },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/** 404 — no import job with this id for the caller's tenant + branch. */
+export class MasterDataImportJobNotFoundException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'MASTER_DATA_IMPORT_JOB_NOT_FOUND',
+      'Import job not found',
+      { id },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}

@@ -83,6 +83,12 @@ docs {
   - `authorId` / `approvedById` — optional person UUIDs; must be active staff of
     the tenant → 404 `INVALID_DOCUMENT_AUTHOR` otherwise.
   - `effectiveDate` / `expiryDate` / `reviewDate` — optional ISO dates.
-  - `fileName` / `fileUrl` — optional file reference (upload handled elsewhere).
+  - `fileName` / `fileUrl` — optional attached-file reference. To attach a file
+    from the user's computer, first run **Uploads → Upload Attachment**
+    (`POST /uploads/attachment`, multipart `file`; PDF/images/DOC/DOCX/XLS/XLSX/
+    CSV, ≤ 10 MB), then pass the returned `url` as `fileUrl` and the file's
+    original name as `fileName` (≤ 255). An external link may be sent as
+    `fileUrl` instead. `fileUrl` must be a valid URL (≤ 2048) → 400
+    `VALIDATION_ERROR` otherwise. Both are copied into the version-1 snapshot.
   - `description` — optional, ≤ 5000 chars.
 }

@@ -57,6 +57,7 @@ describe('OrderSampleService.summary — filters, selection and TAT rule', () =>
       undefined as never,
       undefined as never,
       { resolveDepartmentIds } as never,
+      {} as never,
     );
   });
 
@@ -230,6 +231,7 @@ describe('OrderSampleService.summary — filters, selection and TAT rule', () =>
       undefined as never,
       undefined as never,
       { resolveDepartmentIds } as never,
+      {} as never,
     );
     await run();
     expect(findMany).not.toHaveBeenCalled();

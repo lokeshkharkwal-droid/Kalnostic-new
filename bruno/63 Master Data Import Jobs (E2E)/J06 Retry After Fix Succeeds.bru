@@ -1,0 +1,35 @@
+meta {
+  name: J06 Retry After Fix Succeeds
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  await h.deleteBranchTest(bru, bru.getVar('hotelHandId'));
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  h.setJson(bru, 'final', (await h.pollJob(bru, res.getBody().data.id)).job);
+}
+
+tests {
+  test("SUCCEEDED, Hotel added", function () {
+    const h = require('./lib/md-import.js');
+    const final = h.getJson(bru, 'final');
+    expect(res.status).to.equal(202);
+    expect(final.status).to.equal('SUCCEEDED');
+    expect(final.result.tests.created).to.equal(1);
+  });
+}

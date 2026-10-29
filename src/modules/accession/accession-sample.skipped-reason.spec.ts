@@ -69,6 +69,7 @@ describe("a skipped sample in a group action shows the refusal's own sentence", 
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const internals = service as unknown as {
       transitionInTx: jest.Mock;

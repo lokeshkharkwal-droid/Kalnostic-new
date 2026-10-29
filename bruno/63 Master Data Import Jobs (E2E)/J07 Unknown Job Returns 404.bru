@@ -1,0 +1,22 @@
+meta {
+  name: J07 Unknown Job Returns 404
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs/00000000-0000-4000-8000-000000000000
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+tests {
+  test("404 MASTER_DATA_IMPORT_JOB_NOT_FOUND", function () {
+    expect(res.status).to.equal(404);
+    expect(res.getBody().error.code).to.equal('MASTER_DATA_IMPORT_JOB_NOT_FOUND');
+  });
+}

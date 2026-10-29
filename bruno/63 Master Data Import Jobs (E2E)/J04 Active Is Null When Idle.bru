@@ -1,0 +1,22 @@
+meta {
+  name: J04 Active Is Null When Idle
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs/active
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+tests {
+  test("200 OK with no running job", function () {
+    expect(res.status).to.equal(200);
+    expect(res.getBody().data).to.equal(null);
+  });
+}

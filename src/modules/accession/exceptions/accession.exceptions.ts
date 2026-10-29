@@ -267,6 +267,24 @@ export class RetrieveBlockedException extends InvalidSampleTransitionException {
 }
 
 /**
+ * 422 — a one-step Retrieve (undo) of an ACCEPTED transfer is refused: the
+ * receiving branch has already started working the accepted copy (its status has
+ * moved past ACCEPTED — collected, resulted, or passed on), so undoing the
+ * acceptance would lose that work. The receiver should Reject/Repeat instead.
+ * Skippable by group "skip invalid" actions.
+ */
+export class TransferRetrieveBlockedException extends KaltrosException {
+  constructor(transferId: string, cloneStatus: SampleStatus) {
+    super(
+      'TRANSFER_RETRIEVE_BLOCKED',
+      'This sample has already been worked on at the receiving branch, so its acceptance can no longer be undone. Reject or Repeat it instead.',
+      { id: transferId, cloneStatus },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — the receiving branch cannot Repeat/return a transferred test because its
  * result is already validated there (Result Done, Approved or Published). Work
  * still in progress does not block it: the report is reset on the way back.

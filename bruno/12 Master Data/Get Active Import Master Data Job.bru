@@ -1,0 +1,21 @@
+meta {
+  name: Get Active Import Master Data Job
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs/active
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The active branch's RUNNING import job, or `data: null`. The Master Data page
+  calls this on load so a reload (or another tab) re-attaches to an import in
+  progress instead of starting a second one.
+}

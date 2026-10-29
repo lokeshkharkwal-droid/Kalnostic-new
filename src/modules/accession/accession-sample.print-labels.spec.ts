@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { AppointmentService } from '../appointment/appointment.service';
 import { OrderSampleDetail } from './entities/accession-sample.entity';
 
 /**
@@ -77,6 +78,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
       tenantService as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
     jest
       .spyOn(service, 'findById')

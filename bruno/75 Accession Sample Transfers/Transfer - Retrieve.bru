@@ -42,12 +42,19 @@ docs {
   From IN_TRANSIT there is nothing for the receiver to undo, so Retrieve is refused
   with 422 INVALID_TRANSFER_TRANSITION (and is not offered in the UI at that status).
 
-  This is a MINIMAL step-back by design: it changes only `transferStatus` (and clears
-  the just-undone step's own field — pickedUpAt/pickedUpBy, receivedAt/receiveCondition,
-  or acceptedAt) and writes a `retrieve` row on the sample's history timeline. It does
-  NOT void the accept-time clone (ACCEPTED -> RECEIVED leaves the receiving In-House
-  copy in place) and does NOT reverse a sender-side return (REPEAT/REJECTED -> RECEIVED
-  simply reopens the transfer). It is distinct from the SENDER's sample-level Retrieve
+  This is a MINIMAL step-back: it changes only `transferStatus` (and clears the
+  just-undone step's own field — pickedUpAt/pickedUpBy, receivedAt/receiveCondition,
+  or acceptedAt) and writes a `retrieve` row on the sample's history timeline.
+
+  ACCEPTED -> RECEIVED is the one step that also touches the receiving copy: Accept
+  materialises a clone in the receiving branch's In-House list (RULE 1), so the undo
+  soft-deletes that clone and moves its report(s) back to origin
+  (`removeTransferCloneInTx`), clearing `clonedSampleId` — otherwise a later re-Accept
+  would create a DUPLICATE in-house sample. It is REFUSED with 422
+  TRANSFER_RETRIEVE_BLOCKED when the receiver has already started working the copy (its
+  status moved past ACCEPTED — collected / resulted / passed on); Reject or Repeat it
+  instead. It does NOT reverse a sender-side return (REPEAT/REJECTED -> RECEIVED simply
+  reopens the transfer). It is distinct from the SENDER's sample-level Retrieve
   (`POST order-samples/:id/retrieve`), which recalls a sent sample to origin.
 
   The update is conditional on the transfer's current status, so a concurrent change

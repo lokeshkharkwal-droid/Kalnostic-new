@@ -1,0 +1,41 @@
+meta {
+  name: C13 Save State For Duplicate-Link Fixture
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  const file = bru.getEnvVar('e2eStateFile');
+  if (file) {
+    require('fs').writeFileSync(file, JSON.stringify({
+      tenantToken: bru.getVar('tenantToken'),
+      branchToken: bru.getVar('branchToken'),
+      tenantMdId: bru.getVar('tenantMdId'),
+      branchMdId: bru.getVar('branchMdId'),
+      tenantIds: h.getJson(bru, 'tenantIds'),
+    }));
+  }
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}
+
+docs {
+  Writes tokens + ids to `e2eStateFile` (env var) for folder 62. Between the two
+  runs, apply `lib/md-import-duplicate-link-fixture.sql` to the test database:
+
+    psql "$TEST_DB_URL" -v bmd=<branchMdId> -v src=<tenantIds.B> \
+      -f bruno/lib/md-import-duplicate-link-fixture.sql
+}

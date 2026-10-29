@@ -1,11 +1,17 @@
 import {
   BadRequestException,
   Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { LabPanelService } from './lab-panel.service';
+import { MasterDataImportJobService } from './master-data-import-job.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
@@ -22,7 +28,10 @@ import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.con
  */
 @Controller('master-data/branch')
 export class MasterDataSyncController {
-  constructor(private readonly labPanelService: LabPanelService) {}
+  constructor(
+    private readonly labPanelService: LabPanelService,
+    private readonly importJobService: MasterDataImportJobService,
+  ) {}
 
   /**
    * Sync the tenant's Tenant Master Data into the caller's active Branch Master
@@ -53,5 +62,80 @@ export class MasterDataSyncController {
       branchId,
       personId,
     );
+  }
+
+  /**
+   * Same import as `POST import-from-tenant`, run as a background job: returns
+   * 202 with the job straight away; poll `GET import-from-tenant/jobs/:jobId`
+   * for live progress (100-test batches) and the final result. Still one atomic
+   * transaction — a failure saves nothing. 409
+   * `MASTER_DATA_IMPORT_ALREADY_RUNNING` while another import runs for this
+   * tenant (attach via `GET import-from-tenant/jobs/active`).
+   */
+  @Post('import-from-tenant/jobs')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermission(
+    PERMISSION_KEYS.BR_MD_IMPORT_TESTS,
+    PERMISSION_KEYS.BR_MD_IMPORT_PANELS,
+  )
+  @Audit({
+    module: AuditModule.MASTER_DATA,
+    action: AuditAction.UPDATE,
+    description: 'Started importing Tenant Master Data into the branch',
+  })
+  startImportJob(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('active_branch_id') branchId: string | null,
+    @CurrentUser('person_id') personId: string,
+  ) {
+    return this.importJobService.start(
+      tenantId,
+      this.requireBranch(branchId),
+      personId,
+    );
+  }
+
+  /** The active branch's running import, or `null` (re-attach after reload). */
+  @Get('import-from-tenant/jobs/active')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermission(
+    PERMISSION_KEYS.BR_MD_IMPORT_TESTS,
+    PERMISSION_KEYS.BR_MD_IMPORT_PANELS,
+  )
+  getActiveImportJob(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('active_branch_id') branchId: string | null,
+  ) {
+    return this.importJobService.getActive(
+      tenantId,
+      this.requireBranch(branchId),
+    );
+  }
+
+  /** One import job of the active branch: live progress, then result or error. */
+  @Get('import-from-tenant/jobs/:jobId')
+  @UseGuards(PermissionGuard)
+  @RequireAnyPermission(
+    PERMISSION_KEYS.BR_MD_IMPORT_TESTS,
+    PERMISSION_KEYS.BR_MD_IMPORT_PANELS,
+  )
+  getImportJob(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('active_branch_id') branchId: string | null,
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+  ) {
+    return this.importJobService.get(
+      jobId,
+      tenantId,
+      this.requireBranch(branchId),
+    );
+  }
+
+  private requireBranch(branchId: string | null): string {
+    if (!branchId) {
+      throw new BadRequestException('No active branch in the current context');
+    }
+    return branchId;
   }
 }

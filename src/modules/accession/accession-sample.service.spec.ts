@@ -13,6 +13,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { AppointmentService } from '../appointment/appointment.service';
 
 /** First argument of a mock's first call, typed (avoids `any` member access in assertions). */
 const firstCallArg = (m: jest.Mock): unknown => {
@@ -51,6 +52,7 @@ describe('OrderSampleService — panel sample resolution', () => {
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
   });
 
@@ -218,6 +220,7 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
   }
 
@@ -402,6 +405,7 @@ describe('OrderSampleService — label variables', () => {
     {} as unknown as TenantService,
     {} as unknown as BarcodeService,
     {} as unknown as UserDepartmentScopeService,
+    {} as unknown as AppointmentService,
   );
 
   /** `patient_age` of a label for a patient with this DOB / age snapshot. */
@@ -507,6 +511,7 @@ describe('OrderSampleService — order overview hides superseded originals', () 
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
     const result = (
       service as unknown as {
@@ -640,6 +645,7 @@ describe('OrderSampleService — transitionInTx concurrency claim', () => {
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
     const run = () =>
       (
@@ -707,6 +713,7 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
     const transition = (action: string, note: object = {}) =>
       (
@@ -944,6 +951,7 @@ describe('OrderSampleService — retrieve target', () => {
         {} as unknown as TenantService,
         {} as unknown as BarcodeService,
         {} as unknown as UserDepartmentScopeService,
+        {} as unknown as AppointmentService,
       ) as unknown as { retrieveTarget: (s: unknown) => string | null }
     ).retrieveTarget(sample);
 
@@ -1011,6 +1019,7 @@ describe('OrderSampleService — Return of a transferred copy', () => {
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
     const priv = service as unknown as Priv;
     priv.returnCopyToOrigin = jest.fn().mockResolvedValue('origin1');

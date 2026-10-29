@@ -1,0 +1,45 @@
+meta {
+  name: J03 Second Start While Running Returns 409
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  const first = res.getBody().data;
+  const second = await h.startJob(bru);
+  const active = await h.getActiveJob(bru);
+  h.setJson(bru, 'second', { status: second.status, error: second.body.error });
+  h.setJson(bru, 'active', active.body.data);
+  bru.setVar('firstJobId', first.id);
+  h.setJson(bru, 'final', (await h.pollJob(bru, first.id)).job);
+}
+
+tests {
+  test("first start 202", function () { expect(res.status).to.equal(202); });
+  test("second start 409 MASTER_DATA_IMPORT_ALREADY_RUNNING", function () {
+    const h = require('./lib/md-import.js');
+    const second = h.getJson(bru, 'second');
+    expect(second.status).to.equal(409);
+    expect(second.error.code).to.equal('MASTER_DATA_IMPORT_ALREADY_RUNNING');
+    expect(second.error.message).to.include('already running for this branch');
+  });
+  test("/jobs/active returns the running job", function () {
+    const h = require('./lib/md-import.js');
+    expect(h.getJson(bru, 'active').id).to.equal(bru.getVar('firstJobId'));
+  });
+  test("the first job still finishes", function () {
+    const h = require('./lib/md-import.js');
+    expect(h.getJson(bru, 'final').status).to.equal('SUCCEEDED');
+  });
+}

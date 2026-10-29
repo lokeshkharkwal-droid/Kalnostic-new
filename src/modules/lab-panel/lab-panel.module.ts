@@ -7,6 +7,7 @@ import { LabPanelOptionsController } from './lab-panel-options.controller';
 import { SiteAdminLabPanelController } from './siteadmin-lab-panel.controller';
 import { MasterDataSyncController } from './master-data-sync.controller';
 import { LabPanelService } from './lab-panel.service';
+import { MasterDataImportJobService } from './master-data-import-job.service';
 
 /**
  * Lab Panel feature module. Tenant-scoped + branch-level lab-panel configuration
@@ -26,7 +27,7 @@ import { LabPanelService } from './lab-panel.service';
     SiteAdminLabPanelController,
     MasterDataSyncController,
   ],
-  providers: [LabPanelService],
+  providers: [LabPanelService, MasterDataImportJobService],
   exports: [LabPanelService],
 })
 export class LabPanelModule {}

@@ -1,0 +1,41 @@
+meta {
+  name: C03 Re-import Is Idempotent
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 0, updated 5, deleted 0", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 0, updated: 5, deleted: 0 });
+  });
+
+  test("same branch ids, no duplicates", function () {
+    const h = require('./lib/md-import.js');
+    const before = h.getJson(bru, 'branchIds');
+    const after = h.byName(h.getJson(bru, 'after'));
+    expect(Object.keys(after).length).to.equal(5);
+    for (const [name, id] of Object.entries(before)) expect(after[name].id).to.equal(id);
+  });
+}
+
+docs {
+  Nothing changed upstream → every branch test updated in place, ids unchanged.
+}

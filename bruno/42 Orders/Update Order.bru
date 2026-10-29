@@ -217,6 +217,24 @@ docs {
   Patches that keep a non-`ORDER` status (`DRAFT`/`QUOTE`/`APPOINTMENT`) skip this
   gate, mirroring Create Order.
 
+  ## Check-In (appointment → active workflow)
+
+  `checkIn` (boolean, transient — not persisted) drives the Appointments → Create
+  Order → **Confirm** flow. Send `{ "checkIn": true }` (the order keeps
+  `status = APPOINTMENT`) and the server, atomically:
+  - advances the linked appointment `NEW`/`CONFIRMED`/`RESCHEDULED` → `CHECKED_IN`
+    (idempotent — a no-op if it is already checked in / in progress / completed /
+    cancelled), appending an `AppointmentStatusHistory` row; and
+  - generates the order's accession samples (status `NEW`) — appointments do **not**
+    enter accession before check-in (a plain appointment create/edit never generates
+    samples). Once accessioned, later item-set edits reconcile the sample delta as
+    usual even though the order stays an `APPOINTMENT`.
+
+  A checked-in appointment then shows in Billing regardless of payment and in the
+  Order Console (`includeCheckedInAppointments`) while remaining on the Appointments
+  list. The first sample collected in accession advances the appointment
+  `CHECKED_IN` → `IN_PROGRESS`.
+
   ## Home-visit slot reservation on edit
   
   The phlebotomist slot reservation is re-pointed when the booking changes

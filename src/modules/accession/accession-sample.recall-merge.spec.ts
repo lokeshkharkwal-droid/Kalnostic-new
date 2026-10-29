@@ -151,6 +151,7 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   const recall = jest
     .spyOn(

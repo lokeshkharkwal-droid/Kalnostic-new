@@ -1,0 +1,26 @@
+meta {
+  name: S03 Business Admin Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "identifier": "{{e2eAdminPhone}}",
+    "password": "{{e2eAdminPassword}}"
+  }
+}
+
+script:post-response {
+  bru.setVar('tenantToken', res.getBody().data.accessToken);
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}
