@@ -35,8 +35,13 @@ const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
  * Escaping them (the default for every other token, to avoid layout/injection
  * issues from plain-text values) would print the literal tags instead of the
  * formatted content, so they're inserted as-is here instead. Every other key
- * (patient name, order code, `result_note`, …) is genuinely plain text and
- * must stay escaped.
+ * (patient name, order code, …) is genuinely plain text and must stay escaped.
+ *
+ * `result_note` (a result row's per-parameter note) is in this list because the
+ * technician can write it in the same editor for one report. The value is built by
+ * `LabReportService.buildPrintContext` and is always safe HTML: the technician's
+ * HTML as saved, or the parameter's plain Master Data note already escaped there
+ * (see `effectiveParameterNoteHtml`).
  *
  * `test_file_attachment` is not technician-authored: it is `<embed>` markup the
  * server builds from the report's File+ uploads (URLs and names already
@@ -58,6 +63,7 @@ const RICH_TEXT_KEYS = new Set([
   'remarks',
   'references',
   'overall_result',
+  'result_note',
   'test_file_attachment',
   'test_file_attachment_without_header',
   'observed1',

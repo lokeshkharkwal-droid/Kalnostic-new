@@ -178,3 +178,46 @@ describe('flat template {{#if key}} inside {{#each}}', () => {
     ).toBe('[A][B]');
   });
 });
+
+/**
+ * `{result_note}` on a result row is rich text: the technician writes it in the Notes editor for one report, so
+ * its HTML must print as formatting, not as literal tags. Every other row field stays escaped.
+ */
+describe('flat template {result_note} in a results row', () => {
+  const resultRows = (rowsOf: Array<Record<string, unknown>>): string => {
+    const meta: PdfTemplateMeta = {
+      ...PDF_TEMPLATE_META_DEFAULTS,
+      body_html:
+        '{{#each results}}[{parameter_name}|{{#if result_note}}{result_note}{{/if}}]{{/each}}',
+    };
+    const context = {
+      variables: {} as never,
+      sections: { results: rowsOf } as never,
+    } as GeneratePdfDto;
+    return service.renderBodyFragment(meta, context);
+  };
+
+  it("prints the technician's formatting as formatting, not as literal tags", () => {
+    expect(
+      resultRows([
+        { parameter_name: 'Bilirubin', result_note: '<p><strong>Hemolysed</strong></p>' },
+      ]),
+    ).toBe('[Bilirubin|<p><strong>Hemolysed</strong></p>]');
+  });
+
+  it('drops the block for a row with no note (the empty or blank-HTML cases too)', () => {
+    expect(
+      resultRows([
+        { parameter_name: 'A', result_note: '' },
+        { parameter_name: 'B', result_note: '<p>&nbsp;</p>' },
+        { parameter_name: 'C' },
+      ]),
+    ).toBe('[A|][B|][C|]');
+  });
+
+  it('other row fields are still escaped', () => {
+    expect(
+      resultRows([{ parameter_name: '<b>X</b>', result_note: '<i>n</i>' }]),
+    ).toBe('[&lt;b&gt;X&lt;/b&gt;|<i>n</i>]');
+  });
+});

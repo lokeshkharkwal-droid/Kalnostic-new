@@ -56,6 +56,7 @@ function report(kind: Kind, member: string | null = 'm1') {
         },
       },
     },
+    parameterNotes: [],
     contentSections: {
       usefulFor: null,
       interpretation: null,

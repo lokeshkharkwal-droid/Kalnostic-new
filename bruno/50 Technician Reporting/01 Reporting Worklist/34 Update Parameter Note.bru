@@ -1,0 +1,73 @@
+meta {
+  name: 34 Update Parameter Note
+  type: http
+  seq: 34
+}
+
+patch {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/parameter-note/{{resultParamId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "content": "<p><strong>Sample was hemolysed</strong>, repeat advised.</p>"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the saved note for that parameter", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("resultParamId");
+    expect(d.content).to.be.a("string");
+  });
+}
+
+docs {
+  Save the technician's OWN text for ONE result parameter's Note on this report: the Notes icon beside Sync on
+  Technician > Reporting > Patient Entry / Test Entry. `resultParamId` (a `LabTestResultParam.id`) is a required path
+  segment and MUST be one of this report's own parameters (422 `VALIDATION_ERROR` otherwise; nothing is written).
+
+  The parameter's CONFIGURED Note (Master Data > Add Test > Add Result > Notes, `LabTestResultParam.notes`, plain
+  text) is only the DEFAULT. `GET /lab-reports/:id` returns it as `resultParams[].notes`. A parameter with no saved
+  text of its own keeps showing and printing that default; once this endpoint has saved text for it, THAT text shows
+  and prints for this report instead. This endpoint never changes the configured Note, so other reports of the same
+  test are unaffected.
+
+  Body: `content` - rich-text HTML from the Notes editor (required, may be an empty string). An empty string is stored
+  as it is and means "no note on this report": the default does NOT come back. Capped like every note (1,000,000
+  characters, 400 above that).
+
+  **Cleaned on save.** The HTML is cleaned of anything active before it is stored: <script>, <style>, <iframe>,
+  event-handler attributes (onerror=…), javascript:/data: links and CSS that loads a URL are removed; formatting
+  (bold, lists, tables, colours, alignment, links, images) is kept. What the API returns is the cleaned text, and
+  the length limit applies to it. The same rule covers every rich-text note (Master Data tests, Branch Lab Tests, the
+  technician's per-report sections, Overall Result templates and results, the per-report parameter Note).
+
+  Response: `{ "resultParamId": string, "content": string }`. The saved texts of a report come back as
+  `parameterNotes: [{ resultParamId, content }]` on `GET /lab-reports/:id`; a parameter with no entry there has no
+  text of its own.
+
+  Printing: the row tag `{result_note}` (inside `{{#each results}}`; Latte `$row->result_note|noescape`) prints this
+  text when the report has one, otherwise the configured Note. It is a rich-text tag: the technician's HTML prints as
+  formatting, and the plain configured Note is escaped (and keeps its line breaks).
+
+  Who and when: `LAB_EDIT_REPORT` permission; no technician setting gates it. Only while the report is Pending,
+  Partial Pending or Saved: 409 `LAB_REPORT_PARAMETER_NOTE_NOT_EDITABLE` once it is Validation Pending or later (the
+  same rule as the result values; Edit Report sends it back to Saved). The status is read again under the report
+  lock, so a Submit that commits in between is not overwritten. The usual write locks apply too: 409
+  `LAB_REPORT_LOCKED` if locked; a sent-out, cancelled-order or removed-test report is refused; 404
+  `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
+
+  When the test is sent back for a repeat the saved text is soft-deleted (`deleted_at` set, the row stays) and the
+  configured Note shows again; the next save revives the row. Saving a note counts as work on the report, so a
+  Pending report with a saved note is no longer "untouched" (it cannot be sent on without losing it).
+}
