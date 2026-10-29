@@ -28,6 +28,7 @@ function build() {
     multiStepTestProcess: { updateMany: jest.fn().mockResolvedValue({}) },
     labReportHistory: { create: jest.fn().mockResolvedValue({}) },
     labReportOverallResult: { updateMany: jest.fn().mockResolvedValue({}) },
+    labReportParameterNote: { updateMany: jest.fn().mockResolvedValue({}) },
     labReportNote: {
       updateMany: jest.fn().mockResolvedValue({}),
       deleteMany: jest.fn(),
@@ -98,6 +99,8 @@ describe('LabReportService.resetReportsForReturn', () => {
       tx.scheduledTest,
       tx.multiStepTestProcess,
       tx.labReportOverallResult,
+      // The technician's own parameter Notes go too: the configured Note shows again.
+      tx.labReportParameterNote,
       tx.labReportAttachment,
       tx.tatAdjustment,
     ]) {
@@ -194,13 +197,13 @@ describe('LabReportService.resetReportsForReturn', () => {
     expect(tx.labReportAttachment.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('keeps the text of the cleared fields on the history line', async () => {
+  it('names the cleared Notes sections on the history line, never their text', async () => {
     const { service, tx } = build();
     tx.labReport.findMany.mockResolvedValue([
       {
         id: 'r1',
         status: LabReportStatus.VALIDATION_PENDING,
-        usefulFor: 'screening',
+        usefulFor: '<p>screening <strong>only</strong></p>',
         interpretationOfResults: null,
         limitations: 'haemolysed',
         remarks: null,
@@ -212,8 +215,53 @@ describe('LabReportService.resetReportsForReturn', () => {
       tx.labReportHistory.create,
     );
     expect(data.notes).toBe(
-      'Cleared for the repeat — Useful for: screening; Limitations: haemolysed',
+      'Notes cleared for the repeat: Useful for, Limitations',
     );
+    expect(data.notes).not.toContain('screening');
+    expect(data.notes).not.toContain('haemolysed');
+    expect(data.notes).not.toContain('<');
+  });
+
+  it('lists all five sections in their screen order when all held text', async () => {
+    const { service, tx } = build();
+    tx.labReport.findMany.mockResolvedValue([
+      {
+        id: 'r1',
+        status: LabReportStatus.SAVED,
+        usefulFor: 'a',
+        interpretationOfResults: 'b',
+        limitations: 'c',
+        remarks: 'd',
+        references: 'e',
+      },
+    ]);
+    await service.resetReportsForReturn(tx as never, 't1', ['r1'], 'u1');
+    expect(
+      firstArg<{ data: { notes?: string } }>(tx.labReportHistory.create).data
+        .notes,
+    ).toBe(
+      'Notes cleared for the repeat: Useful for, Interpretation, Limitations, Remarks, References',
+    );
+  });
+
+  it('leaves out a section that was only blank (an emptied editor)', async () => {
+    const { service, tx } = build();
+    tx.labReport.findMany.mockResolvedValue([
+      {
+        id: 'r1',
+        status: LabReportStatus.SAVED,
+        usefulFor: '   ',
+        interpretationOfResults: '',
+        limitations: null,
+        remarks: 'kept out of the text, in the list',
+        references: null,
+      },
+    ]);
+    await service.resetReportsForReturn(tx as never, 't1', ['r1'], 'u1');
+    expect(
+      firstArg<{ data: { notes?: string } }>(tx.labReportHistory.create).data
+        .notes,
+    ).toBe('Notes cleared for the repeat: Remarks');
   });
 
   it('writes no history note when there was nothing to clear', async () => {

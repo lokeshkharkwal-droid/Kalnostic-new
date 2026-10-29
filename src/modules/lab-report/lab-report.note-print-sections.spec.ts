@@ -69,6 +69,7 @@ function report(
         },
       },
     },
+    parameterNotes: [],
     contentSections: {
       usefulFor: 'U-text',
       interpretation: 'I-text',

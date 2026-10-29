@@ -53,6 +53,12 @@ docs {
   long (1,000,005 characters). The maximum is 1,000,000 characters." A request
   body over 5 MB is refused with 413 `PAYLOAD_TOO_LARGE`.
 
+  **Cleaned on save.** The HTML is cleaned of anything active before it is stored: <script>, <style>, <iframe>,
+  event-handler attributes (onerror=…), javascript:/data: links and CSS that loads a URL are removed; formatting
+  (bold, lists, tables, colours, alignment, links, images) is kept. What the API returns is the cleaned text, and
+  the length limit applies to it. The same rule covers every rich-text note (Master Data tests, Branch Lab Tests, the
+  technician's per-report sections, Overall Result templates and results, the per-report parameter Note).
+
   404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch. 409
   `LAB_REPORT_LOCKED` if the report is locked.
 }

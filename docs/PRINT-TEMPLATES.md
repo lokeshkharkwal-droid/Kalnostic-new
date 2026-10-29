@@ -635,7 +635,7 @@ a 3-page PDF attachment prints **8 pages**, and an image becomes one appended pa
 | `{methodology}` / `{method_name}` | Method (aliases). |
 | `{reference_display}` | Formatted reference range. When it was typed over several lines in Master Data ("Display of Reference Range"), the lines print one under another, as typed. (Latte templates keep the lines too: `{$row->reference_display}` is printed escaped, and `{$row->reference_display|noescape}` raw, each inside a `white-space:pre-wrap` span when the text has line breaks. For any other text, `{$x|nl2br}` escapes it and turns each line break into `<br />`.) |
 | `{group_name}` | Parameter group heading. |
-| `{result_note}` | Per-parameter note. |
+| `{result_note}` | Per-parameter note. It is the technician's own text for **this report** when they wrote one (Technician > Reporting > Patient Entry / Test Entry > the Notes icon beside Sync), otherwise the parameter's configured Note from Master Data (Add Test > Add Result > Notes). A note the technician blanked prints nothing (the configured Note does not come back). It is a **rich-text** tag like `{overall_result}`: the technician's formatting prints as formatting, and the configured Note (plain text) is escaped and keeps its line breaks. Wrap it in `{{#if result_note}}…{{/if}}` so a row with no note shows no empty block. In a **Latte** template print it with `|noescape` (`{$row->result_note|noescape}`), otherwise the tags show as text. An unfinished report prints "Result pending" and no note. |
 
 **Signatories:** up to 3 → use `<signing_authority_tag>` in the footer (keys:
 `{name}`, `{designation}`, `{registrationNumber}`, `{signatureImage}`,
