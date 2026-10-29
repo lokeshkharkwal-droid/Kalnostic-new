@@ -1799,6 +1799,9 @@ reference only (the upload itself is handled elsewhere).</div>
   author/approver not tenant staff → <span class="pill">404 INVALID_DOCUMENT_AUTHOR</span>;
   DTO/shape errors → <span class="pill">400 VALIDATION_ERROR</span>. <code>status</code> optional (default
   <code>DRAFT</code>).</p>
+  <p>File: upload it first via <code>POST /api/v1/uploads/attachment</code> (multipart <code>file</code>), then send the
+  returned <code>url</code> as <code>fileUrl</code> and the original name as <code>fileName</code> (an external link
+  also works). <code>fileUrl</code> must be a valid URL, else <span class="pill">400 VALIDATION_ERROR</span>.</p>
   <pre>{ "documentNumber":"SOP-001", "documentType":"SOP",
   "title":"Sample Collection Procedure", "version":"1.0",
   "status":"DRAFT", "effectiveDate":"2026-07-01", "reviewDate":"2027-07-01",
@@ -1866,7 +1869,9 @@ reference only (the upload itself is handled elsewhere).</div>
   string for this document → <span class="pill">409 DOCUMENT_VERSION_CONFLICT</span> if reused (including the
   current version). All other fields optional (omitted → unchanged). Changing <code>documentNumber</code> to
   one already used in the branch → <span class="pill">409 DOCUMENT_NUMBER_CONFLICT</span>. There is
-  <b>no</b> endpoint to edit or delete an individual version.</p>
+  <b>no</b> endpoint to edit or delete an individual version. To replace the file, upload the new one via
+  <code>POST /api/v1/uploads/attachment</code> and send its <code>url</code>/name as <code>fileUrl</code>/<code>fileName</code>;
+  send <code>null</code> for both to remove the file from the new version (older snapshots keep theirs).</p>
   <pre>{ "version":"2.0", "title":"Sample Collection Procedure (revised)",
   "status":"UNDER_REVIEW", "fileName":"sop-001-v2.pdf",
   "fileUrl":"https://files.example.com/sop-001-v2.pdf" }</pre>

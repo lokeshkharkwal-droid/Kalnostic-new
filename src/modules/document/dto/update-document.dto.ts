@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   MaxLength,
   MinLength,
@@ -70,15 +71,20 @@ export class UpdateDocumentDto {
   @IsOptional()
   reviewDate?: string;
 
+  /** Display name of the attached file; `null` removes it from the new version. */
   @IsString()
   @IsOptional()
   @MaxLength(255)
-  fileName?: string;
+  fileName?: string | null;
 
-  @IsString()
+  /**
+   * URL of the stored file (from `POST /uploads/attachment`, or an external
+   * link); `null` removes the file from the new version.
+   */
+  @IsUrl()
   @IsOptional()
   @MaxLength(2048)
-  fileUrl?: string;
+  fileUrl?: string | null;
 
   @IsString()
   @IsOptional()
