@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   MaxLength,
   MinLength,
@@ -69,13 +70,20 @@ export class CreateDocumentDto {
   @IsOptional()
   reviewDate?: string;
 
-  /** Uploaded file name (upload handled elsewhere; this stores the reference). */
+  /**
+   * Display name of the attached file — the original name of a file uploaded
+   * via `POST /uploads/attachment` (this module stores only the reference).
+   */
   @IsString()
   @IsOptional()
   @MaxLength(255)
   fileName?: string;
 
-  @IsString()
+  /**
+   * URL of the stored file — the `url` returned by `POST /uploads/attachment`,
+   * or an external link.
+   */
+  @IsUrl()
   @IsOptional()
   @MaxLength(2048)
   fileUrl?: string;

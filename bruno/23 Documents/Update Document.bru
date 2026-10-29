@@ -51,6 +51,11 @@ docs {
   - All other fields are optional — omitted fields keep their current value.
   - Changing `documentNumber` to one already used by another active document in
     the branch → 409 `DOCUMENT_NUMBER_CONFLICT`.
+  - `fileName` / `fileUrl` — replace the attached file by uploading the new one
+    via **Uploads → Upload Attachment** and sending its `url` as `fileUrl` (+ the
+    original name as `fileName`). `fileUrl` must be a valid URL → 400
+    `VALIDATION_ERROR`. Send `null` for both to remove the file from the new
+    version; earlier version snapshots keep their file reference.
   - There is NO endpoint to edit or delete an individual version — history is
     immutable.
 }
