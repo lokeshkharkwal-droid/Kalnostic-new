@@ -99,6 +99,7 @@ import {
   summariseSampleNameNotes,
   type SampleNameNote,
 } from './utils/sample-name.util';
+import { blankNotesToNull } from './utils/param-notes.util';
 import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
 import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import {
@@ -4907,7 +4908,7 @@ export class LabTestService {
       } = p;
       const param = await tx.labTestResultParam.create({
         data: {
-          ...paramScalars,
+          ...blankNotesToNull(paramScalars),
           reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
           tenantId,
           branchId,
@@ -5012,7 +5013,7 @@ export class LabTestService {
       await tx.labTestResultParam.update({
         where: { id: existingId },
         data: {
-          ...paramScalars,
+          ...blankNotesToNull(paramScalars),
           ...(fromImport && reflexTests === undefined
             ? {}
             : {
@@ -5087,7 +5088,7 @@ export class LabTestService {
       } = p;
       const created = await tx.labTestResultParam.create({
         data: {
-          ...paramScalars,
+          ...blankNotesToNull(paramScalars),
           reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
           tenantId,
           branchId,

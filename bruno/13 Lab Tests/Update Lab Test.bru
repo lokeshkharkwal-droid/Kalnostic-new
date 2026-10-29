@@ -60,8 +60,19 @@ docs {
   `parameterCode` keeps every result already entered for it. Without an `id` a
   parameter is matched by `parameterCode` (case-insensitive), as before; an `id` that
   is not a live parameter of this test is ignored, and the same `id` twice is a 422.
+  **Notes are cleaned on save.** The HTML is cleaned of anything active before it is stored: <script>, <style>, <iframe>,
+  event-handler attributes (onerror=…), javascript:/data: links and CSS that loads a URL are removed; formatting
+  (bold, lists, tables, colours, alignment, links, images) is kept. What the API returns is the cleaned text, and
+  the length limit applies to it. This applies to usefulFor, interpretationOfResults, limitations, remarks and references (a parameter's own `notes` is plain text and is not rich text).
+
   A parameter that nothing matches is created (a client `id` is never used as the new
   row's id); an existing parameter that is not sent is soft-deleted.
+
+  **Clearing a parameter's Note.** A matched parameter is patched in place, and only the
+  fields you send are written: an omitted `notes` leaves the stored Note as it is. To clear
+  it send `"notes": ""` (or whitespace) — a blank Note is stored as NULL, never as an empty
+  string. A branch picks the change up on its next "Import Master Data". The same blank-to-NULL
+  rule applies when a parameter is created (Create Lab Test, or a new parameter in an update).
 
   **Reference ranges keep their rows when unchanged.** A range with the same analyzer,
   method, unit, gender, age band, lower/upper limit, critical limits and abnormal-flag

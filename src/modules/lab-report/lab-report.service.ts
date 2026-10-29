@@ -86,7 +86,9 @@ import {
   reportKindOfItem,
 } from './utils/note-sections.util';
 import { labPanelTags } from './utils/lab-panel-tag.util';
+import { effectiveParameterNoteHtml } from './utils/parameter-note.util';
 import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
+import { UpdateParameterNoteDto } from './dto/update-parameter-note.dto';
 import { OverallResultTemplateService } from '../overall-result-template/overall-result-template.service';
 import {
   GeneratePdfDto,
@@ -103,6 +105,7 @@ import {
   LabReportListRow,
   LabReportNotesPrint,
   LabReportOverallResult,
+  LabReportParameterNote,
   LabReportResultParam,
   LabReportSignatoryCandidate,
   LabReportSignatoryCandidatesResponse,
@@ -132,6 +135,7 @@ import {
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportResultsNotEditableException,
+  LabReportParameterNoteNotEditableException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabReportValueChangedException,
@@ -504,14 +508,17 @@ export class LabReportService {
    *  - the worklist entries about those values (re-run, critical alert, out of
    *    range, delta check, scheduled test, multi-step) are soft-deleted;
    *  - everything else the branch recorded about those results is hidden too: the
-   *    overall results, the technician's own notes and the automatic notes, the
-   *    attachments and the TAT adjustments are soft-deleted, and the five
+   *    overall results, the parameter Notes the technician wrote, the technician's
+   *    own notes and the automatic notes, the attachments and the TAT adjustments
+   *    are soft-deleted, and the five
    *    Notes-section texts (useful for, interpretation, limitations, remarks,
    *    references) are cleared;
    *  - ORDER and SAMPLE notes (order-wide by design) and reagent usage (a record of
    *    what was physically used) stay;
-   *  - one `returned_for_repeat` history row keeps the status the report had and the
-   *    text of the five cleared fields, so nothing is lost.
+   *  - one `returned_for_repeat` history row keeps the status the report had and
+   *    names which of the five Notes sections held text. The text itself is NOT
+   *    kept (it is rich-text HTML, and the Audit Trail shows the note as is), so
+   *    clearing those five sections is final.
    * Soft-deleted rows stay in the database.
    * Reports that were never worked on go through the same steps harmlessly.
    * @param tx the caller's transaction
@@ -570,6 +577,11 @@ export class LabReportService {
       where: byReport,
       data: { deletedAt: now },
     });
+    // The technician's own parameter Notes: the configured Note shows again.
+    await tx.labReportParameterNote.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
     await tx.labReportNote.updateMany({
       where: { ...byReport, category: { in: RESULT_BOUND_NOTE_CATEGORIES } },
       data: { deletedAt: now },
@@ -616,8 +628,10 @@ export class LabReportService {
       },
     });
     for (const r of reports) {
-      // Keep the text of the five cleared fields on the history line, readable
-      // as a sentence (the Audit Trail shows this note as is).
+      // The history line names which of the five Notes sections held text and
+      // were cleared, never the text itself: it is rich-text HTML (up to
+      // NOTE_MAX_LENGTH characters per section) and the Audit Trail shows this
+      // note as is.
       const cleared = (
         [
           ['Useful for', r.usefulFor],
@@ -627,8 +641,8 @@ export class LabReportService {
           ['References', r.references],
         ] as Array<[string, string | null]>
       )
-        .filter(([, value]) => value !== null)
-        .map(([label, value]) => `${label}: ${value}`);
+        .filter(([, value]) => typeof value === 'string' && value.trim() !== '')
+        .map(([label]) => label);
       await this.recordHistory(
         tx,
         tenantId,
@@ -638,7 +652,7 @@ export class LabReportService {
         'returned_for_repeat',
         actorId ?? 'system',
         cleared.length > 0
-          ? `Cleared for the repeat — ${cleared.join('; ')}`
+          ? `Notes cleared for the repeat: ${cleared.join(', ')}`
           : undefined,
       );
     }
@@ -736,6 +750,7 @@ export class LabReportService {
       }),
       tx.labReportAttachment.count({ where: cycle('uploadedAt') }),
       tx.labReportOverallResult.count({ where: cycle() }),
+      tx.labReportParameterNote.count({ where: cycle() }),
       tx.reRunRequest.count({ where: cycle() }),
       tx.criticalAlert.count({ where: cycle() }),
       tx.outOfRangeFlag.count({ where: cycle() }),
@@ -2473,7 +2488,7 @@ export class LabReportService {
     // B2B Referral Panel isolation: block reading another panel's report by id.
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
-    const [contentSections, resultParams, overallResultRows] =
+    const [contentSections, resultParams, overallResultRows, parameterNotes] =
       await Promise.all([
         this.getContentSections(tenantId, report.labTestId, {
           usefulFor: report.usefulFor,
@@ -2494,9 +2509,21 @@ export class LabReportService {
           where: { labReportId: id, tenantId, deletedAt: null },
           select: { resultParamId: true, templateId: true, content: true },
         }),
+        // The technician's own Note text for this report, per parameter. A
+        // parameter without a live row inherits its configured Note.
+        this.prisma.labReportParameterNote.findMany({
+          where: { labReportId: id, tenantId, deletedAt: null },
+          select: { resultParamId: true, content: true },
+        }),
       ]);
     const overallResults: LabReportOverallResult[] = overallResultRows;
-    return { ...report, contentSections, overallResults, resultParams };
+    return {
+      ...report,
+      contentSections,
+      overallResults,
+      parameterNotes,
+      resultParams,
+    };
   }
 
   /**
@@ -2595,6 +2622,7 @@ export class LabReportService {
       contentSections: report.contentSections,
       notesPrint: await this.resolveNotesPrint(tenantId, report),
       overallResults: report.overallResults,
+      parameterNotes: report.parameterNotes,
       resultParams: report.resultParams,
     };
   }
@@ -2928,6 +2956,65 @@ export class LabReportService {
   }
 
   /**
+   * Save the technician's own text for ONE result parameter's Note on this report. The parameter's configured
+   * Note (`LabTestResultParam.notes`) is only the default shown until this is saved; this never writes back to
+   * it, so no other report of the same test changes. An empty `content` is stored as is: it means "no note on
+   * this report", and the default does not come back.
+   *
+   * Same rule as the result values: only while the report is Pending, Partial Pending or Saved. A report that was
+   * submitted or has moved on is refused (`Edit Report` sends it back to Saved when a change is really needed),
+   * because an edit after approval would silently change every later print. The status is read again after the
+   * report row is locked, so a Submit that commits in between is not overwritten. A locked, sent-out or cancelled
+   * report is refused as for every other write. No technician setting gates it: the `LAB_EDIT_REPORT`
+   * permission on the route is the only gate.
+   * @param resultParamId which result parameter — MUST be one of this report's own parameters
+   * @throws LabReportParameterNoteNotEditableException when the report is past Saved
+   * @throws ValidationException when `resultParamId` is not one of this report's parameters
+   */
+  async updateParameterNote(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    resultParamId: string,
+    dto: UpdateParameterNoteDto,
+  ): Promise<LabReportParameterNote> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+    this.assertParameterNoteEditable(id, report.status);
+    await this.assertResultParamBelongsToReport(report, resultParamId);
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
+      const fresh = await tx.labReport.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.assertParameterNoteEditable(id, fresh?.status ?? report.status);
+      await tx.labReportParameterNote.upsert({
+        where: {
+          labReportId_resultParamId: { labReportId: report.id, resultParamId },
+        },
+        create: {
+          tenantId,
+          labReportId: report.id,
+          resultParamId,
+          content: dto.content,
+        },
+        // `deletedAt: null` revives a row a repeat soft-deleted.
+        update: { content: dto.content, deletedAt: null },
+      });
+    });
+    return { resultParamId, content: dto.content };
+  }
+
+  /** Refuses a parameter-note write unless the report is still Pending, Partial Pending or Saved. */
+  private assertParameterNoteEditable(id: string, status: string): void {
+    if (!(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)) {
+      throw new LabReportParameterNoteNotEditableException(id, status);
+    }
+  }
+
+  /**
    * Resolve the Test Entry screen's result-entry grid *row definitions*
    * (LABORATORY.docx §4.3) from `LabTestResultParam` — what parameters this
    * test has, independent of whether any value has been entered yet (a
@@ -3012,6 +3099,9 @@ export class LabReportService {
         defaultValue: true,
         groupName: true,
         overallResultGroups: true,
+        // The configured Note: the default the Notes icon shows (and prints) until
+        // the technician writes their own for this report.
+        notes: true,
       },
       // Test Entry must list parameters in the SAME order the admin configured
       // them in Master Data's "Add Result" section — i.e. the catalogue's
@@ -4355,11 +4445,20 @@ export class LabReportService {
     const sortOrderByParamId = new Map(
       resultParams.map((p) => [p.id, p.sortOrder]),
     );
-    // `{result_note}` — a per-result-parameter free-text note from the Lab
-    // Test catalog (LabTestResultParam.notes), distinct from `sample_note`
-    // (a per-order, append-only Sample Notes log entry).
+    // `{result_note}` — a per-result-parameter note, distinct from `sample_note`
+    // (a per-order, append-only Sample Notes log entry). The technician's own text
+    // for THIS report wins (`LabReportParameterNote`, rich-text HTML); a parameter
+    // they never edited keeps the Lab Test catalog's Note (LabTestResultParam.notes,
+    // plain text, escaped here). The tag is rich text (`RICH_TEXT_KEYS`), so every
+    // value in this map is already safe HTML.
+    const noteOverrideByParamId = new Map(
+      report.parameterNotes.map((n) => [n.resultParamId, n.content]),
+    );
     const notesByParamId = new Map(
-      resultParams.map((p) => [p.id, p.notes ?? '']),
+      resultParams.map((p) => [
+        p.id,
+        effectiveParameterNoteHtml(noteOverrideByParamId.get(p.id), p.notes),
+      ]),
     );
     // `{overall_result}` — this REPORT's own per-parameter templated content
     // (`LabReportOverallResult`, keyed by (labReportId, resultParamId)), the

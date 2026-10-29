@@ -1,5 +1,5 @@
 import { IsOptional, IsString, IsUUID } from 'class-validator';
-import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
+import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
 
 /**
  * Body for `PATCH /lab-reports/:id/overall-result`. Two independent actions,
@@ -25,6 +25,6 @@ export class UpdateOverallResultDto {
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Overall Result')
+  @RichTextNote('Overall Result')
   content?: string;
 }

@@ -80,6 +80,7 @@ function build(values: Array<Record<string, unknown>>) {
     status: 'SAVED',
     memberBranchLabTestId: null,
     attachments: [],
+    parameterNotes: [],
     contentSections: {},
     resultValues: values,
     orderItem: {

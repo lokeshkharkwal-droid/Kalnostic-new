@@ -36,6 +36,7 @@ interface Rep {
   memberBranchLabTestId: string | null;
   excludedNoteSections: string[];
   orderItem: Record<string, unknown>;
+  parameterNotes: Array<{ resultParamId: string; content: string }>;
   contentSections: Record<string, string>;
   attachments: unknown[];
   resultValues: unknown[];
@@ -92,6 +93,7 @@ function report(
         },
       },
     },
+    parameterNotes: [],
     contentSections: {
       usefulFor: 'U-text',
       interpretation: 'I-text',

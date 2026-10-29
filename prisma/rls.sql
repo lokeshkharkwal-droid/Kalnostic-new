@@ -2018,6 +2018,13 @@ CREATE POLICY lab_report_overall_results_tenant_isolation ON lab_report_overall_
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+ALTER TABLE lab_report_parameter_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_report_parameter_notes FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_report_parameter_notes_tenant_isolation ON lab_report_parameter_notes;
+CREATE POLICY lab_report_parameter_notes_tenant_isolation ON lab_report_parameter_notes
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 ALTER TABLE lab_report_inventory_usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_report_inventory_usage FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_report_inventory_usage_tenant_isolation ON lab_report_inventory_usage;

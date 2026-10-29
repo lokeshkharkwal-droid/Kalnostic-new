@@ -23,7 +23,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
+import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
 
 /** 24-hour `HH:mm` clock time (branch-local), e.g. `08:30`. */
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -312,27 +312,27 @@ export class ImportLabTestRowDto {
 
   @IsString()
   @IsOptional()
-  @NoteMaxLength('Useful For')
+  @RichTextNote('Useful For')
   usefulFor?: string;
 
   @IsString()
   @IsOptional()
-  @NoteMaxLength('Interpretation')
+  @RichTextNote('Interpretation')
   interpretationOfResults?: string;
 
   @IsString()
   @IsOptional()
-  @NoteMaxLength('Limitations')
+  @RichTextNote('Limitations')
   limitations?: string;
 
   @IsString()
   @IsOptional()
-  @NoteMaxLength('Remarks')
+  @RichTextNote('Remarks')
   remarks?: string;
 
   @IsString()
   @IsOptional()
-  @NoteMaxLength('References')
+  @RichTextNote('References')
   references?: string;
 }
 
