@@ -1,0 +1,24 @@
+meta {
+  name: 63 Master Data Import Jobs (E2E)
+  seq: 63
+}
+
+docs {
+  Background import jobs with live progress (the branch-admin "Import Master
+  Data" dialog): POST .../import-from-tenant/jobs → 202, then poll
+  GET .../jobs/:jobId. Runs after folder 61 (reads its `e2eStateFile`):
+
+    bru run "63 Master Data Import Jobs (E2E)" --env Local \
+      --env-var baseUrl=http://localhost:3100/api/v1 \
+      --env-var e2eStateFile=/tmp/md-import-e2e.json --sandbox developer
+
+  Cases:
+    J01 load state from folder 61
+    J02 job imports 150 new tests in 2 batches of 100, progress polled live
+    J03 a second start while one runs → 409, attach via /jobs/active
+    J04 /jobs/active is null when idle
+    J05 a conflicting import FAILS in PREPARING — nothing saved, branch unchanged
+    J06 fix the clash, retry → SUCCEEDED
+    J07 unknown job id → 404
+    J08 start without an active branch → 400
+}

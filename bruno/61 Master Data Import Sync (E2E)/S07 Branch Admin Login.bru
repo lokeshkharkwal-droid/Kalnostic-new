@@ -1,0 +1,26 @@
+meta {
+  name: S07 Branch Admin Login
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "identifier": "branch.admin.{{e2eSuffix}}@md-import.test",
+    "password": "Str0ng@Pass1"
+  }
+}
+
+script:post-response {
+  bru.setVar('branchToken', res.getBody().data.accessToken);
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}

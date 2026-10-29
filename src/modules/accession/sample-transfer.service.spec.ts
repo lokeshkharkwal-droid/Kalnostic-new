@@ -10,6 +10,7 @@ import {
   SendBlockedException,
   TransferNotEditableException,
   TransferNotOutsourceException,
+  TransferRetrieveBlockedException,
   TransferWrongBranchException,
   refusalMessage,
 } from './exceptions/accession.exceptions';
@@ -67,8 +68,15 @@ function setup(
     },
     orderSample: {
       findMany: jest.fn().mockResolvedValue(opts.copies ?? []),
-      findFirst: jest.fn().mockResolvedValue({ orderId: 'o1' }),
+      findFirst: jest.fn().mockResolvedValue({
+        orderId: 'o1',
+        id: 'sA',
+        branchId: 'B',
+        status: SampleStatus.SENT_INTERNAL,
+      }),
     },
+    // the Retrieve step-back documents the move on the sample history timeline
+    orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     // the "test removed from the order" probe: no removed test
     orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
   };
@@ -1231,5 +1239,124 @@ describe('SampleTransferService — manual outsource status', () => {
       where: { id: 'tr1' },
       data: { outsourceStatus: 'Results Ready', updatedBy: PERSON },
     });
+  });
+});
+
+describe('SampleTransferService — Retrieve (one-step-back undo)', () => {
+  it.each([
+    [TransferStatus.PICKED_UP, TransferStatus.IN_TRANSIT],
+    [TransferStatus.RECEIVED, TransferStatus.PICKED_UP],
+    [TransferStatus.ACCEPTED, TransferStatus.RECEIVED],
+    [TransferStatus.REPEAT, TransferStatus.RECEIVED],
+    [TransferStatus.REJECTED, TransferStatus.RECEIVED],
+  ])(
+    'moves a transfer back from %s to %s and records history',
+    async (from, to) => {
+      const { svc, tx } = setup({ transferStatus: from });
+      await svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {});
+      const upd = (finalWrites(tx)[0] as unknown[])[0] as {
+        where: { transferStatus: TransferStatus };
+        data: { transferStatus: TransferStatus };
+      };
+      expect(upd.where.transferStatus).toBe(from);
+      expect(upd.data.transferStatus).toBe(to);
+      const hist = (
+        tx.orderSampleStatusHistory.create.mock.calls[0] as unknown[]
+      )[0] as { data: { action: string } };
+      expect(hist.data.action).toBe('retrieve');
+    },
+  );
+
+  it('refuses Retrieve from IN_TRANSIT (nothing for the receiver to undo)', async () => {
+    const { svc, tx } = setup({ transferStatus: TransferStatus.IN_TRANSIT });
+    await expect(
+      svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
+    ).rejects.toBeInstanceOf(InvalidTransferTransitionException);
+    expect(finalWrites(tx)).toHaveLength(0);
+    expect(tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
+  });
+
+  it('skips an IN_TRANSIT row in a group (skipInvalid) instead of failing the batch', async () => {
+    const { svc, tx } = setup({ transferStatus: TransferStatus.IN_TRANSIT });
+    const res = await svc.retrieveTransfer(
+      ['tr1'],
+      TENANT,
+      PERSON,
+      'B',
+      {},
+      true,
+    );
+    expect(res.succeeded).toHaveLength(0);
+    expect(res.skipped).toHaveLength(1);
+    expect(res.skipped[0]?.code).toBe('INVALID_TRANSFER_TRANSITION');
+    expect(finalWrites(tx)).toHaveLength(0);
+  });
+
+  it('refuses when the caller is not the receiving (destination) branch', async () => {
+    const { svc } = setup({
+      transferStatus: TransferStatus.RECEIVED,
+      destinationBranchId: 'OTHER',
+    });
+    await expect(
+      svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
+    ).rejects.toBeInstanceOf(TransferWrongBranchException);
+  });
+
+  it('undoing an ACCEPTED transfer unwinds the untouched clone and clears the link', async () => {
+    const { svc, tx, samples } = setup({
+      transferStatus: TransferStatus.ACCEPTED,
+      clonedSampleId: 'copy1',
+    });
+    // Source sample read vs clone read, keyed on the queried id.
+    tx.orderSample.findFirst.mockImplementation(
+      (args: { where: { id: string } }) =>
+        Promise.resolve(
+          args.where.id === 'copy1'
+            ? { id: 'copy1', status: SampleStatus.ACCEPTED }
+            : {
+                id: 'sA',
+                branchId: 'A', // the sender's branch — reports return here
+                status: SampleStatus.SENT_INTERNAL,
+              },
+        ),
+    );
+    await svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {});
+    // the clone is soft-deleted + its reports re-homed to the true origin ('A')
+    expect(samples.removeTransferCloneInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      PERSON,
+      'copy1',
+      'A',
+    );
+    const upd = (finalWrites(tx)[0] as unknown[])[0] as {
+      data: { transferStatus: TransferStatus; clonedSampleId?: string | null };
+    };
+    expect(upd.data.transferStatus).toBe(TransferStatus.RECEIVED);
+    expect(upd.data.clonedSampleId).toBeNull();
+  });
+
+  it('refuses to undo an ACCEPTED transfer whose clone has already been worked on', async () => {
+    const { svc, tx, samples } = setup({
+      transferStatus: TransferStatus.ACCEPTED,
+      clonedSampleId: 'copy1',
+    });
+    tx.orderSample.findFirst.mockImplementation(
+      (args: { where: { id: string } }) =>
+        Promise.resolve(
+          args.where.id === 'copy1'
+            ? { id: 'copy1', status: SampleStatus.COLLECTED } // worked on
+            : {
+                id: 'sA',
+                branchId: 'A', // the sender's branch — reports return here
+                status: SampleStatus.SENT_INTERNAL,
+              },
+        ),
+    );
+    await expect(
+      svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
+    ).rejects.toBeInstanceOf(TransferRetrieveBlockedException);
+    expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
+    expect(finalWrites(tx)).toHaveLength(0);
   });
 });

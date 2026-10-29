@@ -57,3 +57,32 @@ export function nextTransferStatus(
 ): TransferStatus | null {
   return TRANSFER_TRANSITIONS[action][from] ?? null;
 }
+
+/**
+ * The **Retrieve** step-back map: each status → the single status it moves back to.
+ * Retrieve is a receiving-side *undo* that rewinds the lifecycle one step at a time
+ * (repeat until `IN_TRANSIT`); it changes only `transferStatus` + writes a history
+ * row — it deliberately does NOT reverse the accept-time clone or any sender-side
+ * return (that is the scoped-out heavy recall). `IN_TRANSIT` has no earlier
+ * receiving step, so it maps to nothing and Retrieve is not offered there. The
+ * send-backs `REPEAT` / `REJECTED` rewind to `RECEIVED`.
+ */
+export const PREVIOUS_TRANSFER_STATUS: Readonly<
+  Partial<Record<TransferStatus, TransferStatus>>
+> = {
+  [TransferStatus.PICKED_UP]: TransferStatus.IN_TRANSIT,
+  [TransferStatus.RECEIVED]: TransferStatus.PICKED_UP,
+  [TransferStatus.ACCEPTED]: TransferStatus.RECEIVED,
+  [TransferStatus.REPEAT]: TransferStatus.RECEIVED,
+  [TransferStatus.REJECTED]: TransferStatus.RECEIVED,
+};
+
+/**
+ * Resolve the one-step-back target for Retrieve from a current status, or `null`
+ * when there is nothing to undo (`IN_TRANSIT`).
+ */
+export function previousTransferStatus(
+  from: TransferStatus,
+): TransferStatus | null {
+  return PREVIOUS_TRANSFER_STATUS[from] ?? null;
+}

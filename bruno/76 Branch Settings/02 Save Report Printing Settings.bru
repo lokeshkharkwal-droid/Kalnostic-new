@@ -1,0 +1,58 @@
+meta {
+  name: 02 Save Report Printing Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/branch-settings/report-printing
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isLabTestNotesSelectable": true,
+    "isLabPanelNotesSelectable": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved pair", function () {
+    const d = res.getBody().data;
+    expect(d.isLabTestNotesSelectable).to.equal(true);
+    expect(d.isLabPanelNotesSelectable).to.equal(false);
+  });
+}
+
+docs {
+  Save the active branch's report-printing settings. Both fields are optional: a
+  switch that is left out keeps its current value (or `true` if the branch has never
+  saved). The response is the resulting pair.
+
+  - `isLabTestNotesSelectable` (boolean) - for a single lab test.
+  - `isLabPanelNotesSelectable` (boolean) - for a test that belongs to a lab panel.
+
+  Takes effect on the next screen load and the next print of any report held by this
+  branch: the technician's checkboxes beside each Notes section appear or disappear
+  (`GET /lab-reports/:id` -> `notesPrint.enabled`), and a switch that is OFF makes
+  every Notes section print (see `PATCH /lab-reports/:id/note-print-sections`).
+
+  Needs `branch_admin:branch_settings__update_branch_settings` (403 without it).
+  Unknown fields, including `branchId`, are rejected with 400: the branch is always
+  the caller's active branch from the JWT. Audited under
+  `AuditModule.TECHNICIAN_SETTINGS`.
+
+  These two switches are NOT part of `PUT /technician-settings` any more.
+}

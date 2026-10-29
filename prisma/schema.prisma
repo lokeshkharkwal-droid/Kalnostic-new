@@ -7285,6 +7285,17 @@ model LabReport {
   remarks                 String?
   references              String?
 
+  /// The Notes sections the technician LEFT OUT of this report's printed
+  /// version (keys: useful_for, interpretation, limitations, remarks,
+  /// references). Empty (the default for every report) means all five print,
+  /// exactly as before. Only honoured while the matching Technician setting
+  /// (`TechnicianSetting.isLabTestNotesSelectable` for a test report,
+  /// `isLabPanelNotesSelectable` for a report on a panel order line) is on;
+  /// when it is off every section prints. It never changes the content shown on
+  /// screen, only what the printed/shared PDF contains. Cleared when the report
+  /// is returned for a repeat (like the Notes overrides above); kept on re-run.
+  excludedNoteSections String[] @default([]) @map("excluded_note_sections")
+
   status LabReportStatus @default(PENDING)
 
   savedAt     DateTime? @map("saved_at")
@@ -8785,6 +8796,15 @@ model TechnicianSetting {
   /// always sourced from an `OverallResultTemplate` the technician picks.
   isOverallResultEditable Boolean @default(false) @map("is_overall_result_editable")
 
+  /// Whether the technician may choose, per report, which of the 5 Notes
+  /// sections print (a checkbox beside each section on the report). One switch
+  /// for a single lab test, one for a test that belongs to a lab panel. Both ON
+  /// by default. OFF means every Notes section prints, exactly as before (any
+  /// choice already saved on a report is then ignored). The choice itself is
+  /// stored on the report (`LabReport.excludedNoteSections`).
+  isLabTestNotesSelectable  Boolean @default(true) @map("is_lab_test_notes_selectable")
+  isLabPanelNotesSelectable Boolean @default(true) @map("is_lab_panel_notes_selectable")
+
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated
   /// dropdown, backend accepts any string) — same convention as accession's
@@ -9339,4 +9359,44 @@ model SalesSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("sales_settings")
+}
+
+/// One "Import Master Data" run (Tenant → Branch Master Data) executed as a
+/// background job so the branch-admin dialog can poll live progress. The sync
+/// itself is still ONE atomic transaction; `progress` reports the 100-test
+/// batches it walks through (nothing is committed until the end). `progress`
+/// is written from outside that transaction after every batch, which also
+/// refreshes `updatedAt` — a RUNNING row whose `updatedAt` is older than the
+/// sync's transaction timeout can no longer be running (process restarted) and
+/// is reported as INTERRUPTED. At most one RUNNING job per tenant is enforced by
+/// a partial unique index in prisma/rls.sql.
+model MasterDataImportJob {
+  id         String                    @id @default(uuid())
+  tenantId   String                    @map("tenant_id")
+  branchId   String                    @map("branch_id")
+  status     MasterDataImportJobStatus @default(RUNNING)
+  /// `MasterDataImportProgress` (phase, batches, counts) — see the service.
+  progress   Json
+  /// `{ tests: {created, updated, deleted}, panels: {...} }` once SUCCEEDED.
+  result     Json?
+  /// `{ code, message }` once FAILED / INTERRUPTED.
+  error      Json?
+  startedBy  String?                   @map("started_by")
+  /// Backend process running it (`host#pm2-instance`); on startup that process
+  /// marks its own leftover RUNNING jobs INTERRUPTED at once.
+  runner     String?                   @map("runner")
+  startedAt  DateTime                  @default(now()) @map("started_at")
+  finishedAt DateTime?                 @map("finished_at")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+
+  @@index([tenantId, branchId, createdAt])
+  @@map("master_data_import_jobs")
+}
+
+enum MasterDataImportJobStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  INTERRUPTED
 }

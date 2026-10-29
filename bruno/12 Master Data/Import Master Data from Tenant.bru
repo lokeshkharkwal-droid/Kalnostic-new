@@ -20,12 +20,22 @@ docs {
   panels). Requires a branch-scoped token (`active_branch_id` from the JWT) — 400
   otherwise.
 
-  Update-or-create keyed on provenance (`sourceMasterLabTestId` /
-  `sourceMasterLabPanelId`, falling back to test/panel code): existing branch rows
-  are fully overwritten from the tenant catalogue, missing ones are created, no
-  duplicates. Panel membership is remapped to the branch test copies. Runs as one
-  transaction. Hand-created branch rows can't exist (branch admins can't create).
-  Returns `{ tests: { created, updated }, panels: { created, updated } }`.
+  Update-or-create-or-delete, one transaction, serialised per branch (a second
+  concurrent import waits). Tests are matched in tiers across the whole catalogue:
+  source link (`sourceMasterLabTestId`), then `testCode`, then `testName` — the
+  name tier only adopts a branch test whose link points at a deleted tenant test
+  (e.g. a tenant test deleted and re-created under the same name). Matched rows
+  are overwritten in place (ids kept; result params matched by code, then name,
+  so saved results stay attached); unmatched tenant tests are cloned; sync-derived
+  branch tests whose source is gone (or duplicate links) are soft-deleted first.
+  Panels: matched by link, then code; membership remapped to the branch tests.
+  Returns 201 `{ tests: { created, updated, deleted }, panels: { created, updated, deleted } }`.
+
+  **409 `MASTER_DATA_IMPORT_CONFLICT`:** the result would leave two active branch
+  tests sharing a name or code (e.g. a hand-created branch test — no source link —
+  with a tenant test's name). Checked before any write; nothing is changed.
+
+  End-to-end cases: folders `61` / `62 Master Data Import Sync (E2E)`.
 
   **Authorization:** requires ANY of `branch_admin:master_data__import_master_lab_tests`
   or `branch_admin:master_data__import_master_lab_panels` (one atomic import covers

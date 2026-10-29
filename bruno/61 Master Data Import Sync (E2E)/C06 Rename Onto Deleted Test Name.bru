@@ -1,0 +1,54 @@
+meta {
+  name: C06 Rename Onto Deleted Test Name
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const ids = h.getJson(bru, 'tenantIds');
+  await h.deleteTenantTest(bru, ids.C);
+  await h.updateTenantTest(bru, ids.D, { testName: 'Charlie Test' });
+  delete ids.C;
+  h.setJson(bru, 'tenantIds', ids);
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 0, updated 4, deleted 1", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 0, updated: 4, deleted: 1 });
+  });
+
+  test("orphan removed first; Delta's branch row now carries the name", function () {
+    const h = require('./lib/md-import.js');
+    const before = h.getJson(bru, 'branchIds');
+    const rows = h.getJson(bru, 'after');
+    const after = h.byName(rows);
+    expect(rows.length).to.equal(4);
+    expect(after['Charlie Test'].id).to.equal(before['Delta Test']);
+    expect(after['Delta Test']).to.equal(undefined);
+    expect(rows.map((r) => r.id)).to.not.include(before['Charlie Test']);
+    h.setJson(bru, 'branchIds', Object.fromEntries(rows.map((t) => [t.testName, t.id])));
+  });
+}
+
+docs {
+  Tenant deletes Charlie and renames Delta to 'Charlie Test'. The orphaned branch Charlie must be soft-deleted before Delta's branch row is renamed onto that name.
+}

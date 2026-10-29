@@ -1,0 +1,30 @@
+meta {
+  name: 61 Master Data Import Sync (E2E)
+  seq: 61
+}
+
+docs {
+  End-to-end cases for **POST /master-data/branch/import-from-tenant** (Tenant Master
+  Data → Branch Master Data). Self-contained: creates its own tenant, branch and
+  branch admin, then walks the sync through every case. Run it against a
+  throwaway database — it creates data.
+
+    bru run "61 Master Data Import Sync (E2E)" --env Local \
+      --env-var baseUrl=http://localhost:3100/api/v1 --sandbox developer
+
+  Cases (in order, each builds on the previous state):
+    C01 import without an active branch → 400
+    C02 first import clones every tenant test
+    C03 re-import is idempotent (same branch ids)
+    C04 tenant test deleted + re-created (same name, new code) → adopted by name,
+        branch id kept (the Oct-2026 prod 500)
+    C05 param code changed upstream → branch param id kept (matched by name)
+    C06 tenant test renamed onto a deleted test's name → orphan removed first
+    C07 two tenant tests swap names / codes → both branch rows keep their ids
+    C08 hand-made branch test shares a tenant test's name → 409, nothing changed
+    C09 hand-made test removed → import succeeds
+    C10 hand-made branch test shares a tenant test's code → adopted (legacy)
+    C11 panel membership remapped to branch test ids
+    C12 concurrent imports serialise (no duplicates)
+    C13 save state for the duplicate-link DB fixture (folder 62)
+}

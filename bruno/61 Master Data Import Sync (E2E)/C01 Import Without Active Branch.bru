@@ -1,0 +1,26 @@
+meta {
+  name: C01 Import Without Active Branch
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tenantToken}}
+}
+
+tests {
+  test("400 — tenant-level token has no active branch", function () {
+    expect(res.status).to.equal(400);
+    expect(res.getBody().error.code).to.equal('VALIDATION_ERROR');
+  });
+}
+
+docs {
+  A business-admin token with no `active_branch_id` cannot import → 400.
+}
