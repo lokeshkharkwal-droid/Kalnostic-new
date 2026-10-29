@@ -3,6 +3,7 @@ import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
+  AbnormalFlag,
   AgeType,
   LabReportHistory,
   LabReportNoteCategory,
@@ -12,6 +13,7 @@ import {
   PersonMappingType,
   Prisma,
   RecipientType,
+  ResultType,
   ResultValueSource,
   SampleStatus,
 } from '@prisma/client';
@@ -3395,6 +3397,11 @@ export class LabReportService {
             methodology: value.methodology,
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
+            // Per-parameter report highlighting (QUALITATIVE / SEMI_QUANTITATIVE
+            // only; the print builder ignores it for quantitative values). When
+            // the client omits it default to "off" with no styling.
+            highlightInReport: value.highlightInReport ?? false,
+            highlightLogic: value.highlightLogic ?? null,
             source: ResultValueSource.MANUAL,
             enteredAt: now,
             enteredBy: actorId,
@@ -3406,6 +3413,8 @@ export class LabReportService {
             methodology: value.methodology,
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
+            highlightInReport: value.highlightInReport ?? false,
+            highlightLogic: value.highlightLogic ?? null,
             source: ResultValueSource.MANUAL,
             enteredAt: now,
             enteredBy: actorId,
@@ -4421,24 +4430,38 @@ export class LabReportService {
       raw: string,
       resultParamId: string,
       referenceRangeId: string | null,
+      highlight: { on: boolean; logic: AbnormalFlag | null },
     ): { html: string; abnormal: boolean } => {
       // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
       const safe = observedValueHtml(raw);
+      const resultType = resultTypeByParamId.get(resultParamId);
       const range = referenceRangeId
         ? rangeById.get(referenceRangeId)
         : undefined;
-      const abnormal = isObservedAbnormal(
-        raw,
-        resultTypeByParamId.get(resultParamId),
-        range,
-      );
-      if (!abnormal) {
-        return { html: safe, abnormal: false };
+      const abnormal = isObservedAbnormal(raw, resultType, range);
+      if (abnormal) {
+        return {
+          html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
+          abnormal: true,
+        };
       }
-      return {
-        html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
-        abnormal: true,
-      };
+      // Technician-chosen per-parameter highlighting. Scoped to QUALITATIVE /
+      // SEMI_QUANTITATIVE values only (quantitative values are flagged above
+      // from their numeric range, never from this manual control) and never
+      // applied to a blank reading. `abnormal` stays false — this styling is a
+      // deliberate report-presentation choice, not an out-of-range signal, so
+      // the `{is_observed_*_abnormal}` tags are unaffected.
+      if (
+        highlight.on &&
+        resultType !== ResultType.QUANTITATIVE &&
+        raw.trim() !== ''
+      ) {
+        return {
+          html: `<span style="${abnormalFlagStyle(highlight.logic ?? AbnormalFlag.BOLD_AND_RED)}">${safe}</span>`,
+          abnormal: false,
+        };
+      }
+      return { html: safe, abnormal: false };
     };
 
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
@@ -4453,15 +4476,24 @@ export class LabReportService {
     );
 
     const realResults = sortedResultValues.map((v) => {
+      // Both observed values share the one per-parameter highlight choice the
+      // technician set on the result-entry row (applied to Observed 1 and
+      // Observed 2 alike).
+      const highlight = {
+        on: v.highlightInReport,
+        logic: v.highlightLogic,
+      };
       const o1 = classifyObserved(
         v.observed1 ?? '',
         v.resultParamId,
         v.referenceRangeId,
+        highlight,
       );
       const o2 = classifyObserved(
         v.observed2 ?? '',
         v.resultParamId,
         v.referenceRangeId,
+        highlight,
       );
       return {
         parameter_name: paramNameById.get(v.resultParamId) ?? '',

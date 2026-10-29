@@ -7451,6 +7451,16 @@ model LabReportResultValue {
   /// silently rewrite what was actually shown when this value was entered.
   referenceDisplay String? @map("reference_display")
 
+  /// Technician-set, per-report request to visually highlight THIS parameter's
+  /// observed value(s) in the generated report. Applies to QUALITATIVE and
+  /// SEMI_QUANTITATIVE parameters only — quantitative values are flagged
+  /// automatically from their numeric reference range (`AbnormalFlag`), so this
+  /// manual control is never surfaced for them. `highlightLogic` is the styling
+  /// to apply (reuses the `AbnormalFlag` palette; only `BOLD_AND_RED` is offered
+  /// in the UI today) and is read only when `highlightInReport` is true.
+  highlightInReport Boolean       @default(false) @map("highlight_in_report")
+  highlightLogic    AbnormalFlag? @map("highlight_logic")
+
   source ResultValueSource @default(MANUAL)
 
   enteredAt DateTime? @map("entered_at")

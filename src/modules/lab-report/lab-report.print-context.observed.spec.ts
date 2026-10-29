@@ -205,6 +205,65 @@ describe('buildPrintContext — the result readings a template receives', () => 
     expect(String(row!.observed1)).not.toContain('color:#d32f2f');
   });
 
+  it('a Qualitative result flagged "Highlight in Report" (Bold and Red) is wrapped in bold-red, but stays non-abnormal', async () => {
+    const [row] = await rowsOf([
+      value(QUAL, 'Positive', {
+        highlightInReport: true,
+        highlightLogic: 'BOLD_AND_RED',
+      }),
+    ]);
+    expect(row!.observed1).toBe(
+      '<span style="font-weight:bold;color:#d32f2f">Positive</span>',
+    );
+    // The styling is a presentation choice, not an out-of-range signal.
+    expect(row!.is_observed_1_abnormal).toBe(false);
+  });
+
+  it('highlighting is applied to BOTH observed values of a highlighted parameter', async () => {
+    const [row] = await rowsOf([
+      value(QUAL, 'Positive', {
+        observed2: 'Reactive',
+        highlightInReport: true,
+        highlightLogic: 'BOLD_AND_RED',
+      }),
+    ]);
+    expect(row!.observed1).toBe(
+      '<span style="font-weight:bold;color:#d32f2f">Positive</span>',
+    );
+    expect(row!.observed2).toBe(
+      '<span style="font-weight:bold;color:#d32f2f">Reactive</span>',
+    );
+  });
+
+  it('a Qualitative result NOT flagged for highlight is left plain', async () => {
+    const [row] = await rowsOf([
+      value(QUAL, 'Positive', { highlightInReport: false }),
+    ]);
+    expect(row!.observed1).toBe('Positive');
+  });
+
+  it('an empty reading is never wrapped, even when highlight is on', async () => {
+    const [row] = await rowsOf([
+      value(QUAL, '', {
+        highlightInReport: true,
+        highlightLogic: 'BOLD_AND_RED',
+      }),
+    ]);
+    expect(row!.observed1).toBe('');
+  });
+
+  it('a Quantitative value is never highlighted by the manual control (scope restriction) — only auto-flagged out of range', async () => {
+    const [row] = await rowsOf([
+      value(QUANT, '90', {
+        referenceRangeId: RANGE,
+        highlightInReport: true,
+        highlightLogic: 'BOLD_AND_RED',
+      }),
+    ]);
+    expect(row!.observed1).toBe('90');
+    expect(row!.is_observed_1_abnormal).toBe(false);
+  });
+
   it('both kinds in one report come out in parameter order, each as it should', async () => {
     const rows = await rowsOf([
       value(QUANT, '180', { referenceRangeId: RANGE }),
