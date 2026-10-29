@@ -177,4 +177,14 @@ export class UpdateOrderDto {
   @IsInt()
   @Min(0)
   previousDuesCleared?: number;
+
+  /**
+   * Check-In action (Appointments → Create Order → Confirm). When `true` the order
+   * keeps `status = APPOINTMENT` but its linked appointment is advanced to
+   * CHECKED_IN and its accession samples are generated (appointments do not enter
+   * accession until check-in). Transient — not persisted on the order.
+   */
+  @IsOptional()
+  @IsBoolean()
+  checkIn?: boolean;
 }

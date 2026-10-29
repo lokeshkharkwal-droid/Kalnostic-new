@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { AppointmentModule } from '../appointment/appointment.module';
 import { BranchModule } from '../branch/branch.module';
 import { LabReportModule } from '../lab-report/lab-report.module';
 import { PdfReportTemplateModule } from '../pdf-report-template/pdf-report-template.module';
@@ -38,6 +39,7 @@ import { BarcodeService } from './barcode.service';
 @Module({
   imports: [
     PrismaModule,
+    AppointmentModule,
     BranchModule,
     LabReportModule,
     PdfReportTemplateModule,

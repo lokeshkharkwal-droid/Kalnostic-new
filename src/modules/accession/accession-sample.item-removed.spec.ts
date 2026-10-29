@@ -19,6 +19,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { AppointmentService } from '../appointment/appointment.service';
 
 /**
  * "Test removed from order": a test with a report that is removed from its order
@@ -90,6 +91,7 @@ function makeSampleService() {
     {} as unknown as TenantService,
     {} as unknown as BarcodeService,
     {} as unknown as UserDepartmentScopeService,
+    {} as unknown as AppointmentService,
   );
 }
 

@@ -52,6 +52,7 @@ function setup(
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   // The enrichment steps need many collaborators; they are not what is tested.
   const internals = service as unknown as {

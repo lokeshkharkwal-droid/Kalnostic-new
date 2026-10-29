@@ -20,7 +20,7 @@ const body = (
     ...PDF_TEMPLATE_META_DEFAULTS,
     body_html: html,
   };
-  const context: GeneratePdfDto = { variables: variables as never };
+  const context: GeneratePdfDto = { variables: variables };
   return { html: service.renderBodyFragment(meta, context) };
 };
 
@@ -89,8 +89,8 @@ describe('flat template {{#if key}} inside {{#each}}', () => {
       body_html: html,
     };
     const context = {
-      variables: variables as never,
-      sections: { reports } as never,
+      variables: variables,
+      sections: { reports },
     } as GeneratePdfDto;
     return service.renderBodyFragment(meta, context);
   };

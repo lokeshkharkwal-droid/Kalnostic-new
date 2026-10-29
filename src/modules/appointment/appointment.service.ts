@@ -147,6 +147,46 @@ export class AppointmentService {
   }
 
   /**
+   * Transition an appointment's status inside an existing (already tenant-scoped)
+   * transaction: patch the current `status` and append a history row atomically.
+   * Lets other modules drive the lifecycle within their own `withTenant`
+   * transaction — the order module on Check-In (→ CHECKED_IN) and accession on
+   * first sample collection (→ IN_PROGRESS). Does NOT manage slot reservations
+   * (irrelevant to these transitions); `updateStatus` layers that on top.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param branchId branch for the history row (may be null)
+   * @param appointmentId the appointment to transition
+   * @param personId acting person id (updated/changed by)
+   * @param status the new status
+   * @param notes optional history note
+   */
+  async transitionStatusInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+    appointmentId: string,
+    personId: string | null,
+    status: AppointmentStatus,
+    notes?: string,
+  ): Promise<void> {
+    await tx.appointment.update({
+      where: { id: appointmentId },
+      data: { status, updatedBy: personId },
+    });
+    await tx.appointmentStatusHistory.create({
+      data: {
+        tenantId,
+        branchId,
+        appointmentId,
+        status,
+        notes: notes ?? null,
+        changedBy: personId,
+      },
+    });
+  }
+
+  /**
    * Mint the external appointment id ("APT" + configured auto-increment format)
    * inside the current transaction, atomically with the appointment. Reads the
    * branch's `Appointment` format straight from the settings row (no upsert, so
@@ -301,20 +341,15 @@ export class AppointmentService {
     const wasCancelled = existing.status === AppointmentStatus.CANCELLED;
     const willCancel = dto.status === AppointmentStatus.CANCELLED;
     await this.prisma.withTenant(tenantId, async (tx) => {
-      await tx.appointment.update({
-        where: { id: existing.id },
-        data: { status: dto.status, updatedBy: personId },
-      });
-      await tx.appointmentStatusHistory.create({
-        data: {
-          tenantId,
-          branchId: existing.branchId,
-          appointmentId: existing.id,
-          status: dto.status,
-          notes: dto.notes ?? null,
-          changedBy: personId,
-        },
-      });
+      await this.transitionStatusInTx(
+        tx,
+        tenantId,
+        existing.branchId,
+        existing.id,
+        personId,
+        dto.status,
+        dto.notes ?? undefined,
+      );
       if (reservation) {
         if (willCancel && !wasCancelled) {
           await this.slotReservation.releaseInTx(
