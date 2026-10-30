@@ -40,6 +40,7 @@ import {
 import { TenantService } from '../tenant/tenant.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
+import { AppointmentService } from '../appointment/appointment.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import {
   ShareService,
@@ -292,6 +293,7 @@ export class LabReportService {
     private readonly overallResultTemplateService: OverallResultTemplateService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly referralCredit: ReferralCreditService,
+    private readonly appointmentService: AppointmentService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -453,6 +455,47 @@ export class LabReportService {
       rows.forEach((r) => ids.add(r.id));
     }
     return [...ids];
+  }
+
+  /**
+   * Flag every lab report a transferred sample serves as referral work
+   * (`isReferral = true`) so the Technician Reporting worklist's "Outsource"
+   * checkbox surfaces it. Called at transfer-accept time: on the INTERNAL clone
+   * materialised at the receiving branch, and on the sender's own sample once an
+   * EXTERNAL/OUTSOURCE transfer is accepted (Option B — gated on accept). Targets
+   * the reports held at the sample's own branch for the order items it serves
+   * (the same `(orderItemId, member|labTest)` matching {@link
+   * findReportIdsForSampleTests} uses). Idempotent — safe to call more than once.
+   * @param tx the caller's transaction
+   * @param sampleId the accepted clone / forwarded sample
+   */
+  async markReportsReferralForSample(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<void> {
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      select: {
+        branchId: true,
+        tests: {
+          where: { deletedAt: null },
+          select: { orderItemId: true, labTestId: true },
+        },
+      },
+    });
+    if (!sample) return;
+    const reportIds = await this.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      sample.tests,
+    );
+    if (reportIds.length === 0) return;
+    await tx.labReport.updateMany({
+      where: { id: { in: reportIds }, tenantId, deletedAt: null },
+      data: { isReferral: true },
+    });
   }
 
   /**
@@ -871,6 +914,11 @@ export class LabReportService {
           labTestId,
           status: LabReportStatus.PENDING,
           isOutsourced: orderItem.outsourceCenterId !== null,
+          // An outsourced-out item counts as referral work from the moment its
+          // report exists (same as isOutsourced). Transferred-in / forwarded
+          // samples get isReferral stamped later, at transfer-accept time
+          // (markReportsReferralForSample) — see the field doc comment.
+          isReferral: orderItem.outsourceCenterId !== null,
         },
       });
       await tx.labReportHistory.create({
@@ -974,9 +1022,12 @@ export class LabReportService {
     if (filters.urgent) where.isUrgent = true;
     if (filters.source === 'IN_HOUSE') where.isOutsourced = false;
     if (filters.source === 'OUTSOURCE') where.isOutsourced = true;
-    // Standalone "Outsource" checkbox (distinct from the source pill above) —
-    // same underlying signal, only ever narrows to outsourced items when checked.
-    if (filters.outsource) where.isOutsourced = true;
+    // Standalone "Outsource" checkbox (distinct from the source pill above):
+    // the superset `isReferral` signal — outsourced-out PLUS samples accepted
+    // into this branch via an INTERNAL transfer (/accession/referral-orders) or
+    // forwarded on an accepted EXTERNAL/OUTSOURCE transfer. A plain equality on
+    // the denormalized flag; see LabReport.isReferral.
+    if (filters.outsource) where.isReferral = true;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -2087,10 +2138,10 @@ export class LabReportService {
     ) as Record<LabReportStatus, number>;
 
     // Source pill counts (ALL/IN_HOUSE/OUTSOURCE) — same idea as the status
-    // counts above: strip the source-related filters (the pill itself, plus
-    // the standalone "Outsource" checkbox, since both set isOutsourced) so
-    // the In-House/Outsource split reflects every OTHER active filter, not
-    // whichever source pill happens to be selected right now.
+    // counts above: strip the source-related filters (the pill itself, which
+    // sets isOutsourced, plus the standalone "Outsource" checkbox, which sets
+    // the wider isReferral) so the In-House/Outsource split reflects every
+    // OTHER active filter, not whichever source pill/checkbox is selected now.
     const sourceBaseWhere = this.buildListWhere(
       tenantId,
       scope,
@@ -3012,7 +3063,9 @@ export class LabReportService {
 
   /** Refuses a parameter-note write unless the report is still Pending, Partial Pending or Saved. */
   private assertParameterNoteEditable(id: string, status: string): void {
-    if (!(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)) {
+    if (
+      !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)
+    ) {
       throw new LabReportParameterNoteNotEditableException(id, status);
     }
   }
@@ -6504,7 +6557,99 @@ export class LabReportService {
       reportId: updated.id,
       orderItemId: updated.orderItemId,
     });
+    // When this publish completes the order (every live report PUBLISHED), close
+    // out the linked appointment: CHECKED_IN / IN_PROGRESS → COMPLETED. No-op for
+    // orders without an appointment, or when other reports are still pending.
+    await this.maybeCompleteAppointmentOnPublish(
+      tenantId,
+      updated.orderItemId,
+      actorId,
+    );
     return updated;
+  }
+
+  /**
+   * Close out an appointment once its order is fully reported. When the order
+   * linked to this report's item has an appointment and EVERY live `LabReport`
+   * for that order is `PUBLISHED`, transition the appointment to COMPLETED
+   * (guarded + idempotent in `AppointmentService.completeIfAllDoneInTx`, so two
+   * reports publishing at once can't double-complete). No-op when the order has
+   * no appointment or any report is still pending. Runs in its own tenant-scoped
+   * transaction after the publish commits; a failure here is logged and never
+   * blocks the publish itself.
+   */
+  private async maybeCompleteAppointmentOnPublish(
+    tenantId: string,
+    orderItemId: string,
+    actorId: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        const item = await tx.orderItem.findFirst({
+          where: { id: orderItemId, tenantId, deletedAt: null },
+          select: {
+            order: {
+              select: { id: true, appointmentId: true, branchId: true },
+            },
+          },
+        });
+        const order = item?.order;
+        if (!order?.appointmentId) return;
+        // Completion must cover EVERY sample linked to the appointment, not just
+        // the report that triggered this call. A `LabReport` only exists once its
+        // sample is accepted, so "all existing reports published" is not enough —
+        // a later item whose sample isn't accepted yet has no report row at all
+        // and would be silently skipped. Instead, assert over the order's
+        // sample-bearing items (those with an `OrderSampleTest` link, i.e. real
+        // lab/sample work — radiology/OPD lines carry none): the appointment
+        // completes only when there is at least one such item and EACH one is
+        // fully reported (has ≥1 live report, all PUBLISHED). An item still
+        // awaiting its report (none yet) or carrying a not-yet-published report
+        // holds completion back. Removed items (soft-deleted) are excluded.
+        const sampleBearingWhere = {
+          tenantId,
+          orderId: order.id,
+          deletedAt: null,
+          orderSampleTests: { some: { deletedAt: null } },
+        };
+        const totalLabItems = await tx.orderItem.count({
+          where: sampleBearingWhere,
+        });
+        if (totalLabItems === 0) return;
+        const itemsNotFullyReported = await tx.orderItem.count({
+          where: {
+            ...sampleBearingWhere,
+            OR: [
+              // No report created yet (sample not accepted / reported).
+              { labReports: { none: { deletedAt: null } } },
+              // A live report that hasn't reached PUBLISHED.
+              {
+                labReports: {
+                  some: {
+                    deletedAt: null,
+                    status: { not: LabReportStatus.PUBLISHED },
+                  },
+                },
+              },
+            ],
+          },
+        });
+        if (itemsNotFullyReported > 0) return;
+        await this.appointmentService.completeIfAllDoneInTx(
+          tx,
+          tenantId,
+          order.branchId,
+          order.appointmentId,
+          actorId,
+          'All reports published',
+        );
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Appointment-completion check failed after publishing report for order item ${orderItemId}: ${message}`,
+      );
+    }
   }
 
   async errorReported(

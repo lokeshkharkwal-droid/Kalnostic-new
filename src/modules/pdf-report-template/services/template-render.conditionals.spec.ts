@@ -191,8 +191,8 @@ describe('flat template {result_note} in a results row', () => {
         '{{#each results}}[{parameter_name}|{{#if result_note}}{result_note}{{/if}}]{{/each}}',
     };
     const context = {
-      variables: {} as never,
-      sections: { results: rowsOf } as never,
+      variables: {},
+      sections: { results: rowsOf },
     } as GeneratePdfDto;
     return service.renderBodyFragment(meta, context);
   };
@@ -200,7 +200,10 @@ describe('flat template {result_note} in a results row', () => {
   it("prints the technician's formatting as formatting, not as literal tags", () => {
     expect(
       resultRows([
-        { parameter_name: 'Bilirubin', result_note: '<p><strong>Hemolysed</strong></p>' },
+        {
+          parameter_name: 'Bilirubin',
+          result_note: '<p><strong>Hemolysed</strong></p>',
+        },
       ]),
     ).toBe('[Bilirubin|<p><strong>Hemolysed</strong></p>]');
   });

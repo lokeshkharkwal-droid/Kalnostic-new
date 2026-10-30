@@ -9,6 +9,7 @@ import { TenantModule } from '../tenant/tenant.module';
 import { OverallResultTemplateModule } from '../overall-result-template/overall-result-template.module';
 import { UserDepartmentScopeModule } from '../department/user-department-scope.module';
 import { ReferralCreditModule } from '../referral-credit/referral-credit.module';
+import { AppointmentModule } from '../appointment/appointment.module';
 import { LabReportController } from './lab-report.controller';
 import { LabReportService } from './lab-report.service';
 import { LabReportAttachmentController } from './lab-report-attachment.controller';
@@ -64,6 +65,7 @@ import { ReportBranchScopeGuard } from './access/report-branch-scope.guard';
     OverallResultTemplateModule,
     UserDepartmentScopeModule,
     ReferralCreditModule,
+    AppointmentModule,
   ],
   controllers: [
     LabReportController,

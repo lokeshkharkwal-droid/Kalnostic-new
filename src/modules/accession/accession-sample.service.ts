@@ -1088,42 +1088,60 @@ export class OrderSampleService {
       collectable.map((s) => s.id),
     );
 
-    // First collection on a checked-in appointment advances its lifecycle to
-    // IN_PROGRESS. Resolve the distinct orders of the just-collected samples and
-    // move any linked appointment still at CHECKED_IN. Keeps the appointment
-    // lifecycle in step with accession (via AppointmentService DI, CLAUDE.md #3).
+    // First collection on a checked-in appointment advances it to IN_PROGRESS.
+    await this.advanceCheckedInAppointmentsInTx(
+      tx,
+      tenantId,
+      personId,
+      collectable.map((s) => s.id),
+    );
+  }
+
+  /**
+   * First collection on a checked-in appointment advances its lifecycle to
+   * IN_PROGRESS. Given the ids of samples that just became COLLECTED, resolve
+   * their distinct orders and move any linked appointment still at CHECKED_IN.
+   * Shared by BOTH collection paths so a sample marked collected anywhere keeps
+   * the appointment lifecycle in step (via AppointmentService DI, CLAUDE.md #3):
+   * the order-level bridge ({@link collectSamplesInTx}, used by the Order
+   * Overview modal's Collect) and the Accession In-House state-machine action
+   * ({@link collect}). Idempotent — the CHECKED_IN guard means a second collect
+   * on an already-advanced appointment is a no-op.
+   */
+  private async advanceCheckedInAppointmentsInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    collectedSampleIds: string[],
+  ): Promise<void> {
+    if (collectedSampleIds.length === 0) return;
     const collectedOrders = await tx.orderSample.findMany({
-      where: {
-        id: { in: collectable.map((s) => s.id) },
-        tenantId,
-        deletedAt: null,
-      },
+      where: { id: { in: collectedSampleIds }, tenantId, deletedAt: null },
       select: { orderId: true },
     });
     const orderIds = [...new Set(collectedOrders.map((s) => s.orderId))];
-    if (orderIds.length > 0) {
-      const checkedInOrders = await tx.order.findMany({
-        where: {
-          id: { in: orderIds },
-          tenantId,
-          deletedAt: null,
-          appointmentId: { not: null },
-          appointment: { is: { status: AppointmentStatus.CHECKED_IN } },
-        },
-        select: { appointmentId: true, branchId: true },
-      });
-      for (const o of checkedInOrders) {
-        if (!o.appointmentId) continue;
-        await this.appointmentService.transitionStatusInTx(
-          tx,
-          tenantId,
-          o.branchId,
-          o.appointmentId,
-          personId,
-          AppointmentStatus.IN_PROGRESS,
-          'Sample collected',
-        );
-      }
+    if (orderIds.length === 0) return;
+    const checkedInOrders = await tx.order.findMany({
+      where: {
+        id: { in: orderIds },
+        tenantId,
+        deletedAt: null,
+        appointmentId: { not: null },
+        appointment: { is: { status: AppointmentStatus.CHECKED_IN } },
+      },
+      select: { appointmentId: true, branchId: true },
+    });
+    for (const o of checkedInOrders) {
+      if (!o.appointmentId) continue;
+      await this.appointmentService.transitionStatusInTx(
+        tx,
+        tenantId,
+        o.branchId,
+        o.appointmentId,
+        personId,
+        AppointmentStatus.IN_PROGRESS,
+        'Sample collected',
+      );
     }
   }
 
@@ -2350,8 +2368,23 @@ export class OrderSampleService {
         },
       }),
       dto,
-      (tx, changedIds) =>
-        this.assignBarcodesOnCollectInTx(tx, tenantId, personId, changedIds),
+      async (tx, changedIds) => {
+        await this.assignBarcodesOnCollectInTx(
+          tx,
+          tenantId,
+          personId,
+          changedIds,
+        );
+        // A sample collected from the Accession In-House worklist advances the
+        // linked appointment to IN_PROGRESS too — parity with the order-level
+        // collect bridge (CHECKED_IN → IN_PROGRESS, same guard).
+        await this.advanceCheckedInAppointmentsInTx(
+          tx,
+          tenantId,
+          personId,
+          changedIds,
+        );
+      },
     );
   }
 
@@ -4423,6 +4456,26 @@ export class OrderSampleService {
         fromBranchId,
       );
     }
+  }
+
+  /**
+   * Flag a transferred sample's reports as referral work so the Technician
+   * Reporting "Outsource" checkbox includes them. Called at transfer-accept time
+   * — on the INTERNAL clone at the receiving branch, and on the sender's sample
+   * once an EXTERNAL/OUTSOURCE transfer is accepted. Thin delegate to
+   * {@link LabReportService.markReportsReferralForSample} (SampleTransferService
+   * reaches LabReport only through this service, per the no-cross-service rule).
+   */
+  async markLabReportsReferralForSample(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<void> {
+    await this.labReportService.markReportsReferralForSample(
+      tx,
+      tenantId,
+      sampleId,
+    );
   }
 
   /**

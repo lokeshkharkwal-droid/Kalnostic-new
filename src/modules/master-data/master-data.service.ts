@@ -1,8 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { LabPanel, LabTest, MasterData, Prisma } from '@prisma/client';
+import {
+  AbnormalFlag,
+  LabPanel,
+  LabTest,
+  MasterData,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { NotFoundException } from '../../common/exceptions/kaltros.exception';
 import { BranchService } from '../branch/branch.service';
 import { CreateMasterDataDto } from './dto/create-master-data.dto';
 import { UpdateMasterDataDto } from './dto/update-master-data.dto';
@@ -713,5 +720,59 @@ export class MasterDataService {
     return (
       e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
     );
+  }
+
+  /**
+   * SiteAdmin maintenance: normalise the "Abnormal Flag Logic" of all of a
+   * tenant's existing reference ranges and reference values from `BOLD_AND_RED`
+   * ("Bold and Red") to `BOLD_ONLY` ("Bold"). Rows carrying any other flag
+   * (`ITALIC`, …) are left untouched, and no other reference-value setting is
+   * changed.
+   *
+   * Runs inside {@link PrismaService.withTenant} so it works whether or not RLS is
+   * enabled — the tenant GUC is set and every `where` stays tenant-scoped (defence
+   * in depth, CLAUDE.md §4.3/§4.7). SITE_ADMIN template rows (`tenantId IS NULL`)
+   * are platform content, not a tenant's master data, so they are out of scope.
+   * Soft-deleted rows (`deletedAt`) are skipped.
+   *
+   * @param tenantId the tenant whose tests should be updated (from the query string)
+   * @returns a summary of how many reference ranges / values were updated
+   * @throws NotFoundException if `tenantId` does not exist
+   */
+  async resetAbnormalFlagLogicToBold(tenantId: string): Promise<{
+    referenceRangesUpdated: number;
+    referenceValuesUpdated: number;
+  }> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (!tenant) {
+      throw new NotFoundException('Tenant', tenantId);
+    }
+
+    const FROM = AbnormalFlag.BOLD_AND_RED;
+    const TO = AbnormalFlag.BOLD_ONLY;
+
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const ranges = await tx.labTestReferenceRange.updateMany({
+        where: { tenantId, abnormalFlagLogic: FROM, deletedAt: null },
+        data: { abnormalFlagLogic: TO },
+      });
+      const values = await tx.labTestReferenceValue.updateMany({
+        where: { tenantId, abnormalFlagLogic: FROM, deletedAt: null },
+        data: { abnormalFlagLogic: TO },
+      });
+
+      this.logger.log(
+        `Reset Abnormal Flag Logic to BOLD_ONLY for tenant ${tenantId}: ` +
+          `${ranges.count} reference range(s), ${values.count} reference value(s)`,
+      );
+
+      return {
+        referenceRangesUpdated: ranges.count,
+        referenceValuesUpdated: values.count,
+      };
+    });
   }
 }

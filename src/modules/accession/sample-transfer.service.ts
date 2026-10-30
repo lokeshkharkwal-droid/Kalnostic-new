@@ -1920,6 +1920,22 @@ export class SampleTransferService {
               transfer,
             );
           }
+          // EXTERNAL / OUTSOURCE accept keeps the report on the sender's own
+          // sample (no clone — cloneIntoDestination returned null above). Once
+          // this branch records the transfer ACCEPTED, flag that report so the
+          // Technician Reporting "Outsource" checkbox includes it (Option B —
+          // gated on accept; INTERNAL is handled inside cloneIntoDestination).
+          if (
+            action === 'accept' &&
+            (transfer.kind === TransferKind.EXTERNAL ||
+              transfer.kind === TransferKind.OUTSOURCE)
+          ) {
+            await this.samples.markLabReportsReferralForSample(
+              tx,
+              tenantId,
+              transfer.sampleId,
+            );
+          }
           // Receiving branch rejects / repeats an INTERNAL transfer: the test
           // goes back to the sender (its original sample -> REPEAT).
           if (
@@ -2216,6 +2232,11 @@ export class SampleTransferService {
       cloned.id,
       destBranch,
     );
+
+    // The clone exists only because the transfer was ACCEPTED — flag its reports
+    // as referral work so the receiver's Technician Reporting "Outsource" checkbox
+    // surfaces them (see LabReport.isReferral).
+    await this.samples.markLabReportsReferralForSample(tx, tenantId, cloned.id);
 
     return cloned.id;
   }
