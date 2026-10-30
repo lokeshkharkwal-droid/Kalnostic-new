@@ -51,6 +51,7 @@ function reportIn(status: LabReportStatus, branchId = 'A') {
         },
       },
     },
+    parameterNotes: [],
     contentSections: {
       usefulFor: 'U-text',
       interpretation: 'I-text',

@@ -50,6 +50,7 @@ params:query {
   ~isOutsource: false
   ~isUrgent: false
   ~hideUnpaidAppointments: true
+  ~includeCheckedInAppointments: true
 }
 
 auth:bearer {
@@ -188,5 +189,16 @@ docs {
     "Not Paid" bills, even if the client omits the `statuses` filter. (The Billings
     list sends both `hideUnpaidAppointments=true` and
     `statuses=APPOINTMENT,ORDER,CANCELLED`; the backend exclusion is the
-    non-bypassable backstop.)
+    non-bypassable backstop.) An appointment that has been **checked in** (its
+    linked appointment is `CHECKED_IN` / `IN_PROGRESS` / `COMPLETED`) is NEVER
+    hidden by this flag regardless of payment — a checked-in patient is billable.
+  - `includeCheckedInAppointments` — `true` additionally surfaces checked-in
+    appointment orders (linked appointment in `CHECKED_IN` / `IN_PROGRESS` /
+    `COMPLETED`) alongside whatever `statuses` were requested. A checked-in
+    appointment keeps `status = APPOINTMENT` (so it stays on the Appointments
+    list) but has entered the active workflow, so the Order Console sends this
+    with `statuses=ORDER,CANCELLED` to show it next to real orders — without
+    pulling in not-yet-checked-in appointments. Implemented as an OR
+    (`status IN (statuses)` OR `status = APPOINTMENT AND appointment checked-in`),
+    so it never widens the plain `statuses` filter for other screens.
 }

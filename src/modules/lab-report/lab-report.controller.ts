@@ -59,6 +59,7 @@ import { ApproveReportDto } from './dto/approve-report.dto';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
 import { UpdateNotePrintSectionsDto } from './dto/update-note-print-sections.dto';
 import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
+import { UpdateParameterNoteDto } from './dto/update-parameter-note.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -580,7 +581,7 @@ export class LabReportController {
   @Audit({
     module: AuditModule.LAB_REPORT,
     action: AuditAction.UPDATE,
-    description: "Updated which notes sections print on a lab report",
+    description: 'Updated which notes sections print on a lab report',
   })
   updateNotePrintSections(
     @CurrentTenant() tenantId: string,
@@ -619,6 +620,35 @@ export class LabReportController {
     @Body() dto: UpdateOverallResultDto,
   ) {
     return this.labReportService.updateOverallResult(
+      id,
+      tenantId,
+      profile.branchId,
+      resultParamId,
+      dto,
+    );
+  }
+
+  /**
+   * Save the technician's own text for ONE result parameter's Note on this report (the Notes icon beside Sync on
+   * Patient Entry / Test Entry). The parameter's configured Note is only the default and is never changed here.
+   * Allowed while the report is Pending, Partial Pending or Saved (409 afterwards, like the result values). No
+   * technician setting gates it. See `UpdateParameterNoteDto`.
+   */
+  @Patch(':id/parameter-note/:resultParamId')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.UPDATE,
+    description: "Updated a lab report parameter's note",
+  })
+  updateParameterNote(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Param('resultParamId') resultParamId: string,
+    @Body() dto: UpdateParameterNoteDto,
+  ) {
+    return this.labReportService.updateParameterNote(
       id,
       tenantId,
       profile.branchId,

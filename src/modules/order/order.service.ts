@@ -106,6 +106,11 @@ import {
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
+  CHECKED_IN_APPOINTMENT_STATUSES,
+  PRE_CHECKIN_APPOINTMENT_STATUSES,
+  isActiveOrderForGates,
+} from './utils/order-gate-scope.util';
+import {
   billStatusLabel,
   deriveBillStatus,
   recomputeBillStatusInTx,
@@ -470,17 +475,16 @@ export class OrderService {
   /**
    * True when an order at `status` is a confirmed diagnostic order — the point at
    * which its accession samples are generated (PDF: samples enter accession once
-   * an order is placed/booked). Never DRAFT/QUOTE/CANCELLED, and only when the
-   * diagnostics section is present.
+   * an order is placed). Only `ORDER` qualifies: an `APPOINTMENT` does NOT enter
+   * accession on creation — it does so only when the patient is checked in (the
+   * Check-In action, handled explicitly via `dto.checkIn` in `update()`). Never
+   * DRAFT/QUOTE/CANCELLED, and only when the diagnostics section is present.
    */
   private shouldGenerateSamples(
     status: OrderStatus | undefined,
     hasDiagnostics: boolean,
   ): boolean {
-    return (
-      hasDiagnostics &&
-      (status === OrderStatus.ORDER || status === OrderStatus.APPOINTMENT)
-    );
+    return hasDiagnostics && status === OrderStatus.ORDER;
   }
 
   /**
@@ -3452,7 +3456,23 @@ export class OrderService {
     }
 
     // Multi-status filter (Billing scope) wins over the single-status filter.
-    if (query.statuses?.length) {
+    if (query.includeCheckedInAppointments && query.statuses?.length) {
+      // Order Console: show the requested statuses PLUS checked-in appointments
+      // (which stay `status = APPOINTMENT`). OR-ed into `and[]` so the two clauses
+      // compose without one clobbering the other, and not-yet-checked-in
+      // appointments are left out.
+      and.push({
+        OR: [
+          { status: { in: query.statuses } },
+          {
+            status: OrderStatus.APPOINTMENT,
+            appointment: {
+              is: { status: { in: CHECKED_IN_APPOINTMENT_STATUSES } },
+            },
+          },
+        ],
+      });
+    } else if (query.statuses?.length) {
       where.status = { in: query.statuses };
     } else if (query.status) {
       where.status = query.status;
@@ -3495,6 +3515,12 @@ export class OrderService {
       and.push({
         NOT: {
           status: OrderStatus.APPOINTMENT,
+          // Checked-in appointments (the patient has arrived) are billable
+          // regardless of payment, so they are NOT hidden — only not-yet-checked-in
+          // appointments qualify for the unpaid-hide rule.
+          appointment: {
+            is: { status: { notIn: CHECKED_IN_APPOINTMENT_STATUSES } },
+          },
           payments: {
             none: {
               deletedAt: null,
@@ -5884,14 +5910,28 @@ export class OrderService {
         : (existing?.referralPanelId ?? null);
     const isB2bOrder = Boolean(effectiveReferralPanelId);
 
+    // A Check-In (Appointments → Create Order → Confirm) commits the appointment
+    // into the active, billable workflow even though the order keeps
+    // `status = APPOINTMENT`. For every finalize-time registration gate below it
+    // must be treated EXACTLY like an ORDER, so a checked-in appointment can never
+    // bypass a rule a normal order would enforce. `dto.checkIn` is the transition;
+    // an already checked-in appointment (re-saved later) stays "active" via its
+    // linked appointment status. `isActiveOrder` therefore drives all the same
+    // finalize gates for ORDER and checked-in APPOINTMENT alike.
+    const isActiveOrder = isActiveOrderForGates({
+      effectiveStatus,
+      appointmentStatus: existing?.appointment?.status ?? null,
+      checkIn: dto.checkIn === true,
+    });
+
     // Referral Panel Settings credit gate (Section 4) on the UPDATE path — mirrors
     // create() so finalizing a DRAFT/QUOTE/APPOINTMENT to ORDER (or adding items
-    // to an existing order) cannot bypass a linked Cash/Postpaid referral's Credit
-    // Limit / Credit Allowed Days. Bites only when the effective status is ORDER.
-    // Excludes THIS order from the balance (it is the one being edited); effective
-    // referral ids use the patched value, else the stored one (same resolution as
+    // to an existing order), AND checking an appointment in, cannot bypass a linked
+    // Cash/Postpaid referral's Credit Limit / Credit Allowed Days. Excludes THIS
+    // order from the balance (it is the one being edited); effective referral ids
+    // use the patched value, else the stored one (same resolution as
     // effectiveReferralPanelId above).
-    if (effectiveStatus === OrderStatus.ORDER) {
+    if (isActiveOrder) {
       await this.referralCredit.assertOrderCreationAllowed(
         tenantId,
         {
@@ -6074,17 +6114,14 @@ export class OrderService {
     }
 
     // Enforce the branch's Previous-Dues + Partial-Billing + TDS/Discount rules
-    // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
-    // the incoming ledger/items when this patch replaces them, otherwise the
-    // order's stored rows — so the checks run against the order's effective state.
-    // Skipped when no bill is generated — there is nothing to bill, so the gates
-    // must not block the order. For B2B orders (`isB2bOrder`) only the Previous-Dues
-    // + Partial-Billing check below is skipped; TDS/Discount stays enforced.
-    if (
-      effectiveStatus === OrderStatus.ORDER &&
-      branchId &&
-      effectiveBillGenerated
-    ) {
+    // when a draft is finalized (or an order re-saved) to `status = ORDER`, OR when
+    // an appointment is checked in (`isActiveOrder`). Uses the incoming ledger/items
+    // when this patch replaces them, otherwise the order's stored rows — so the
+    // checks run against the order's effective state. Skipped when no bill is
+    // generated — there is nothing to bill, so the gates must not block the order.
+    // For B2B orders (`isB2bOrder`) only the Previous-Dues + Partial-Billing check
+    // below is skipped; TDS/Discount stays enforced.
+    if (isActiveOrder && branchId && effectiveBillGenerated) {
       const effectivePayments: DiscountTdsPaymentRow[] =
         dto.payments !== undefined
           ? dto.payments
@@ -6668,19 +6705,44 @@ export class OrderService {
         }
       }
 
-      // Generate / reconcile accession samples once the order is confirmed as a
-      // diagnostic order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT).
-      // - First-time (no samples yet): generate the full item set (idempotent).
-      // - Already accessioned + items changed: reconcile only the delta (add new
-      //   samples for added items, tombstone samples for removed ones).
+      // Check-In (Appointments → Create Order → Confirm): advance the linked
+      // appointment to CHECKED_IN so the order enters the active workflow. The
+      // order itself stays `status = APPOINTMENT`. Idempotent — a no-op when the
+      // appointment is already checked in / in progress / completed / cancelled.
+      if (
+        dto.checkIn &&
+        existing?.appointmentId &&
+        existing.appointment &&
+        PRE_CHECKIN_APPOINTMENT_STATUSES.includes(existing.appointment.status)
+      ) {
+        await this.appointmentService.transitionStatusInTx(
+          tx,
+          tenantId,
+          branchId,
+          existing.appointmentId,
+          personId,
+          AppointmentStatus.CHECKED_IN,
+          'Checked in',
+        );
+      }
+
+      // Generate / reconcile accession samples. Samples enter accession when the
+      // order is confirmed as a diagnostic ORDER, or when an appointment is checked
+      // in (`dto.checkIn`) — an APPOINTMENT does NOT enter accession before check-in.
+      // Once accessioned, an item-set change reconciles the delta regardless of the
+      // order's status (a checked-in appointment stays `status = APPOINTMENT`).
       const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
-      if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
+      if (hasDiagnostics) {
         const alreadyAccessioned =
           (await tx.orderSample.count({
             where: { orderId: id, tenantId, deletedAt: null },
           })) > 0;
+        const shouldGenerate =
+          this.shouldGenerateSamples(effectiveStatus, hasDiagnostics) ||
+          Boolean(dto.checkIn);
         if (alreadyAccessioned && dto.items !== undefined && itemDiff) {
-          // Already accessioned + item set changed -> reconcile the delta only.
+          // Already accessioned + item set changed -> reconcile the delta only (add
+          // new samples for added items, tombstone samples for removed ones).
           await this.orderSamples.reconcileForOrderInTx(
             tx,
             tenantId,
@@ -6693,7 +6755,7 @@ export class OrderService {
               now,
             },
           );
-        } else {
+        } else if (!alreadyAccessioned && shouldGenerate) {
           // First-time generation for the whole final item set (idempotent). Do
           // NOT also reconcile here — the added items are already part of the
           // order, so generating the whole order covers them.
@@ -6717,12 +6779,14 @@ export class OrderService {
         id,
       );
 
-      // Cross-order settlement — applied only on the TRANSITION into ORDER (e.g.
-      // a draft finalized to ORDER), never on re-saving an already-ORDER order,
-      // so the cleared amount is settled exactly once.
+      // Cross-order settlement — applied only on the TRANSITION into the active
+      // workflow: a draft finalized to ORDER, or an appointment checked in
+      // (`dto.checkIn`, sent once on Confirm). Never on re-saving an already-active
+      // order, so the cleared amount is settled exactly once.
       if (
-        existing?.status !== OrderStatus.ORDER &&
-        effectiveStatus === OrderStatus.ORDER &&
+        ((existing?.status !== OrderStatus.ORDER &&
+          effectiveStatus === OrderStatus.ORDER) ||
+          dto.checkIn === true) &&
         branchId &&
         existing?.patientId &&
         effectiveBillGenerated &&

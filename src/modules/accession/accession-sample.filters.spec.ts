@@ -40,6 +40,7 @@ describe('OrderSampleService — referral / outsource / transfer-date filters', 
       undefined as never,
       undefined as never,
       { resolveDepartmentIds: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
     );
   });
 

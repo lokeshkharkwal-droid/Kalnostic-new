@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantService } from '../tenant/tenant.service';
 import { BarcodeService } from './barcode.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
+import { AppointmentService } from '../appointment/appointment.service';
 
 /**
  * A group "Return" is sent with `force: true` (group actions override the
@@ -71,6 +72,7 @@ describe('OrderSampleService — forced Return respects the allowed statuses', (
       {} as unknown as TenantService,
       {} as unknown as BarcodeService,
       {} as unknown as UserDepartmentScopeService,
+      {} as unknown as AppointmentService,
     );
     // The final re-read of the changed samples is not under test.
     jest

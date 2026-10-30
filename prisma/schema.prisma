@@ -7376,6 +7376,7 @@ model LabReport {
 
   resultValues     LabReportResultValue[]
   overallResults   LabReportOverallResult[]
+  parameterNotes   LabReportParameterNote[]
   notes            LabReportNote[]
   attachments      LabReportAttachment[]
   history          LabReportHistory[]
@@ -7451,6 +7452,16 @@ model LabReportResultValue {
   /// silently rewrite what was actually shown when this value was entered.
   referenceDisplay String? @map("reference_display")
 
+  /// Technician-set, per-report request to visually highlight THIS parameter's
+  /// observed value(s) in the generated report. Applies to QUALITATIVE and
+  /// SEMI_QUANTITATIVE parameters only — quantitative values are flagged
+  /// automatically from their numeric reference range (`AbnormalFlag`), so this
+  /// manual control is never surfaced for them. `highlightLogic` is the styling
+  /// to apply (reuses the `AbnormalFlag` palette; only `BOLD_AND_RED` is offered
+  /// in the UI today) and is read only when `highlightInReport` is true.
+  highlightInReport Boolean       @default(false) @map("highlight_in_report")
+  highlightLogic    AbnormalFlag? @map("highlight_logic")
+
   source ResultValueSource @default(MANUAL)
 
   enteredAt DateTime? @map("entered_at")
@@ -7506,6 +7517,42 @@ model LabReportOverallResult {
   @@index([labReportId])
   @@index([resultParamId])
   @@map("lab_report_overall_results")
+}
+
+/// The technician's own text for ONE result parameter's Note on ONE report
+/// (Technician > Reporting > Patient Entry / Test Entry > the Notes icon beside
+/// Sync). The parameter's configured Note (`LabTestResultParam.notes`, authored on
+/// Master Data > Add Test > Add Result > Notes) is only the DEFAULT: a report with
+/// no live row here prints and shows that default; a report with a row prints
+/// THIS content instead. `content` is rich-text HTML from the Notes editor and may
+/// be an empty string (the technician deliberately blanked the note for this
+/// report — different from "no row", which inherits the default). Editing it never
+/// writes back to `LabTestResultParam`: that would silently change what every other
+/// report of the test shows. `resultParamId` is a logical ref to
+/// `LabTestResultParam` (no FK, joined app-side — same convention as
+/// `LabReportOverallResult`). Only writable while the report is Pending, Partial
+/// Pending or Saved (see `LabReportService.updateParameterNote`).
+model LabReportParameterNote {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  resultParamId String @map("result_param_id")
+  content       String @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  /// Soft delete: set when a test goes back for a repeat (the default note shows
+  /// again). The (report, param) row is revived by the next save (`deletedAt`
+  /// back to null).
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([labReportId, resultParamId])
+  @@index([tenantId])
+  @@index([labReportId])
+  @@index([resultParamId])
+  @@map("lab_report_parameter_notes")
 }
 
 /// Which per-test action a note belongs to (LABORATORY.docx §4.2, §5). ORDER /

@@ -60,6 +60,7 @@ function build(opts: { samples: SampleRow[]; cancelledOrders?: string[] }) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   (service as unknown as { findById: jest.Mock }).findById = jest
     .fn()

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AccessionGroupingMode,
+  AppointmentStatus,
   AuditAction,
   AuditModule,
   OrderSample,
@@ -32,6 +33,7 @@ import {
   patientSingleUnitAgeDisplay,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
+import { AppointmentService } from '../appointment/appointment.service';
 import { LabReportService } from '../lab-report/lab-report.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { PdfReportTemplateService } from '../pdf-report-template/pdf-report-template.service';
@@ -286,6 +288,7 @@ export class OrderSampleService {
     private readonly tenantService: TenantService,
     private readonly barcodeService: BarcodeService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
+    private readonly appointmentService: AppointmentService,
   ) {}
 
   // ── Sample generation (order → accession) ─────────────────────────────────
@@ -1084,6 +1087,44 @@ export class OrderSampleService {
       personId,
       collectable.map((s) => s.id),
     );
+
+    // First collection on a checked-in appointment advances its lifecycle to
+    // IN_PROGRESS. Resolve the distinct orders of the just-collected samples and
+    // move any linked appointment still at CHECKED_IN. Keeps the appointment
+    // lifecycle in step with accession (via AppointmentService DI, CLAUDE.md #3).
+    const collectedOrders = await tx.orderSample.findMany({
+      where: {
+        id: { in: collectable.map((s) => s.id) },
+        tenantId,
+        deletedAt: null,
+      },
+      select: { orderId: true },
+    });
+    const orderIds = [...new Set(collectedOrders.map((s) => s.orderId))];
+    if (orderIds.length > 0) {
+      const checkedInOrders = await tx.order.findMany({
+        where: {
+          id: { in: orderIds },
+          tenantId,
+          deletedAt: null,
+          appointmentId: { not: null },
+          appointment: { is: { status: AppointmentStatus.CHECKED_IN } },
+        },
+        select: { appointmentId: true, branchId: true },
+      });
+      for (const o of checkedInOrders) {
+        if (!o.appointmentId) continue;
+        await this.appointmentService.transitionStatusInTx(
+          tx,
+          tenantId,
+          o.branchId,
+          o.appointmentId,
+          personId,
+          AppointmentStatus.IN_PROGRESS,
+          'Sample collected',
+        );
+      }
+    }
   }
 
   /**
@@ -1915,10 +1956,14 @@ export class OrderSampleService {
     // receiving branch's trail has ("accepted from another branch"), so it is kept.
     // Likewise the sender's `returned-by-receiver` row changes no status, yet it is
     // how "the receiving branch sent it back, and why" reaches the sender's trail.
+    // A transfer `retrieve` (§B.13 one-step-back undo) moves only the TRANSFER status,
+    // not the sample's, so its row is from==to too - but it is a real event the trail
+    // must show, so it is kept as well.
     const movements = rows.filter(
       (r) =>
         (r.fromStatus !== null && r.fromStatus !== r.toStatus) ||
         r.action === 'transfer-accept' ||
+        r.action === 'retrieve' ||
         r.action === RETURNED_BY_RECEIVER_ACTION,
     );
     // A cancelled order shows its cancellation in the trail too, at its place in
