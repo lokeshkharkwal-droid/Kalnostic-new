@@ -2,6 +2,7 @@ import {
   AppointmentStatus,
   BillStatus,
   BillingType,
+  LabReportStatus,
   OrderDateType,
   OrderStatus,
   OrderType,
@@ -103,6 +104,20 @@ export class ListOrdersDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   hideUnpaidAppointments?: boolean;
+
+  /**
+   * `true` additionally surfaces appointment orders that have been **checked in**
+   * (linked `Appointment.status` ∈ CHECKED_IN / IN_PROGRESS / COMPLETED) alongside
+   * whatever `statuses` the caller asked for. The Order Console sends this so a
+   * checked-in appointment (which stays `status = APPOINTMENT`) appears next to
+   * real orders without pulling in not-yet-checked-in appointments. When set, the
+   * `statuses` filter is widened by OR-ing in checked-in appointments rather than
+   * being applied as a hard `status IN (...)`.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeCheckedInAppointments?: boolean;
 
   /** Quotation lifecycle filter (EXPIRED derived from `quotationValidTill`). */
   @IsOptional()
@@ -297,12 +312,34 @@ export class ListOrdersDto extends PaginationQueryDto {
   /**
    * Order-level reporting progress, derived per-test from each item's LabReport
    * (Order Console "Order Status"): `PENDING` (no test reported), `COMPLETED`
-   * (all reported, not all approved), `APPROVED` (all approved),
-   * `PARTIALLY_COMPLETED` (some but not all reported).
+   * (all reported, not all approved), `APPROVED` (all approved, not all
+   * published), `PUBLISHED` (all published), `PARTIALLY_COMPLETED` (some but
+   * not all reported).
    */
   @IsOptional()
-  @IsIn(['PENDING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'APPROVED'])
-  reportStatus?: 'PENDING' | 'PARTIALLY_COMPLETED' | 'COMPLETED' | 'APPROVED';
+  @IsIn([
+    'PENDING',
+    'PARTIALLY_COMPLETED',
+    'COMPLETED',
+    'APPROVED',
+    'PUBLISHED',
+  ])
+  reportStatus?:
+    | 'PENDING'
+    | 'PARTIALLY_COMPLETED'
+    | 'COMPLETED'
+    | 'APPROVED'
+    | 'PUBLISHED';
+
+  /**
+   * Per-report status (Order Console "Report Status"): matches orders with at
+   * least one live lab report currently in this status — the same reports the
+   * row's `reportStatusCounts` counts. Independent of the order-level
+   * `reportStatus` above; the two AND together.
+   */
+  @IsOptional()
+  @IsEnum(LabReportStatus)
+  labReportStatus?: LabReportStatus;
 
   /** Home-visit filter (`OrderDiagnostics.isHomeVisit`). */
   @IsOptional()

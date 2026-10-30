@@ -17,7 +17,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
+import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
 
 /** 24h `HH:mm` time-of-day (00:00–23:59). */
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -224,27 +224,27 @@ export class BulkEditBranchLabTestItemDto {
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Useful For')
+  @RichTextNote('Useful For')
   usefulFor?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Interpretation')
+  @RichTextNote('Interpretation')
   interpretationOfResults?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Limitations')
+  @RichTextNote('Limitations')
   limitations?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('Remarks')
+  @RichTextNote('Remarks')
   remarks?: string;
 
   @IsOptional()
   @IsString()
-  @NoteMaxLength('References')
+  @RichTextNote('References')
   references?: string;
 
   @IsOptional()

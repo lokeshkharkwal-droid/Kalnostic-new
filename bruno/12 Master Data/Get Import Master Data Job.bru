@@ -1,0 +1,33 @@
+meta {
+  name: Get Import Master Data Job
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant/jobs/{{importJobId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Live state of one import job of the active branch (404
+  `MASTER_DATA_IMPORT_JOB_NOT_FOUND` for another tenant/branch).
+
+  - `status`: `RUNNING` → `SUCCEEDED` | `FAILED` | `INTERRUPTED` (server restarted
+    mid-import; nothing saved).
+  - `progress`: `{ phase, total, processed, totalBatches, currentBatch, batches[],
+    toUpdate, toCreate, toRemove }`. `phase`: PREPARING → REMOVING → TESTS → PANELS
+    → SAVING → DONE (or FAILED). Each `batches[i]` = `{ batch, processed, status }`
+    with status `pending | running | completed | failed | rolled_back`
+    (`rolled_back` = processed, then undone because the import failed later).
+  - `result` (SUCCEEDED): `{ tests: {created, updated, deleted}, panels: {...} }`.
+  - `error` (FAILED/INTERRUPTED): `{ code, message, phase, batch? }` — the message
+    already says no changes were saved, e.g. `MASTER_DATA_IMPORT_CONFLICT`,
+    `MASTER_DATA_IMPORT_TIMEOUT`, `MASTER_DATA_IMPORT_DB_BUSY`,
+    `MASTER_DATA_IMPORT_INTERRUPTED`, `MASTER_DATA_IMPORT_FAILED`.
+}

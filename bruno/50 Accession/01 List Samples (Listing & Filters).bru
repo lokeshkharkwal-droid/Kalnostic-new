@@ -71,7 +71,7 @@ docs {
 
   ## Filters (toggle the `~` to enable a query param)
 
-  - `search` — matches accession number **or** barcode (case-insensitive).
+  - `search` — matches accession number, barcode **or** order id (e.g. `ORD-00717`), plus patient name / UHID / mobile (case-insensitive).
   - `status` — the §A.5 status tab (a `SampleStatus` — the 15-stage lifecycle).
   - `priority` — `ROUTINE` | `URGENT` | `STAT`.
   - `collectionStatus` — order-level **collection progress** `PENDING` | `PARTIAL`
@@ -98,6 +98,12 @@ docs {
   own column is kept as an alternative for older rows). `outsourceCenterId` and `sendDate` / `forwardDate` /
   `outsourceDate` already filtered on the transfer. All of them also apply to `/summary` (the tab counts) and
   `/grouped`.
+
+  **Stored / Discarded tab columns.** Every row carries `storeLocation` (the Storage Location typed at Store; kept after
+  Discard). A row whose status is `DISCARDED` also carries `discardMethod` - the method picked at Discard, read from the
+  sample's latest `discard` history entry (null if none; absent on every other status). Both the flat list and
+  `/grouped` return it; the In-House page shows them as the "Storage Location" (Stored tab) and "Discard Method"
+  (Discarded tab) columns.
 
   **Send details on every row.** The row's latest transfer (`transfers[0]`) now also carries
   `externalPartnerName`, `sendDate`, `sendTime`, `sampleForm`, `logisticsType`, `logisticsPerson`, `createdAt`,

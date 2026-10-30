@@ -24,6 +24,7 @@ body:json {
     "quotationStatus": "DRAFT",
     "quotationValidTill": "2026-07-25",
     "isBillGenerated": true,
+    "isPregnant": false,
     "orderNotes": "Rescheduled collection",
     "items": [
       { "id": "{{existingOrderItemId}}", "branchLabTestId": "{{branchLabTestId}}" },
@@ -115,6 +116,15 @@ docs {
   `quotationStatus` (`DRAFT`/`CONVERTED`/`EXPIRED`) and `quotationValidTill`
   (ISO date) are patchable for quotes; omit them to leave existing values intact.
 
+  ## isPregnant
+
+  `isPregnant` (boolean) is this order's own "Pregnant" flag; omit it to leave
+  the stored value unchanged. `true` is checked against the patient's **current**
+  gender (Create Order saves the patient first) and is refused with 422
+  `ORDER_PREGNANCY_REQUIRES_FEMALE` unless that gender is `FEMALE`. The frontend
+  sends `false` whenever gender isn't Female, so changing gender away from Female
+  and saving clears it.
+
   ## payments[] — immutable history, reconcile-in-place
 
   Payment transactions are **immutable historical records**: an update NEVER
@@ -189,7 +199,42 @@ docs {
   - 422 `APPOINTMENT_SECTION_REQUIRED` — status `APPOINTMENT` with no scheduled
     section.
   Saving as `DRAFT` skips all of these, so incomplete drafts remain saveable.
-  
+
+  ## Referral Panel Settings credit gate (finalize)
+
+  When this patch lands the order in `ORDER` (e.g. finalizing a draft/quote/
+  appointment with `{ "status": "ORDER" }`), the same credit gate as Create Order
+  runs on the order's effective referral(s) — B2B panel / doctor / internal /
+  external — so a draft cannot be used to bypass it. The order being edited is
+  excluded from its own referral's outstanding balance. Rejections (the whole
+  update rolls back):
+  - 422 `REFERRAL_CREDIT_LIMIT_REACHED` — a linked Cash/Postpaid referral whose
+    `isRestrictOrderCreditLimit` is on has an outstanding balance ≥ its
+    `creditLimitAmount`.
+  - 422 `REFERRAL_CREDIT_DAYS_EXCEEDED` — a linked referral whose
+    `isRestrictOrderCreditDays` is on has an oldest unpaid order older than
+    `creditAllowedDays`.
+  Patches that keep a non-`ORDER` status (`DRAFT`/`QUOTE`/`APPOINTMENT`) skip this
+  gate, mirroring Create Order.
+
+  ## Check-In (appointment → active workflow)
+
+  `checkIn` (boolean, transient — not persisted) drives the Appointments → Create
+  Order → **Confirm** flow. Send `{ "checkIn": true }` (the order keeps
+  `status = APPOINTMENT`) and the server, atomically:
+  - advances the linked appointment `NEW`/`CONFIRMED`/`RESCHEDULED` → `CHECKED_IN`
+    (idempotent — a no-op if it is already checked in / in progress / completed /
+    cancelled), appending an `AppointmentStatusHistory` row; and
+  - generates the order's accession samples (status `NEW`) — appointments do **not**
+    enter accession before check-in (a plain appointment create/edit never generates
+    samples). Once accessioned, later item-set edits reconcile the sample delta as
+    usual even though the order stays an `APPOINTMENT`.
+
+  A checked-in appointment then shows in Billing regardless of payment and in the
+  Order Console (`includeCheckedInAppointments`) while remaining on the Appointments
+  list. The first sample collected in accession advances the appointment
+  `CHECKED_IN` → `IN_PROGRESS`.
+
   ## Home-visit slot reservation on edit
   
   The phlebotomist slot reservation is re-pointed when the booking changes

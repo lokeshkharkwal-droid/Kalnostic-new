@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { MasterDataController } from './master-data.controller';
+import { SiteAdminMasterDataController } from './siteadmin-master-data.controller';
 import { MasterDataService } from './master-data.service';
 
 /**
@@ -13,7 +14,7 @@ import { MasterDataService } from './master-data.service';
  */
 @Module({
   imports: [PrismaModule, BranchModule],
-  controllers: [MasterDataController],
+  controllers: [SiteAdminMasterDataController, MasterDataController],
   providers: [MasterDataService],
   exports: [MasterDataService],
 })

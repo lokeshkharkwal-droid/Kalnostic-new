@@ -6565,6 +6565,11 @@ model Order {
   billingType     BillingType   @map("billing_type")
   isUrgentBill    Boolean       @default(false) @map("is_urgent_bill")
   isBillGenerated Boolean       @default(false) @map("is_bill_generated")
+  // Patient was pregnant at the time of THIS order (Create Order → Patient
+  // Details). Stored per order, not on the patient, so it never leaks into the
+  // patient's past or future orders. Only valid for a FEMALE patient
+  // (enforced in OrderService).
+  isPregnant      Boolean       @default(false) @map("is_pregnant")
   // Classification of `orderDate` vs. the day the order was created/last saved:
   // CURRENT (today), BACKTRACKED (past), or ADVANCE_DATED (future). Derived
   // server-side in OrderService on create + whenever `orderDate` changes, and
@@ -7280,6 +7285,17 @@ model LabReport {
   remarks                 String?
   references              String?
 
+  /// The Notes sections the technician LEFT OUT of this report's printed
+  /// version (keys: useful_for, interpretation, limitations, remarks,
+  /// references). Empty (the default for every report) means all five print,
+  /// exactly as before. Only honoured while the matching Technician setting
+  /// (`TechnicianSetting.isLabTestNotesSelectable` for a test report,
+  /// `isLabPanelNotesSelectable` for a report on a panel order line) is on;
+  /// when it is off every section prints. It never changes the content shown on
+  /// screen, only what the printed/shared PDF contains. Cleared when the report
+  /// is returned for a repeat (like the Notes overrides above); kept on re-run.
+  excludedNoteSections String[] @default([]) @map("excluded_note_sections")
+
   status LabReportStatus @default(PENDING)
 
   savedAt     DateTime? @map("saved_at")
@@ -7358,8 +7374,21 @@ model LabReport {
   /// is decided at order-creation time and not expected to change afterward.
   isOutsourced Boolean @default(false) @map("is_outsourced")
 
+  /// Superset "Outsource" signal for the Technician Reporting worklist's
+  /// standalone Outsource checkbox (distinct from the ALL/IN_HOUSE/OUTSOURCE
+  /// source pill, which stays on `isOutsourced`). True when this report is
+  /// outsourced-out (same as `isOutsourced`, stamped at creation) OR its sample
+  /// reached ACCEPTED through a cross-branch/external transfer: the INTERNAL
+  /// clone created at the receiving branch, or the sender's own report once an
+  /// EXTERNAL/OUTSOURCE transfer is accepted. Stamped at accept time (not at
+  /// send) so a sample only counts as referral work once the receiving/outside
+  /// party has taken it. A plain indexed column so the checkbox filter stays a
+  /// simple equality and never has to join through OrderSample/SampleTransfer.
+  isReferral Boolean @default(false) @map("is_referral")
+
   resultValues     LabReportResultValue[]
   overallResults   LabReportOverallResult[]
+  parameterNotes   LabReportParameterNote[]
   notes            LabReportNote[]
   attachments      LabReportAttachment[]
   history          LabReportHistory[]
@@ -7391,6 +7420,7 @@ model LabReport {
   @@index([memberBranchLabTestId])
   @@index([performingBranchLabTestId])
   @@index([isOutsourced])
+  @@index([isReferral])
   @@index([tatBand])
   @@index([deletedAt])
   @@map("lab_reports")
@@ -7434,6 +7464,16 @@ model LabReportResultValue {
   /// "0.6 – 1.3 mg/dL"), so a later change to the master reference row doesn't
   /// silently rewrite what was actually shown when this value was entered.
   referenceDisplay String? @map("reference_display")
+
+  /// Technician-set, per-report request to visually highlight THIS parameter's
+  /// observed value(s) in the generated report. Applies to QUALITATIVE and
+  /// SEMI_QUANTITATIVE parameters only — quantitative values are flagged
+  /// automatically from their numeric reference range (`AbnormalFlag`), so this
+  /// manual control is never surfaced for them. `highlightLogic` is the styling
+  /// to apply (reuses the `AbnormalFlag` palette; only `BOLD_AND_RED` is offered
+  /// in the UI today) and is read only when `highlightInReport` is true.
+  highlightInReport Boolean       @default(false) @map("highlight_in_report")
+  highlightLogic    AbnormalFlag? @map("highlight_logic")
 
   source ResultValueSource @default(MANUAL)
 
@@ -7490,6 +7530,42 @@ model LabReportOverallResult {
   @@index([labReportId])
   @@index([resultParamId])
   @@map("lab_report_overall_results")
+}
+
+/// The technician's own text for ONE result parameter's Note on ONE report
+/// (Technician > Reporting > Patient Entry / Test Entry > the Notes icon beside
+/// Sync). The parameter's configured Note (`LabTestResultParam.notes`, authored on
+/// Master Data > Add Test > Add Result > Notes) is only the DEFAULT: a report with
+/// no live row here prints and shows that default; a report with a row prints
+/// THIS content instead. `content` is rich-text HTML from the Notes editor and may
+/// be an empty string (the technician deliberately blanked the note for this
+/// report — different from "no row", which inherits the default). Editing it never
+/// writes back to `LabTestResultParam`: that would silently change what every other
+/// report of the test shows. `resultParamId` is a logical ref to
+/// `LabTestResultParam` (no FK, joined app-side — same convention as
+/// `LabReportOverallResult`). Only writable while the report is Pending, Partial
+/// Pending or Saved (see `LabReportService.updateParameterNote`).
+model LabReportParameterNote {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  labReportId String    @map("lab_report_id")
+  labReport   LabReport @relation(fields: [labReportId], references: [id], onDelete: Cascade)
+
+  resultParamId String @map("result_param_id")
+  content       String @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  /// Soft delete: set when a test goes back for a repeat (the default note shows
+  /// again). The (report, param) row is revived by the next save (`deletedAt`
+  /// back to null).
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([labReportId, resultParamId])
+  @@index([tenantId])
+  @@index([labReportId])
+  @@index([resultParamId])
+  @@map("lab_report_parameter_notes")
 }
 
 /// Which per-test action a note belongs to (LABORATORY.docx §4.2, §5). ORDER /
@@ -8076,6 +8152,12 @@ model PaymentDetails {
   tdsDeduction           Decimal     @default(0) @map("tds_deduction") @db.Decimal(12, 2)
   payableAmount          Decimal     @default(0) @map("payable_amount") @db.Decimal(12, 2)
   paidAmount             Decimal     @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  /// DRAFT (not-yet-collected) amount for an APPOINTMENT booking. An appointment
+  /// is not a bill: the amount entered at creation is remembered here but NOT
+  /// collected (`paidAmount` stays 0, so no collected-money sum, due or report
+  /// counts it) until the appointment is checked in, when it is committed to a
+  /// real collected `paidAmount`. 0 on every ordinary (already-collected) row.
+  draftPaidAmount        Decimal     @default(0) @map("draft_paid_amount") @db.Decimal(12, 2)
   remainingBalance       Decimal     @default(0) @map("remaining_balance") @db.Decimal(12, 2)
   paymentMode            PaymentMode @default(CASH) @map("payment_mode")
   paymentDate            DateTime?   @map("payment_date")
@@ -8780,6 +8862,15 @@ model TechnicianSetting {
   /// always sourced from an `OverallResultTemplate` the technician picks.
   isOverallResultEditable Boolean @default(false) @map("is_overall_result_editable")
 
+  /// Whether the technician may choose, per report, which of the 5 Notes
+  /// sections print (a checkbox beside each section on the report). One switch
+  /// for a single lab test, one for a test that belongs to a lab panel. Both ON
+  /// by default. OFF means every Notes section prints, exactly as before (any
+  /// choice already saved on a report is then ignored). The choice itself is
+  /// stored on the report (`LabReport.excludedNoteSections`).
+  isLabTestNotesSelectable  Boolean @default(true) @map("is_lab_test_notes_selectable")
+  isLabPanelNotesSelectable Boolean @default(true) @map("is_lab_panel_notes_selectable")
+
   /// Configurable reason options for the "Adjust TAT" audit-log dropdown
   /// (Turnaround Time Details modal). Soft-validated (frontend-populated
   /// dropdown, backend accepts any string) — same convention as accession's
@@ -9334,4 +9425,44 @@ model SalesSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("sales_settings")
+}
+
+/// One "Import Master Data" run (Tenant → Branch Master Data) executed as a
+/// background job so the branch-admin dialog can poll live progress. The sync
+/// itself is still ONE atomic transaction; `progress` reports the 100-test
+/// batches it walks through (nothing is committed until the end). `progress`
+/// is written from outside that transaction after every batch, which also
+/// refreshes `updatedAt` — a RUNNING row whose `updatedAt` is older than the
+/// sync's transaction timeout can no longer be running (process restarted) and
+/// is reported as INTERRUPTED. At most one RUNNING job per tenant is enforced by
+/// a partial unique index in prisma/rls.sql.
+model MasterDataImportJob {
+  id         String                    @id @default(uuid())
+  tenantId   String                    @map("tenant_id")
+  branchId   String                    @map("branch_id")
+  status     MasterDataImportJobStatus @default(RUNNING)
+  /// `MasterDataImportProgress` (phase, batches, counts) — see the service.
+  progress   Json
+  /// `{ tests: {created, updated, deleted}, panels: {...} }` once SUCCEEDED.
+  result     Json?
+  /// `{ code, message }` once FAILED / INTERRUPTED.
+  error      Json?
+  startedBy  String?                   @map("started_by")
+  /// Backend process running it (`host#pm2-instance`); on startup that process
+  /// marks its own leftover RUNNING jobs INTERRUPTED at once.
+  runner     String?                   @map("runner")
+  startedAt  DateTime                  @default(now()) @map("started_at")
+  finishedAt DateTime?                 @map("finished_at")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+
+  @@index([tenantId, branchId, createdAt])
+  @@map("master_data_import_jobs")
+}
+
+enum MasterDataImportJobStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  INTERRUPTED
 }

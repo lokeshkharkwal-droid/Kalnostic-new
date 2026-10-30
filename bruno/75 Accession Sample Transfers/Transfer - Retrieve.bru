@@ -1,0 +1,77 @@
+meta {
+  name: Transfer - Retrieve
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/retrieve
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "notes": "Reverting one step"
+  }
+}
+
+tests {
+  test("201 Created", function () { expect(res.getStatus()).to.equal(201); });
+}
+
+docs {
+  Retrieve (§B.13) — the receiving-side UNDO. Moves the transfer BACK exactly one
+  status step along the receiving lifecycle, so it can be clicked repeatedly to walk
+  the status back to the start:
+
+    PICKED_UP -> IN_TRANSIT
+    RECEIVED  -> PICKED_UP
+    ACCEPTED  -> RECEIVED
+    REPEAT    -> RECEIVED
+    REJECTED  -> RECEIVED
+
+  From IN_TRANSIT there is nothing for the receiver to undo, so Retrieve is refused
+  with 422 INVALID_TRANSFER_TRANSITION (and is not offered in the UI at that status).
+
+  This is a MINIMAL step-back: it changes only `transferStatus` (and clears the
+  just-undone step's own field — pickedUpAt/pickedUpBy, receivedAt/receiveCondition,
+  or acceptedAt) and writes a `retrieve` row on the sample's history timeline.
+
+  ACCEPTED -> RECEIVED is the one step that also touches the receiving copy: Accept
+  materialises a clone in the receiving branch's In-House list (RULE 1), so the undo
+  soft-deletes that clone and moves its report(s) back to origin
+  (`removeTransferCloneInTx`), clearing `clonedSampleId` — otherwise a later re-Accept
+  would create a DUPLICATE in-house sample. It is REFUSED with 422
+  TRANSFER_RETRIEVE_BLOCKED when the receiver has already started working the copy (its
+  status moved past ACCEPTED — collected / resulted / passed on); Reject or Repeat it
+  instead. It does NOT reverse a sender-side return (REPEAT/REJECTED -> RECEIVED simply
+  reopens the transfer). It is distinct from the SENDER's sample-level Retrieve
+  (`POST order-samples/:id/retrieve`), which recalls a sent sample to origin.
+
+  The update is conditional on the transfer's current status, so a concurrent change
+  fails with 422 INVALID_TRANSFER_TRANSITION instead of overwriting it.
+
+  Who may act (INTERNAL transfer): only the RECEIVING branch — the caller's active
+  branch (the profile they switched to) must be the transfer's destination, otherwise
+  403 TRANSFER_WRONG_BRANCH and nothing changes. A transfer whose test was removed from
+  the order is frozen: 409 TRANSFER_ITEM_REMOVED.
+
+  Body: `notes` is optional (max 1000). No required field.
+
+  Group action: `POST accession/transfers/bulk/retrieve` with `{ ids: [...],
+  skipInvalid?: true }`. With `skipInvalid: true`, a transfer with nothing to undo
+  (IN_TRANSIT) or a frozen one is SKIPPED and listed in `skipped` with its reason; the
+  rest still move. Without it, the first refusal is raised as an error.
+
+  Permission: assertAny of the per-kind retrieve keys
+  (accession:{internal_referral_order,external_referral_order,outsource_orders}__retrieve_the_sample).
+}

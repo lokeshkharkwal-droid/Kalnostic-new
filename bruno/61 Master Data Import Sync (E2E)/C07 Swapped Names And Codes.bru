@@ -1,0 +1,64 @@
+meta {
+  name: C07 Swapped Names And Codes
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/master-data/branch/import-from-tenant
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const h = require('./lib/md-import.js');
+  const ids = h.getJson(bru, 'tenantIds');
+  // Names: Alpha <-> Echo (via a temp name — the tenant has the same unique index).
+  await h.updateTenantTest(bru, ids.A, { testName: 'Swap Temp' });
+  await h.updateTenantTest(bru, ids.E, { testName: 'Alpha Test' });
+  await h.updateTenantTest(bru, ids.A, { testName: 'Echo Test' });
+  // Codes: 'Bravo Test' (BRAVO-2) <-> 'Charlie Test' (DELTA).
+  await h.updateTenantTest(bru, ids.B, { testCode: 'SWAPTMP' });
+  await h.updateTenantTest(bru, ids.D, { testCode: 'BRAVO-2' });
+  await h.updateTenantTest(bru, ids.B, { testCode: 'DELTA' });
+}
+
+script:post-response {
+  const h = require('./lib/md-import.js');
+  // Branch state after the import, for the tests below.
+  const rows = await h.branchTests(bru);
+  h.setJson(bru, 'after', rows);
+}
+
+tests {
+  test("201 Created", function () { expect(res.status).to.equal(201); });
+  test("tests: created 0, updated 4, deleted 0", function () {
+    expect(res.getBody().data.tests).to.eql({ created: 0, updated: 4, deleted: 0 });
+  });
+
+  test("names swapped on the same branch rows", function () {
+    const h = require('./lib/md-import.js');
+    const before = h.getJson(bru, 'branchIds');
+    const after = h.byName(h.getJson(bru, 'after'));
+    expect(after['Echo Test'].id).to.equal(before['Alpha Test']);
+    expect(after['Alpha Test'].id).to.equal(before['Echo Test']);
+  });
+  test("codes swapped on the same branch rows", function () {
+    const h = require('./lib/md-import.js');
+    const before = h.getJson(bru, 'branchIds');
+    const after = h.byName(h.getJson(bru, 'after'));
+    expect(after['Bravo Test'].id).to.equal(before['Bravo Test']);
+    expect(after['Bravo Test'].testCode).to.equal('DELTA');
+    expect(after['Charlie Test'].id).to.equal(before['Charlie Test']);
+    expect(after['Charlie Test'].testCode).to.equal('BRAVO-2');
+    h.setJson(bru, 'branchIds', Object.fromEntries(h.getJson(bru, 'after').map((t) => [t.testName, t.id])));
+  });
+}
+
+docs {
+  Two tenant tests swap names, two others swap codes. Matched branch rows are parked on a placeholder first, so the per-row updates don't collide.
+}

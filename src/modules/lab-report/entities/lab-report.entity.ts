@@ -13,6 +13,7 @@ import {
   SampleStatus,
   TatBand,
 } from '@prisma/client';
+import type { NoteSectionKey } from '../utils/note-sections.util';
 
 /**
  * Compact Analytical-TAT figure attached to each worklist row (SRS §6.2/§8).
@@ -76,6 +77,22 @@ export interface LabReportContentSections {
 }
 
 /**
+ * Which Notes sections print on this report, as the Test Entry / Report View
+ * screens need to show it. Resolved on the server so the screen never has to
+ * work out which Branch Setting applies (the Lab Panel switch for a report on
+ * a panel order line, the Lab Test switch otherwise, read from the branch that
+ * HOLDS the report).
+ */
+export interface LabReportNotesPrint {
+  /** The matching Technician setting is on: the checkboxes show and the choice is honoured. */
+  enabled: boolean;
+  /** The report belongs to a lab panel order line (not a single test). */
+  isPanelMember: boolean;
+  /** Section keys left out of the printed report (empty = all print). */
+  excludedSections: NoteSectionKey[];
+}
+
+/**
  * The Test Entry screen's Overall Result section — a technician-applied
  * `OverallResultTemplate` snapshot for ONE result parameter on this report
  * (a test can have several parameters, each independently tagged into its
@@ -93,6 +110,18 @@ export interface LabReportOverallResult {
   resultParamId: string;
   templateId: string | null;
   content: string | null;
+}
+
+/**
+ * The technician's own text for ONE result parameter's Note on this report
+ * (`LabReportParameterNote`). A parameter with no entry here keeps showing the
+ * parameter's configured Note (`LabReportResultParam.notes`); an entry replaces it
+ * for this report only. `content` is rich-text HTML and may be `''` (the
+ * technician blanked the note on purpose).
+ */
+export interface LabReportParameterNote {
+  resultParamId: string;
+  content: string;
 }
 
 /**
@@ -152,6 +181,11 @@ export interface LabReportResultParam {
    * .findAll`'s `groupName`/`groupNames` filter). Empty array = this
    * parameter isn't tagged into any Overall Result group. */
   overallResultGroups: string[];
+  /** The parameter's configured Note (Master Data > Add Test > Add Result >
+   * Notes), PLAIN text, or null when it has none. It is only the default: the
+   * technician's own text for this report (`LabReportParameterNote`) replaces it
+   * on this report. Never written from the technician screen. */
+  notes: string | null;
 }
 
 /** Full detail response: the report plus its (possibly all-null) content
@@ -166,6 +200,9 @@ export type LabReportDetailWithContent = LabReportDetail & {
    * NOT one per report (see `LabReportOverallResult`'s doc comment). A
    * parameter with nothing applied simply has no entry here. */
   overallResults: LabReportOverallResult[];
+  /** One entry per result parameter whose Note the technician changed on THIS
+   * report (see `LabReportParameterNote`); the rest inherit the configured Note. */
+  parameterNotes: LabReportParameterNote[];
   resultParams: LabReportResultParam[];
 };
 
@@ -183,7 +220,10 @@ export type LabReportDetailApiResponse = LabReportWorklistRow &
       LabReportDetail['resultValues'][number] & { analyzerName?: string | null }
     >;
     contentSections: LabReportContentSections;
+    /** Which Notes sections print, and whether the technician may choose. */
+    notesPrint: LabReportNotesPrint;
     overallResults: LabReportOverallResult[];
+    parameterNotes: LabReportParameterNote[];
     resultParams: LabReportResultParam[];
   };
 

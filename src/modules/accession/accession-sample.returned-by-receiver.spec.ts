@@ -33,6 +33,7 @@ function build() {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   return { service, tx, rows };
 }
@@ -103,6 +104,7 @@ describe('Repeat / Error of a Sent sample are the SENDING branch’s only (like 
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const priv = service as unknown as Record<string, jest.Mock>;
     priv.transitionIds = jest
@@ -118,7 +120,7 @@ describe('Repeat / Error of a Sent sample are the SENDING branch’s only (like 
       const { service, priv } = setup('A');
       const run =
         action === 'error'
-          ? service.error(['s1'], 't1', 'p1', {} as never, 'B')
+          ? service.error(['s1'], 't1', 'p1', {}, 'B')
           : service.repeat(['s1'], 't1', 'p1', { repeatReason: 'x' }, 'B');
       await expect(run).rejects.toMatchObject({
         errorCode: 'TRANSFER_WRONG_BRANCH',
@@ -132,7 +134,7 @@ describe('Repeat / Error of a Sent sample are the SENDING branch’s only (like 
     async (action) => {
       const { service, priv } = setup('A');
       if (action === 'error') {
-        await service.error(['s1'], 't1', 'p1', {} as never, 'A');
+        await service.error(['s1'], 't1', 'p1', {}, 'A');
       } else {
         await service.repeat(['s1'], 't1', 'p1', { repeatReason: 'x' }, 'A');
       }
@@ -142,7 +144,7 @@ describe('Repeat / Error of a Sent sample are the SENDING branch’s only (like 
 
   it('internal callers that pass no branch are not checked', async () => {
     const { service, priv } = setup('A');
-    await service.error(['s1'], 't1', 'p1', {} as never);
+    await service.error(['s1'], 't1', 'p1', {});
     expect(priv.transitionIds).toHaveBeenCalledTimes(1);
   });
 });
@@ -179,6 +181,7 @@ describe('OrderSampleService.findHistory keeps the sender’s "returned by the r
     };
     const service = new OrderSampleService(
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

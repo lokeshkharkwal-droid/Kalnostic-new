@@ -3,6 +3,7 @@ import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
 import {
+  AbnormalFlag,
   AgeType,
   LabReportHistory,
   LabReportNoteCategory,
@@ -12,6 +13,7 @@ import {
   PersonMappingType,
   Prisma,
   RecipientType,
+  ResultType,
   ResultValueSource,
   SampleStatus,
 } from '@prisma/client';
@@ -38,6 +40,7 @@ import {
 import { TenantService } from '../tenant/tenant.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
+import { AppointmentService } from '../appointment/appointment.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import {
   ShareService,
@@ -70,9 +73,25 @@ import {
 } from '../pdf-report-template/services/pdf-document.util';
 import { observedValueHtml } from './utils/print-value.util';
 import type { PdfReportTemplateType } from '../pdf-report-template/constants/pdf-report-template-types.constant';
-import { TechnicianSettingsService } from '../technician-settings/technician-settings.service';
+import {
+  DEFAULT_NOTES_PRINT_SWITCHES,
+  NotesPrintSwitches,
+  TechnicianSettingsService,
+} from '../technician-settings/technician-settings.service';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateNotePrintSectionsDto } from './dto/update-note-print-sections.dto';
+import {
+  excludedSectionsToApply,
+  NoteSectionKey,
+  normaliseNoteSections,
+  NotesSwitchCache,
+  notesSelectableFor,
+  reportKindOfItem,
+} from './utils/note-sections.util';
+import { labPanelTags } from './utils/lab-panel-tag.util';
+import { effectiveParameterNoteHtml } from './utils/parameter-note.util';
 import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
+import { UpdateParameterNoteDto } from './dto/update-parameter-note.dto';
 import { OverallResultTemplateService } from '../overall-result-template/overall-result-template.service';
 import {
   GeneratePdfDto,
@@ -87,7 +106,9 @@ import {
   LabReportDetailApiResponse,
   LabReportDetailWithContent,
   LabReportListRow,
+  LabReportNotesPrint,
   LabReportOverallResult,
+  LabReportParameterNote,
   LabReportResultParam,
   LabReportSignatoryCandidate,
   LabReportSignatoryCandidatesResponse,
@@ -117,6 +138,7 @@ import {
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportResultsNotEditableException,
+  LabReportParameterNoteNotEditableException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
   LabReportValueChangedException,
@@ -139,6 +161,7 @@ import {
   isExactAgeMatch,
   isObservedAbnormal,
   rangeAgeMatch,
+  reportHighlightStyle,
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
@@ -171,7 +194,7 @@ import {
   pickReportSample,
 } from './utils/print-barcode.util';
 import { code128DataUri } from '../../common/utils/barcode-image.util';
-import { TatService } from './tat.service';
+import { TatService, TatSummary } from './tat.service';
 import {
   canWorkAtHolder,
   ruleWhere,
@@ -270,6 +293,7 @@ export class LabReportService {
     private readonly overallResultTemplateService: OverallResultTemplateService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly referralCredit: ReferralCreditService,
+    private readonly appointmentService: AppointmentService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -434,6 +458,47 @@ export class LabReportService {
   }
 
   /**
+   * Flag every lab report a transferred sample serves as referral work
+   * (`isReferral = true`) so the Technician Reporting worklist's "Outsource"
+   * checkbox surfaces it. Called at transfer-accept time: on the INTERNAL clone
+   * materialised at the receiving branch, and on the sender's own sample once an
+   * EXTERNAL/OUTSOURCE transfer is accepted (Option B — gated on accept). Targets
+   * the reports held at the sample's own branch for the order items it serves
+   * (the same `(orderItemId, member|labTest)` matching {@link
+   * findReportIdsForSampleTests} uses). Idempotent — safe to call more than once.
+   * @param tx the caller's transaction
+   * @param sampleId the accepted clone / forwarded sample
+   */
+  async markReportsReferralForSample(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<void> {
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      select: {
+        branchId: true,
+        tests: {
+          where: { deletedAt: null },
+          select: { orderItemId: true, labTestId: true },
+        },
+      },
+    });
+    if (!sample) return;
+    const reportIds = await this.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      sample.tests,
+    );
+    if (reportIds.length === 0) return;
+    await tx.labReport.updateMany({
+      where: { id: { in: reportIds }, tenantId, deletedAt: null },
+      data: { isReferral: true },
+    });
+  }
+
+  /**
    * Lock these reports' rows for the rest of the caller's transaction (in a fixed
    * order, so two transactions never wait on each other). Used right before the
    * "is it untouched?" check that gates Send and the receiver's return: a
@@ -489,14 +554,17 @@ export class LabReportService {
    *  - the worklist entries about those values (re-run, critical alert, out of
    *    range, delta check, scheduled test, multi-step) are soft-deleted;
    *  - everything else the branch recorded about those results is hidden too: the
-   *    overall results, the technician's own notes and the automatic notes, the
-   *    attachments and the TAT adjustments are soft-deleted, and the five
+   *    overall results, the parameter Notes the technician wrote, the technician's
+   *    own notes and the automatic notes, the attachments and the TAT adjustments
+   *    are soft-deleted, and the five
    *    Notes-section texts (useful for, interpretation, limitations, remarks,
    *    references) are cleared;
    *  - ORDER and SAMPLE notes (order-wide by design) and reagent usage (a record of
    *    what was physically used) stay;
-   *  - one `returned_for_repeat` history row keeps the status the report had and the
-   *    text of the five cleared fields, so nothing is lost.
+   *  - one `returned_for_repeat` history row keeps the status the report had and
+   *    names which of the five Notes sections held text. The text itself is NOT
+   *    kept (it is rich-text HTML, and the Audit Trail shows the note as is), so
+   *    clearing those five sections is final.
    * Soft-deleted rows stay in the database.
    * Reports that were never worked on go through the same steps harmlessly.
    * @param tx the caller's transaction
@@ -555,6 +623,11 @@ export class LabReportService {
       where: byReport,
       data: { deletedAt: now },
     });
+    // The technician's own parameter Notes: the configured Note shows again.
+    await tx.labReportParameterNote.updateMany({
+      where: byReport,
+      data: { deletedAt: now },
+    });
     await tx.labReportNote.updateMany({
       where: { ...byReport, category: { in: RESULT_BOUND_NOTE_CATEGORIES } },
       data: { deletedAt: now },
@@ -575,6 +648,9 @@ export class LabReportService {
         limitations: null,
         remarks: null,
         references: null,
+        // The repeat starts a new cycle: every Notes section prints again until
+        // the technician chooses otherwise (like the Notes edits above).
+        excludedNoteSections: [],
         status: LabReportStatus.PENDING,
         savedAt: null,
         savedBy: null,
@@ -598,8 +674,10 @@ export class LabReportService {
       },
     });
     for (const r of reports) {
-      // Keep the text of the five cleared fields on the history line, readable
-      // as a sentence (the Audit Trail shows this note as is).
+      // The history line names which of the five Notes sections held text and
+      // were cleared, never the text itself: it is rich-text HTML (up to
+      // NOTE_MAX_LENGTH characters per section) and the Audit Trail shows this
+      // note as is.
       const cleared = (
         [
           ['Useful for', r.usefulFor],
@@ -609,8 +687,8 @@ export class LabReportService {
           ['References', r.references],
         ] as Array<[string, string | null]>
       )
-        .filter(([, value]) => value !== null)
-        .map(([label, value]) => `${label}: ${value}`);
+        .filter(([, value]) => typeof value === 'string' && value.trim() !== '')
+        .map(([label]) => label);
       await this.recordHistory(
         tx,
         tenantId,
@@ -620,7 +698,7 @@ export class LabReportService {
         'returned_for_repeat',
         actorId ?? 'system',
         cleared.length > 0
-          ? `Cleared for the repeat — ${cleared.join('; ')}`
+          ? `Notes cleared for the repeat: ${cleared.join(', ')}`
           : undefined,
       );
     }
@@ -718,6 +796,7 @@ export class LabReportService {
       }),
       tx.labReportAttachment.count({ where: cycle('uploadedAt') }),
       tx.labReportOverallResult.count({ where: cycle() }),
+      tx.labReportParameterNote.count({ where: cycle() }),
       tx.reRunRequest.count({ where: cycle() }),
       tx.criticalAlert.count({ where: cycle() }),
       tx.outOfRangeFlag.count({ where: cycle() }),
@@ -835,6 +914,11 @@ export class LabReportService {
           labTestId,
           status: LabReportStatus.PENDING,
           isOutsourced: orderItem.outsourceCenterId !== null,
+          // An outsourced-out item counts as referral work from the moment its
+          // report exists (same as isOutsourced). Transferred-in / forwarded
+          // samples get isReferral stamped later, at transfer-accept time
+          // (markReportsReferralForSample) — see the field doc comment.
+          isReferral: orderItem.outsourceCenterId !== null,
         },
       });
       await tx.labReportHistory.create({
@@ -938,9 +1022,12 @@ export class LabReportService {
     if (filters.urgent) where.isUrgent = true;
     if (filters.source === 'IN_HOUSE') where.isOutsourced = false;
     if (filters.source === 'OUTSOURCE') where.isOutsourced = true;
-    // Standalone "Outsource" checkbox (distinct from the source pill above) —
-    // same underlying signal, only ever narrows to outsourced items when checked.
-    if (filters.outsource) where.isOutsourced = true;
+    // Standalone "Outsource" checkbox (distinct from the source pill above):
+    // the superset `isReferral` signal — outsourced-out PLUS samples accepted
+    // into this branch via an INTERNAL transfer (/accession/referral-orders) or
+    // forwarded on an accepted EXTERNAL/OUTSOURCE transfer. A plain equality on
+    // the denormalized flag; see LabReport.isReferral.
+    if (filters.outsource) where.isReferral = true;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -2051,10 +2138,10 @@ export class LabReportService {
     ) as Record<LabReportStatus, number>;
 
     // Source pill counts (ALL/IN_HOUSE/OUTSOURCE) — same idea as the status
-    // counts above: strip the source-related filters (the pill itself, plus
-    // the standalone "Outsource" checkbox, since both set isOutsourced) so
-    // the In-House/Outsource split reflects every OTHER active filter, not
-    // whichever source pill happens to be selected right now.
+    // counts above: strip the source-related filters (the pill itself, which
+    // sets isOutsourced, plus the standalone "Outsource" checkbox, which sets
+    // the wider isReferral) so the In-House/Outsource split reflects every
+    // OTHER active filter, not whichever source pill/checkbox is selected now.
     const sourceBaseWhere = this.buildListWhere(
       tenantId,
       scope,
@@ -2088,6 +2175,41 @@ export class LabReportService {
       resultRejected: byStatus.RESULT_REJECTED,
       bySource: { inHouse, outsource },
     };
+  }
+
+  /**
+   * TAT analytics for the reports the worklist's **Approved** tab counts: the same
+   * filters, branch scope and department scope as `getCounts` (status forced to
+   * Approved), so `total` equals that tab's number. A Published or Error Reported
+   * report is no longer "Approved", so it is not counted here either. Cancelled
+   * orders stay out of the analytics, as before.
+   */
+  async getTatSummary(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    filters: ListLabReportsDto,
+    personId: string,
+  ): Promise<TatSummary> {
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const where = this.buildListWhere(
+      tenantId,
+      scope,
+      { ...filters, status: LabReportStatus.APPROVED },
+      scopeIds,
+    );
+    const existingAnd = where.AND
+      ? Array.isArray(where.AND)
+        ? where.AND
+        : [where.AND]
+      : [];
+    where.AND = [
+      ...existingAnd,
+      { orderItem: { order: { status: { not: OrderStatus.CANCELLED } } } },
+    ];
+    return this.tatService.summarize(where);
   }
 
   /**
@@ -2420,7 +2542,7 @@ export class LabReportService {
     // B2B Referral Panel isolation: block reading another panel's report by id.
     assertLabReportPanelOwnership(report, getReferralPanelId());
 
-    const [contentSections, resultParams, overallResultRows] =
+    const [contentSections, resultParams, overallResultRows, parameterNotes] =
       await Promise.all([
         this.getContentSections(tenantId, report.labTestId, {
           usefulFor: report.usefulFor,
@@ -2441,9 +2563,21 @@ export class LabReportService {
           where: { labReportId: id, tenantId, deletedAt: null },
           select: { resultParamId: true, templateId: true, content: true },
         }),
+        // The technician's own Note text for this report, per parameter. A
+        // parameter without a live row inherits its configured Note.
+        this.prisma.labReportParameterNote.findMany({
+          where: { labReportId: id, tenantId, deletedAt: null },
+          select: { resultParamId: true, content: true },
+        }),
       ]);
     const overallResults: LabReportOverallResult[] = overallResultRows;
-    return { ...report, contentSections, overallResults, resultParams };
+    return {
+      ...report,
+      contentSections,
+      overallResults,
+      parameterNotes,
+      resultParams,
+    };
   }
 
   /**
@@ -2540,9 +2674,69 @@ export class LabReportService {
       attachments: report.attachments,
       multiStepProcess: report.multiStepProcess,
       contentSections: report.contentSections,
+      notesPrint: await this.resolveNotesPrint(tenantId, report),
       overallResults: report.overallResults,
+      parameterNotes: report.parameterNotes,
       resultParams: report.resultParams,
     };
+  }
+
+  /**
+   * Which Notes sections print on a report, and whether the technician may
+   * choose. The setting that applies is the Lab Panel switch for a report on a
+   * panel order line, the Lab Test switch for a single test, read from the branch
+   * that HOLDS the report. While it is off nothing is left out (every section
+   * prints), whatever choice was saved earlier.
+   * @param shared per-print cache of the settings already read, so a Print All
+   *   reads each branch's switches once instead of once per report
+   */
+  private async resolveNotesPrint(
+    tenantId: string,
+    report: {
+      branchId: string | null;
+      excludedNoteSections: string[];
+      orderItem: {
+        branchLabPanelId: string | null;
+        branchLabTestId: string | null;
+      };
+    },
+    shared?: NotesSwitchCache,
+  ): Promise<LabReportNotesPrint> {
+    const kind = reportKindOfItem(report.orderItem);
+    // A free-text line has no Notes, so no setting applies (and none is read).
+    if (kind === 'DIRECT') {
+      return { enabled: false, isPanelMember: false, excludedSections: [] };
+    }
+    const switches = await this.notesSwitchesFor(
+      tenantId,
+      report.branchId,
+      shared,
+    );
+    const enabled = notesSelectableFor(kind, switches);
+    return {
+      enabled,
+      isPanelMember: kind === 'PANEL',
+      excludedSections: [
+        ...excludedSectionsToApply(enabled, report.excludedNoteSections),
+      ],
+    };
+  }
+
+  /** The branch's notes-print switches, read once per print through `shared`. */
+  private notesSwitchesFor(
+    tenantId: string,
+    branchId: string | null,
+    shared?: NotesSwitchCache,
+  ): Promise<NotesPrintSwitches> {
+    if (!branchId) return Promise.resolve({ ...DEFAULT_NOTES_PRINT_SWITCHES });
+    const cached = shared?.get(branchId);
+    if (cached) return cached;
+    const pending = this.technicianSettingsService.getNotesPrintSwitches(
+      tenantId,
+      branchId,
+    );
+    shared?.set(branchId, pending);
+    return pending;
   }
 
   /**
@@ -2671,6 +2865,47 @@ export class LabReportService {
   }
 
   /**
+   * Save which Notes sections to LEAVE OUT of this report's printed version (the
+   * checkbox beside each section on the report). The list replaces the stored one;
+   * a section not in it prints. It never changes what the screen shows, only the
+   * printed and shared PDF.
+   *
+   * Same write rules as editing the notes (a locked, sent-out or cancelled report
+   * is refused), but no permission key. While the matching Technician setting (Lab
+   * Test / Lab Panel) is off, nothing is saved and the current state comes back
+   * unchanged, the same "silently ignore" convention as `updateContentSections`.
+   * @returns the report's resulting notes-print state
+   */
+  async updateNotePrintSections(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    dto: UpdateNotePrintSectionsDto,
+  ): Promise<LabReportNotesPrint> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: report.orderItemId, tenantId },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+    });
+    const item = orderItem ?? { branchLabPanelId: null, branchLabTestId: null };
+
+    const current = await this.resolveNotesPrint(tenantId, {
+      branchId: report.branchId,
+      excludedNoteSections: report.excludedNoteSections,
+      orderItem: item,
+    });
+    if (!current.enabled) return current;
+
+    const excludedNoteSections = normaliseNoteSections(dto.excludedSections);
+    await this.prisma.labReport.update({
+      where: { id: report.id },
+      data: { excludedNoteSections },
+    });
+    return { ...current, excludedSections: excludedNoteSections };
+  }
+
+  /**
    * Apply an Overall Result template to ONE result parameter on a report, or
    * edit that parameter's already-applied content in place — see
    * `UpdateOverallResultDto`'s doc comment for how the two actions are
@@ -2775,6 +3010,67 @@ export class LabReportService {
   }
 
   /**
+   * Save the technician's own text for ONE result parameter's Note on this report. The parameter's configured
+   * Note (`LabTestResultParam.notes`) is only the default shown until this is saved; this never writes back to
+   * it, so no other report of the same test changes. An empty `content` is stored as is: it means "no note on
+   * this report", and the default does not come back.
+   *
+   * Same rule as the result values: only while the report is Pending, Partial Pending or Saved. A report that was
+   * submitted or has moved on is refused (`Edit Report` sends it back to Saved when a change is really needed),
+   * because an edit after approval would silently change every later print. The status is read again after the
+   * report row is locked, so a Submit that commits in between is not overwritten. A locked, sent-out or cancelled
+   * report is refused as for every other write. No technician setting gates it: the `LAB_EDIT_REPORT`
+   * permission on the route is the only gate.
+   * @param resultParamId which result parameter — MUST be one of this report's own parameters
+   * @throws LabReportParameterNoteNotEditableException when the report is past Saved
+   * @throws ValidationException when `resultParamId` is not one of this report's parameters
+   */
+  async updateParameterNote(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    resultParamId: string,
+    dto: UpdateParameterNoteDto,
+  ): Promise<LabReportParameterNote> {
+    const activeBranchId = this.requireBranch(branchId);
+    const report = await this.requireReport(id, tenantId, activeBranchId);
+    this.assertParameterNoteEditable(id, report.status);
+    await this.assertResultParamBelongsToReport(report, resultParamId);
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
+      const fresh = await tx.labReport.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.assertParameterNoteEditable(id, fresh?.status ?? report.status);
+      await tx.labReportParameterNote.upsert({
+        where: {
+          labReportId_resultParamId: { labReportId: report.id, resultParamId },
+        },
+        create: {
+          tenantId,
+          labReportId: report.id,
+          resultParamId,
+          content: dto.content,
+        },
+        // `deletedAt: null` revives a row a repeat soft-deleted.
+        update: { content: dto.content, deletedAt: null },
+      });
+    });
+    return { resultParamId, content: dto.content };
+  }
+
+  /** Refuses a parameter-note write unless the report is still Pending, Partial Pending or Saved. */
+  private assertParameterNoteEditable(id: string, status: string): void {
+    if (
+      !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)
+    ) {
+      throw new LabReportParameterNoteNotEditableException(id, status);
+    }
+  }
+
+  /**
    * Resolve the Test Entry screen's result-entry grid *row definitions*
    * (LABORATORY.docx §4.3) from `LabTestResultParam` — what parameters this
    * test has, independent of whether any value has been entered yet (a
@@ -2859,6 +3155,9 @@ export class LabReportService {
         defaultValue: true,
         groupName: true,
         overallResultGroups: true,
+        // The configured Note: the default the Notes icon shows (and prints) until
+        // the technician writes their own for this report.
+        notes: true,
       },
       // Test Entry must list parameters in the SAME order the admin configured
       // them in Master Data's "Add Result" section — i.e. the catalogue's
@@ -3242,6 +3541,11 @@ export class LabReportService {
             methodology: value.methodology,
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
+            // Per-parameter report highlighting (QUALITATIVE / SEMI_QUANTITATIVE
+            // only; the print builder ignores it for quantitative values). When
+            // the client omits it default to "off" with no styling.
+            highlightInReport: value.highlightInReport ?? false,
+            highlightLogic: value.highlightLogic ?? null,
             source: ResultValueSource.MANUAL,
             enteredAt: now,
             enteredBy: actorId,
@@ -3253,6 +3557,8 @@ export class LabReportService {
             methodology: value.methodology,
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
+            highlightInReport: value.highlightInReport ?? false,
+            highlightLogic: value.highlightLogic ?? null,
             source: ResultValueSource.MANUAL,
             enteredAt: now,
             enteredBy: actorId,
@@ -4057,7 +4363,7 @@ export class LabReportService {
     tenantId: string,
     branchId: string | null,
     allBranches = false,
-    opts: { maskUnfinished?: boolean } = {},
+    opts: { maskUnfinished?: boolean; notesSwitches?: NotesSwitchCache } = {},
   ): Promise<GeneratePdfDto> {
     const report = allBranches
       ? await this.loadReportDetail(id, tenantId, null)
@@ -4202,11 +4508,20 @@ export class LabReportService {
     const sortOrderByParamId = new Map(
       resultParams.map((p) => [p.id, p.sortOrder]),
     );
-    // `{result_note}` — a per-result-parameter free-text note from the Lab
-    // Test catalog (LabTestResultParam.notes), distinct from `sample_note`
-    // (a per-order, append-only Sample Notes log entry).
+    // `{result_note}` — a per-result-parameter note, distinct from `sample_note`
+    // (a per-order, append-only Sample Notes log entry). The technician's own text
+    // for THIS report wins (`LabReportParameterNote`, rich-text HTML); a parameter
+    // they never edited keeps the Lab Test catalog's Note (LabTestResultParam.notes,
+    // plain text, escaped here). The tag is rich text (`RICH_TEXT_KEYS`), so every
+    // value in this map is already safe HTML.
+    const noteOverrideByParamId = new Map(
+      report.parameterNotes.map((n) => [n.resultParamId, n.content]),
+    );
     const notesByParamId = new Map(
-      resultParams.map((p) => [p.id, p.notes ?? '']),
+      resultParams.map((p) => [
+        p.id,
+        effectiveParameterNoteHtml(noteOverrideByParamId.get(p.id), p.notes),
+      ]),
     );
     // `{overall_result}` — this REPORT's own per-parameter templated content
     // (`LabReportOverallResult`, keyed by (labReportId, resultParamId)), the
@@ -4268,24 +4583,41 @@ export class LabReportService {
       raw: string,
       resultParamId: string,
       referenceRangeId: string | null,
+      highlight: { on: boolean; logic: AbnormalFlag | null },
     ): { html: string; abnormal: boolean } => {
       // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
       const safe = observedValueHtml(raw);
+      const resultType = resultTypeByParamId.get(resultParamId);
       const range = referenceRangeId
         ? rangeById.get(referenceRangeId)
         : undefined;
-      const abnormal = isObservedAbnormal(
-        raw,
-        resultTypeByParamId.get(resultParamId),
-        range,
-      );
-      if (!abnormal) {
-        return { html: safe, abnormal: false };
+      const abnormal = isObservedAbnormal(raw, resultType, range);
+      if (abnormal) {
+        return {
+          html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
+          abnormal: true,
+        };
       }
-      return {
-        html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
-        abnormal: true,
-      };
+      // Technician-chosen per-parameter highlighting. Scoped to QUALITATIVE /
+      // SEMI_QUANTITATIVE values only (quantitative values are flagged above
+      // from their numeric range, never from this manual control) and never
+      // applied to a blank reading. `abnormal` stays false — this styling is a
+      // deliberate report-presentation choice, not an out-of-range signal, so
+      // the `{is_observed_*_abnormal}` tags are unaffected.
+      if (
+        highlight.on &&
+        resultType !== ResultType.QUANTITATIVE &&
+        raw.trim() !== ''
+      ) {
+        return {
+          // `reportHighlightStyle` (not `abnormalFlagStyle`): the manual
+          // highlight uses a calmer semibold/deep-red treatment, kept distinct
+          // from the brighter out-of-range abnormal styling above.
+          html: `<span style="${reportHighlightStyle(highlight.logic ?? AbnormalFlag.BOLD_AND_RED)}">${safe}</span>`,
+          abnormal: false,
+        };
+      }
+      return { html: safe, abnormal: false };
     };
 
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
@@ -4300,15 +4632,24 @@ export class LabReportService {
     );
 
     const realResults = sortedResultValues.map((v) => {
+      // Both observed values share the one per-parameter highlight choice the
+      // technician set on the result-entry row (applied to Observed 1 and
+      // Observed 2 alike).
+      const highlight = {
+        on: v.highlightInReport,
+        logic: v.highlightLogic,
+      };
       const o1 = classifyObserved(
         v.observed1 ?? '',
         v.resultParamId,
         v.referenceRangeId,
+        highlight,
       );
       const o2 = classifyObserved(
         v.observed2 ?? '',
         v.resultParamId,
         v.referenceRangeId,
+        highlight,
       );
       return {
         parameter_name: paramNameById.get(v.resultParamId) ?? '',
@@ -4349,9 +4690,21 @@ export class LabReportService {
     const results = hideResults
       ? [pendingResultRow(printedTestName)]
       : realResults;
-    // Free-text sections and uploaded files can hold unsigned findings too.
-    const section = (value: string | null | undefined): string =>
-      hideResults ? '' : (value ?? '');
+    // Which Notes sections the technician left out of this report's print (only
+    // while the matching Lab Test / Lab Panel switch is on; otherwise none).
+    const notesPrint = await this.resolveNotesPrint(
+      tenantId,
+      report,
+      opts.notesSwitches,
+    );
+    const leftOut = new Set<string>(notesPrint.excludedSections);
+    // Free-text sections and uploaded files can hold unsigned findings too. A
+    // left-out Notes section prints as empty, so a template that wraps it in an
+    // `{{#if …}}` block (or a Latte `{if}`) drops the heading too.
+    const section = (
+      key: NoteSectionKey,
+      value: string | null | undefined,
+    ): string => (hideResults || leftOut.has(key) ? '' : (value ?? ''));
 
     return {
       variables: {
@@ -4396,15 +4749,23 @@ export class LabReportService {
           : '',
         referral_panel: order.referralPanel?.name ?? '',
         test_name: printedTestName,
+        // Does this test belong to a lab panel: `{is_lab_panel}` ("Yes" or empty,
+        // for `{{#if is_lab_panel}}`) plus `{lab_panel_name}` / `{lab_panel_code}`.
+        // From the order line (`branchLabPanelId`), so a panel's member reports and
+        // an old combined panel report all carry it; a single test does not.
+        ...labPanelTags(report.orderItem),
         report_status: hideResults ? LabReportStatus.PENDING : report.status,
-        useful_for: section(report.contentSections.usefulFor),
-        interpretation: section(report.contentSections.interpretation),
-        limitations: section(report.contentSections.limitations),
+        useful_for: section('useful_for', report.contentSections.usefulFor),
+        interpretation: section(
+          'interpretation',
+          report.contentSections.interpretation,
+        ),
+        limitations: section('limitations', report.contentSections.limitations),
         // Bug fix: `remarks` was fetched into `contentSections` (screen/API
         // already show it) but never assigned into the print `variables` here
         // — `{remarks}` could never resolve in a lab_report template.
-        remarks: section(report.contentSections.remarks),
-        references: section(report.contentSections.references),
+        remarks: section('remarks', report.contentSections.remarks),
+        references: section('references', report.contentSections.references),
         last_report_prepared_on: lastReportPreparedOn
           ? formatReportDateTime(
               toBranchLocalInstant(lastReportPreparedOn, timezone),
@@ -4507,6 +4868,7 @@ export class LabReportService {
     type: 'lab_report' | 'lab_panel' = 'lab_report',
     allBranches = false,
     maskUnfinished = false,
+    notesSwitches?: NotesSwitchCache,
   ): Promise<Buffer> {
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
@@ -4522,7 +4884,7 @@ export class LabReportService {
       tenantId,
       branchId,
       wholeOrder,
-      { maskUnfinished },
+      { maskUnfinished, notesSwitches },
     );
     const resolvedTemplateId =
       templateId ??
@@ -4823,6 +5185,7 @@ export class LabReportService {
     };
 
     // Per-report body + dates, reusing the single-report context builder.
+    const notesSwitches: NotesSwitchCache = new Map();
     const contexts = await Promise.all(
       // Each report is rendered through ITS OWN branch (settings, templates);
       // the order-owner branch reads every report on the order.
@@ -4832,7 +5195,7 @@ export class LabReportService {
           tenantId,
           r.branchId ?? branchId,
           allBranches,
-          { maskUnfinished: true },
+          { maskUnfinished: true, notesSwitches },
         ),
       ),
     );
@@ -4848,6 +5211,11 @@ export class LabReportService {
             r.branchId ?? branchId,
             c,
           ),
+          // Does this test belong to a lab panel (`$report->is_lab_panel`, a real
+          // boolean for `{if}`), and which one.
+          is_lab_panel: toText(c?.variables?.is_lab_panel) !== '',
+          lab_panel_name: toText(c?.variables?.lab_panel_name),
+          lab_panel_code: toText(c?.variables?.lab_panel_code),
           sample_collected_date: toText(c?.variables?.sample_collected_date),
           sample_received_date: toText(c?.variables?.sample_received_date),
           report_prepared_on: preparedOn
@@ -4889,6 +5257,12 @@ export class LabReportService {
         // Same reasoning for the append variant — blank at the top level; use
         // `{test_file_attachment_without_header}` inside `{{#each reports}}`.
         test_file_attachment_without_header: '',
+        // Test-scoped too: whether a test belongs to a panel is not a property of the
+        // whole order. Use `{is_lab_panel}` / `{lab_panel_name}` / `{lab_panel_code}`
+        // (and `{{#if is_lab_panel}}`) inside `{{#each reports}}`.
+        is_lab_panel: '',
+        lab_panel_name: '',
+        lab_panel_code: '',
       },
       images: firstCtx?.images ?? {},
       sections: {
@@ -4897,6 +5271,9 @@ export class LabReportService {
           const rows = contexts[idx]?.sections?.results ?? [];
           return {
             test_name: toText(v.test_name),
+            is_lab_panel: toText(v.is_lab_panel),
+            lab_panel_name: toText(v.lab_panel_name),
+            lab_panel_code: toText(v.lab_panel_code),
             report_status: toText(v.report_status),
             sample_collected_date: rep.sample_collected_date,
             sample_received_date: rep.sample_received_date,
@@ -5031,6 +5408,10 @@ export class LabReportService {
     }));
     const test = {
       test_name: toText(v.test_name),
+      // A real boolean so `{if $test->is_lab_panel}` branches; name/code are text.
+      is_lab_panel: toText(v.is_lab_panel) !== '',
+      lab_panel_name: toText(v.lab_panel_name),
+      lab_panel_code: toText(v.lab_panel_code),
       sample_type: toText(v.sample_type),
       sample_note: toText(v.sample_note),
       useful_for: toText(v.useful_for),
@@ -5228,7 +5609,9 @@ export class LabReportService {
     }
 
     // A report this caller cannot read is skipped, not allowed to fail the whole
-    // document; unfinished ones print as "Result pending".
+    // document; unfinished ones print as "Result pending". The Notes-print
+    // switches are read once per branch for the whole document.
+    const notesSwitches: NotesSwitchCache = new Map();
     const rendered = await Promise.all(
       reportRows.map(async (r) => {
         try {
@@ -5240,6 +5623,7 @@ export class LabReportService {
             'lab_report',
             allBranches,
             true,
+            notesSwitches,
           );
         } catch (e) {
           if (e instanceof LabReportNotFoundException) return null;
@@ -5285,6 +5669,13 @@ export class LabReportService {
     actorId: string,
   ) {
     const ctx = await this.loadOrderForShare(orderId, tenantId);
+    // Referral Panel Settings credit gate — sharing releases the report, so block
+    // it over ANY channel (incl. IAM) when a linked Cash/Postpaid referral has
+    // reached its Credit Limit / Credit Allowed Days, mirroring print/print-all.
+    await this.referralCredit.assertReportAccessAllowedByOrderId(
+      tenantId,
+      orderId,
+    );
     const getPdf = this.makeSharePdfProvider(orderId, tenantId, branchId);
 
     if (dto.channel === MessagingChannel.IAM) {
@@ -5339,6 +5730,13 @@ export class LabReportService {
     actorId: string,
   ): Promise<ShareAllResult> {
     const ctx = await this.loadOrderForShare(orderId, tenantId);
+    // Referral Panel Settings credit gate — sharing releases the report, so block
+    // every channel when a linked Cash/Postpaid referral has reached its Credit
+    // Limit / Credit Allowed Days, mirroring print/print-all and single-share.
+    await this.referralCredit.assertReportAccessAllowedByOrderId(
+      tenantId,
+      orderId,
+    );
     const getPdf = this.makeSharePdfProvider(orderId, tenantId, branchId);
 
     const overrideFor = (channel: MessagingChannel): string | undefined =>
@@ -6159,7 +6557,99 @@ export class LabReportService {
       reportId: updated.id,
       orderItemId: updated.orderItemId,
     });
+    // When this publish completes the order (every live report PUBLISHED), close
+    // out the linked appointment: CHECKED_IN / IN_PROGRESS → COMPLETED. No-op for
+    // orders without an appointment, or when other reports are still pending.
+    await this.maybeCompleteAppointmentOnPublish(
+      tenantId,
+      updated.orderItemId,
+      actorId,
+    );
     return updated;
+  }
+
+  /**
+   * Close out an appointment once its order is fully reported. When the order
+   * linked to this report's item has an appointment and EVERY live `LabReport`
+   * for that order is `PUBLISHED`, transition the appointment to COMPLETED
+   * (guarded + idempotent in `AppointmentService.completeIfAllDoneInTx`, so two
+   * reports publishing at once can't double-complete). No-op when the order has
+   * no appointment or any report is still pending. Runs in its own tenant-scoped
+   * transaction after the publish commits; a failure here is logged and never
+   * blocks the publish itself.
+   */
+  private async maybeCompleteAppointmentOnPublish(
+    tenantId: string,
+    orderItemId: string,
+    actorId: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        const item = await tx.orderItem.findFirst({
+          where: { id: orderItemId, tenantId, deletedAt: null },
+          select: {
+            order: {
+              select: { id: true, appointmentId: true, branchId: true },
+            },
+          },
+        });
+        const order = item?.order;
+        if (!order?.appointmentId) return;
+        // Completion must cover EVERY sample linked to the appointment, not just
+        // the report that triggered this call. A `LabReport` only exists once its
+        // sample is accepted, so "all existing reports published" is not enough —
+        // a later item whose sample isn't accepted yet has no report row at all
+        // and would be silently skipped. Instead, assert over the order's
+        // sample-bearing items (those with an `OrderSampleTest` link, i.e. real
+        // lab/sample work — radiology/OPD lines carry none): the appointment
+        // completes only when there is at least one such item and EACH one is
+        // fully reported (has ≥1 live report, all PUBLISHED). An item still
+        // awaiting its report (none yet) or carrying a not-yet-published report
+        // holds completion back. Removed items (soft-deleted) are excluded.
+        const sampleBearingWhere = {
+          tenantId,
+          orderId: order.id,
+          deletedAt: null,
+          orderSampleTests: { some: { deletedAt: null } },
+        };
+        const totalLabItems = await tx.orderItem.count({
+          where: sampleBearingWhere,
+        });
+        if (totalLabItems === 0) return;
+        const itemsNotFullyReported = await tx.orderItem.count({
+          where: {
+            ...sampleBearingWhere,
+            OR: [
+              // No report created yet (sample not accepted / reported).
+              { labReports: { none: { deletedAt: null } } },
+              // A live report that hasn't reached PUBLISHED.
+              {
+                labReports: {
+                  some: {
+                    deletedAt: null,
+                    status: { not: LabReportStatus.PUBLISHED },
+                  },
+                },
+              },
+            ],
+          },
+        });
+        if (itemsNotFullyReported > 0) return;
+        await this.appointmentService.completeIfAllDoneInTx(
+          tx,
+          tenantId,
+          order.branchId,
+          order.appointmentId,
+          actorId,
+          'All reports published',
+        );
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Appointment-completion check failed after publishing report for order item ${orderItemId}: ${message}`,
+      );
+    }
   }
 
   async errorReported(

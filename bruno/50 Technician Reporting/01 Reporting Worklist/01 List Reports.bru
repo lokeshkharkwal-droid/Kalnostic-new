@@ -67,9 +67,17 @@ docs {
   yet, so this maps directly to whether `OrderItem.collectedAt` is set (a
   two-state proxy, not the full lifecycle the frontend chip set implies).
 
-  `outsource` is the standalone "Outsource" checkbox (distinct from the
-  `source` pill, but the same underlying signal — `LabReport.isOutsourced`);
-  checking it narrows to outsourced items same as `source=OUTSOURCE`.
+  `outsource` is the standalone "Outsource" checkbox. Distinct from the `source`
+  pill — it is a SUPERSET, matching `LabReport.isReferral` (not `isOutsourced`).
+  It narrows to referral/transfer work from the caller's branch perspective:
+  outsourced-out items (same as `source=OUTSOURCE`) PLUS samples that reached
+  ACCEPTED through a transfer — the INTERNAL clone received at this branch
+  (/accession/referral-orders) and the sender's own report once an EXTERNAL or
+  OUTSOURCE transfer is accepted (/accession/external-referral-orders,
+  /accession/outsource). `isReferral` is stamped at transfer-accept time, so a
+  forwarded/received sample only appears once the receiving/outside party has
+  taken it (not while still in transit). The `source` pill stays strict
+  (`isOutsourced` = outsource-center only).
 
   `homeCollection` matches `true` when the order's `OrderDiagnostics.isHomeVisit`
   flag is set — a booking-level home-visit/phlebotomist-collection flag on the

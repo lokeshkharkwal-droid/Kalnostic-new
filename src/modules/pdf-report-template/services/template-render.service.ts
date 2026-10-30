@@ -22,6 +22,10 @@ export type { PreparedPdfHtml } from './pdf-document.util';
  * {@link imageSizeStyleAttr}); group 1 is always the id, so token-id collection
  * ignores the suffix.
  */
+/** One `{{#each key}}...{{/each}}` block (not nested). Shared, so the blocks are found the same way everywhere. */
+const EACH_BLOCK =
+  /\{\{#each\s+([a-zA-Z0-9_.]+)\s*\}\}([\s\S]*?)\{\{\/each\}\}/g;
+
 const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
 
 /**
@@ -31,8 +35,13 @@ const IMAGE_TOKEN_RE = /\{\{image:([a-zA-Z0-9_.-]+)(?:\|([^}]*))?\}\}/g;
  * Escaping them (the default for every other token, to avoid layout/injection
  * issues from plain-text values) would print the literal tags instead of the
  * formatted content, so they're inserted as-is here instead. Every other key
- * (patient name, order code, `result_note`, …) is genuinely plain text and
- * must stay escaped.
+ * (patient name, order code, …) is genuinely plain text and must stay escaped.
+ *
+ * `result_note` (a result row's per-parameter note) is in this list because the
+ * technician can write it in the same editor for one report. The value is built by
+ * `LabReportService.buildPrintContext` and is always safe HTML: the technician's
+ * HTML as saved, or the parameter's plain Master Data note already escaped there
+ * (see `effectiveParameterNoteHtml`).
  *
  * `test_file_attachment` is not technician-authored: it is `<embed>` markup the
  * server builds from the report's File+ uploads (URLs and names already
@@ -54,6 +63,7 @@ const RICH_TEXT_KEYS = new Set([
   'remarks',
   'references',
   'overall_result',
+  'result_note',
   'test_file_attachment',
   'test_file_attachment_without_header',
   'observed1',
@@ -66,6 +76,26 @@ const RICH_TEXT_KEYS = new Set([
  * "Display of Reference Range", written one value per line in Master Data.
  */
 const KEEP_LINE_BREAK_KEYS = new Set(['reference_display']);
+
+/**
+ * Whether a template value shows anything: text (HTML tags, `&nbsp;` and spaces
+ * do not count, but an `<img>` does), a number, a true flag, or a non-empty list
+ * or object. An empty rich-text box such as `<p>&nbsp;</p>` is therefore empty.
+ */
+function hasVisibleContent(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') {
+    if (/<img\b/i.test(value)) return true;
+    const text = value
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .trim();
+    return text.length > 0;
+  }
+  if (typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
 
 /**
  * `escapeHtml`, except for a known rich-text field — see {@link RICH_TEXT_KEYS} — and a plain-text field that keeps its
@@ -111,6 +141,9 @@ export function extractImageTokens(
  *
  * Supported placeholder syntax (dependency-free — no Handlebars):
  *  - `{placeholder}`         → single value from `context.variables` (HTML-escaped).
+ *  - `{{#if key}}…{{/if}}`   → keep the inner markup only when `context.variables[key]`
+ *                              has visible content, else drop the whole block
+ *                              (nestable; no `{{else}}`; top-level variables only).
  *  - `{{image:ID}}`          → `<img>` from `context.images[ID]`.
  *  - `{{#each key}}…{{/each}}`→ repeat the inner block per row in
  *                              `context.sections[key]`; inside, `{col}` and
@@ -202,7 +235,8 @@ export class TemplateRenderService {
     images: Record<string, string>,
     sections: Record<string, Array<Record<string, unknown>>>,
   ): string {
-    let out = this.interpolateSections(html, sections);
+    let out = this.interpolateConditionalsOutsideEach(html, variables);
+    out = this.interpolateSections(out, sections, variables);
     out = this.interpolateImages(out, images);
     out = resolveBareImageTags(out, images);
     out = this.interpolateVariables(out, variables);
@@ -210,25 +244,102 @@ export class TemplateRenderService {
   }
 
   /**
+   * Expand `{{#if key}}…{{/if}}` blocks: the inner markup stays only when
+   * `variables[key]` has visible content, otherwise the whole block (heading
+   * included) is dropped. This is how a printed Notes section that was left out,
+   * or that is simply empty, loses its heading and box. Blocks may be nested.
+   * There is no `{{else}}` (the Latte engine would mistake it for its own tag);
+   * a block that is never closed is left untouched so the mistake stays visible.
+   * Outside an `{{#each}}` the key is looked up in the top-level variables; inside
+   * one, in that row's fields first (see {@link interpolateSections}).
+   */
+  private interpolateConditionals(
+    html: string,
+    variables: Record<string, unknown>,
+  ): string {
+    const open = /\{\{#if\s+([a-zA-Z0-9_.]+)\s*\}\}/.exec(html);
+    if (!open) {
+      return html;
+    }
+    const start = open.index;
+    const innerStart = start + open[0].length;
+    const scan = /\{\{#if\s+[a-zA-Z0-9_.]+\s*\}\}|\{\{\/if\}\}/g;
+    scan.lastIndex = innerStart;
+    let depth = 1;
+    let closeAt = -1;
+    let closeLen = 0;
+    for (let m = scan.exec(html); m; m = scan.exec(html)) {
+      depth += m[0].startsWith('{{#if') ? 1 : -1;
+      if (depth === 0) {
+        closeAt = m.index;
+        closeLen = m[0].length;
+        break;
+      }
+    }
+    if (closeAt === -1) {
+      return html;
+    }
+    const key = open[1] ?? '';
+    const resolved = this.resolveField(variables, key);
+    const keep = resolved.found && hasVisibleContent(resolved.value);
+    const inner = html.slice(innerStart, closeAt);
+    const rest = html.slice(closeAt + closeLen);
+    return (
+      html.slice(0, start) +
+      (keep ? this.interpolateConditionals(inner, variables) : '') +
+      this.interpolateConditionals(rest, variables)
+    );
+  }
+
+  /**
+   * Run {@link interpolateConditionals} on everything OUTSIDE the `{{#each}}`
+   * blocks. The blocks are set aside first: their `{{#if}}` belong to each row (see
+   * {@link interpolateSections}) and must not be judged against the top-level
+   * variables. A block wrapped around a whole `{{#each}}` still works.
+   */
+  private interpolateConditionalsOutsideEach(
+    html: string,
+    variables: Record<string, unknown>,
+  ): string {
+    const held: string[] = [];
+    const masked = html.replace(EACH_BLOCK, (block) => {
+      held.push(block);
+      return `\uE000each${held.length - 1}\uE001`;
+    });
+    const done = this.interpolateConditionals(masked, variables);
+    return done.replace(
+      /\uE000each(\d+)\uE001/g,
+      (_m, i: string) => held[Number(i)] ?? '',
+    );
+  }
+
+  /**
    * Expand `{{#each key}}…{{/each}}` blocks by repeating the inner template for
    * each row in `sections[key]`, resolving `{{this.col}}` and `{col}` per row.
-   * Missing sections collapse to empty.
+   * A `{{#if key}}…{{/if}}` inside the block is decided per row, against that row's
+   * fields first and the top-level variables after (the same fallback a bare
+   * `{col}` has); it is decided on the template text BEFORE the row's values go
+   * in, so text inside a value is never read as a tag. Missing sections collapse
+   * to empty.
    */
   private interpolateSections(
     html: string,
     sections: Record<string, Array<Record<string, unknown>>>,
+    variables: Record<string, unknown> = {},
   ): string {
-    const eachBlock =
-      /\{\{#each\s+([a-zA-Z0-9_.]+)\s*\}\}([\s\S]*?)\{\{\/each\}\}/g;
-    return html.replace(eachBlock, (_match, key: string, inner: string) => {
+    return html.replace(EACH_BLOCK, (_match, key: string, inner: string) => {
       const rows = sections[key];
       if (!Array.isArray(rows)) {
         return '';
       }
       return rows
         .map((row) => {
+          const scoped = this.interpolateConditionals(inner, {
+            ...variables,
+            ...row,
+          });
           // Row scope: resolve both {{this.col}} and {col} against the row.
-          let piece = inner.replace(
+          let piece = scoped.replace(
             /\{\{this\.([a-zA-Z0-9_]+)\}\}/g,
             (_m, col: string) =>
               escapeUnlessRichText(

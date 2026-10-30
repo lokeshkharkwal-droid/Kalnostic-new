@@ -9,6 +9,7 @@ import {
   DoctorType,
   ExternalIdFormat,
   ExternalIdPurpose,
+  Gender,
   InvoicePaymentStatus,
   LabReportStatus,
   MessagingChannel,
@@ -66,6 +67,7 @@ import {
   resolveOrderLocalDateTime,
   classifyOrderDate,
   buildCollectionProgressWhere,
+  COLLECTION_WORKFLOW_ITEM_WHERE,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -103,6 +105,11 @@ import {
   orderItemNames,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
+import {
+  CHECKED_IN_APPOINTMENT_STATUSES,
+  PRE_CHECKIN_APPOINTMENT_STATUSES,
+  isActiveOrderForGates,
+} from './utils/order-gate-scope.util';
 import {
   billStatusLabel,
   deriveBillStatus,
@@ -221,6 +228,7 @@ import {
   OrderOutsourceCenterNotFoundException,
   OrderPatientNotFoundException,
   OrderPersonNotFoundException,
+  OrderPregnancyRequiresFemalePatientException,
   OrderReferralDoctorNotFoundException,
   OrderReferralPanelNotFoundException,
   NoActiveOrderPrintTemplateException,
@@ -467,17 +475,16 @@ export class OrderService {
   /**
    * True when an order at `status` is a confirmed diagnostic order — the point at
    * which its accession samples are generated (PDF: samples enter accession once
-   * an order is placed/booked). Never DRAFT/QUOTE/CANCELLED, and only when the
-   * diagnostics section is present.
+   * an order is placed). Only `ORDER` qualifies: an `APPOINTMENT` does NOT enter
+   * accession on creation — it does so only when the patient is checked in (the
+   * Check-In action, handled explicitly via `dto.checkIn` in `update()`). Never
+   * DRAFT/QUOTE/CANCELLED, and only when the diagnostics section is present.
    */
   private shouldGenerateSamples(
     status: OrderStatus | undefined,
     hasDiagnostics: boolean,
   ): boolean {
-    return (
-      hasDiagnostics &&
-      (status === OrderStatus.ORDER || status === OrderStatus.APPOINTMENT)
-    );
+    return hasDiagnostics && status === OrderStatus.ORDER;
   }
 
   /**
@@ -531,7 +538,8 @@ export class OrderService {
     personId: string | null,
     dto: CreateOrderDto,
   ): Promise<OrderWithRelations> {
-    await this.assertPatient(tenantId, dto.patientId);
+    const patientGender = await this.assertPatient(tenantId, dto.patientId);
+    this.assertPregnancyAllowed(dto.isPregnant, dto.patientId, patientGender);
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
     // Referral Panel Settings credit gate (Section 4): block a NEW finalized
@@ -604,9 +612,17 @@ export class OrderService {
       dto.status,
       dto.isBillGenerated,
     );
+    // Appointment payments are DRAFTS: an appointment is a booking, not a bill,
+    // so the amount entered at creation is remembered (persisted in
+    // `draftPaidAmount`) but NOT collected (`paidAmount` stays 0) until the
+    // appointment is checked in. So the order reads as unpaid now and the draft
+    // is committed to a real payment on Check-In. Skipped when no bill is
+    // generated (nothing to defer).
+    const deferAppointmentPayment =
+      dto.status === OrderStatus.APPOINTMENT && !billNotGenerated;
     const paymentStatus = billNotGenerated
       ? PaymentStatus.PAID
-      : derivePaymentStatus(payNet, payPaid);
+      : derivePaymentStatus(payNet, deferAppointmentPayment ? 0 : payPaid);
 
     // Snapshot each item's list unit price from its branch lab test/panel row so
     // the order's prices are stable even if the list is later re-priced (§B5).
@@ -671,25 +687,11 @@ export class OrderService {
       });
     }
 
-    // Appointment check-in payment gating (Registration Settings → Appointment).
-    // The two flags are mutually exclusive (enforced on save): "check-in for
-    // paid only" blocks an unpaid/partial appointment; "allow progress of
-    // unpaid/partial" (or neither) permits it. Only bites when creating an
-    // APPOINTMENT-status order at a branch. Enforced for B2B orders too.
-    if (dto.status === OrderStatus.APPOINTMENT && branchId) {
-      const apptSettings =
-        settings ??
-        (await this.registrationSettingsService.getForBranch(
-          tenantId,
-          branchId,
-        ));
-      if (
-        apptSettings.Appointment_AllowCheckInForPaidAppointmentsOnly &&
-        paymentStatus !== PaymentStatus.PAID
-      ) {
-        throw new AppointmentPaymentRequiredException(payNet, payPaid);
-      }
-    }
+    // Appointment check-in payment gating is deliberately NOT applied here.
+    // Creating an APPOINTMENT must never be blocked by payment status — the
+    // "check-in for paid only" rule (Registration Settings → Appointment) is
+    // about the *check-in* moment, so it is enforced in `update()` on the
+    // Check-In action (`dto.checkIn`) instead. See the gate there.
 
     // Resolve the branch's external Order/Quote id configuration (Registration
     // Settings). A quote (status QUOTE) uses the QUOTATION format + its own
@@ -801,6 +803,7 @@ export class OrderService {
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
             isBillGenerated: dto.isBillGenerated ?? true,
+            isPregnant: dto.isPregnant ?? false,
             orderNotes: dto.orderNotes ?? null,
             orderTime: dto.orderTime ?? null,
             billingDetails:
@@ -970,6 +973,18 @@ export class OrderService {
                     paidAmount: 0,
                     remainingBalance: 0,
                     tdsDeduction: 0,
+                  }
+                : {}),
+              // Appointment draft: keep the bill (net/payable) but collect
+              // nothing — move the entered amount into `draftPaidAmount` and
+              // leave `paidAmount` 0 (committed to a real payment on Check-In).
+              ...(deferAppointmentPayment
+                ? {
+                    draftPaidAmount: roundToTwoDecimalPlaces(p.paidAmount ?? 0),
+                    paidAmount: 0,
+                    remainingBalance: roundToTwoDecimalPlaces(
+                      p.payableAmount ?? 0,
+                    ),
                   }
                 : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
@@ -1155,6 +1170,7 @@ export class OrderService {
       billingType: source.billingType,
       isUrgentBill: source.isUrgentBill,
       isBillGenerated: source.isBillGenerated,
+      isPregnant: source.isPregnant,
       patientId: source.patientId,
       ...(source.orderNotes ? { orderNotes: source.orderNotes } : {}),
       ...(source.billingDetails
@@ -1268,7 +1284,10 @@ export class OrderService {
         tenantId,
         patientId,
         deletedAt: null,
-        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+        // Only finalized ORDER-status orders are "previous dues". An APPOINTMENT
+        // is a draft booking whose payment is not yet collected, so its balance
+        // must never count as a due (and never as its OWN due on check-in).
+        status: OrderStatus.ORDER,
         ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
         ...(branchId ? { branchId } : {}),
       },
@@ -1315,13 +1334,15 @@ export class OrderService {
     await this.assertPatient(tenantId, patientId);
 
     // One pass over the patient's active, non-cancelled orders; group the
-    // per-order balance (floored at 0) by branch.
+    // per-order balance (floored at 0) by branch. Only finalized ORDER-status
+    // orders are dues — an APPOINTMENT is a draft booking (its payment is
+    // collected at check-in, not at creation), so its balance is never a due.
     const orders = await this.prisma.order.findMany({
       where: {
         tenantId,
         patientId,
         deletedAt: null,
-        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+        status: OrderStatus.ORDER,
       },
       select: {
         branchId: true,
@@ -1814,7 +1835,9 @@ export class OrderService {
         // patient's outstanding orders AT THIS BRANCH (matching the gate/cap that
         // bounded what could be cleared). Other branches' dues are untouched.
         branchId,
-        status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
+        // Only finalized ORDER-status orders carry dues to settle — appointments
+        // are draft bookings and are never paid down via previous-dues clearing.
+        status: OrderStatus.ORDER,
       },
       orderBy: [{ orderDate: 'asc' }, { createdAt: 'asc' }],
       select: {
@@ -3446,7 +3469,23 @@ export class OrderService {
     }
 
     // Multi-status filter (Billing scope) wins over the single-status filter.
-    if (query.statuses?.length) {
+    if (query.includeCheckedInAppointments && query.statuses?.length) {
+      // Order Console: show the requested statuses PLUS checked-in appointments
+      // (which stay `status = APPOINTMENT`). OR-ed into `and[]` so the two clauses
+      // compose without one clobbering the other, and not-yet-checked-in
+      // appointments are left out.
+      and.push({
+        OR: [
+          { status: { in: query.statuses } },
+          {
+            status: OrderStatus.APPOINTMENT,
+            appointment: {
+              is: { status: { in: CHECKED_IN_APPOINTMENT_STATUSES } },
+            },
+          },
+        ],
+      });
+    } else if (query.statuses?.length) {
       where.status = { in: query.statuses };
     } else if (query.status) {
       where.status = query.status;
@@ -3489,6 +3528,12 @@ export class OrderService {
       and.push({
         NOT: {
           status: OrderStatus.APPOINTMENT,
+          // Checked-in appointments (the patient has arrived) are billable
+          // regardless of payment, so they are NOT hidden — only not-yet-checked-in
+          // appointments qualify for the unpaid-hide rule.
+          appointment: {
+            is: { status: { notIn: CHECKED_IN_APPOINTMENT_STATUSES } },
+          },
           payments: {
             none: {
               deletedAt: null,
@@ -3685,6 +3730,24 @@ export class OrderService {
       // "Collection Status" filter via `buildCollectionProgressWhere` so the two
       // can never drift (bill-only items are excluded there).
       and.push(buildCollectionProgressWhere(query.sampleStatus));
+    }
+    if (query.labReportStatus) {
+      // Per-report status (Order Console "Report Status"): the order has at
+      // least one live report currently in this status — the same reports
+      // `deriveReportStatusCounts` counts for the column (bill-only items
+      // excluded, items with no report yet never match). Pushed before the
+      // `reportStatus` candidate scan below so that scan sees the narrowed set.
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            ...COLLECTION_WORKFLOW_ITEM_WHERE,
+            labReports: {
+              some: { deletedAt: null, status: query.labReportStatus },
+            },
+          },
+        },
+      });
     }
     if (query.reportStatus) {
       // Reuses `deriveReportStatus` — the same function that computes the
@@ -5789,6 +5852,19 @@ export class OrderService {
     }
     // Invoice-lock: an invoiced order is immutable — reject any update.
     await this.assertNotInvoiced(tenantId, id, 'update');
+    // Pregnant is per order and FEMALE-only, checked against the patient's
+    // current gender (Create Order re-saves the patient before this PATCH).
+    if (dto.isPregnant === true) {
+      const patientGender = await this.assertPatient(
+        tenantId,
+        current.patientId,
+      );
+      this.assertPregnancyAllowed(
+        dto.isPregnant,
+        current.patientId,
+        patientGender,
+      );
+    }
     await this.assertItems(tenantId, dto.items);
     await this.assertReferrals(tenantId, dto);
     if (dto.diagnostics) {
@@ -5812,7 +5888,10 @@ export class OrderService {
         branchId: true,
         status: true,
         patientId: true,
+        referredByDoctorId: true,
         referralPanelId: true,
+        internalReferralId: true,
+        externalReferralId: true,
         orderCode: true,
         externalOrderId: true,
         isBillGenerated: true,
@@ -5843,6 +5922,49 @@ export class OrderService {
         ? dto.referralPanelId
         : (existing?.referralPanelId ?? null);
     const isB2bOrder = Boolean(effectiveReferralPanelId);
+
+    // A Check-In (Appointments → Create Order → Confirm) commits the appointment
+    // into the active, billable workflow even though the order keeps
+    // `status = APPOINTMENT`. For every finalize-time registration gate below it
+    // must be treated EXACTLY like an ORDER, so a checked-in appointment can never
+    // bypass a rule a normal order would enforce. `dto.checkIn` is the transition;
+    // an already checked-in appointment (re-saved later) stays "active" via its
+    // linked appointment status. `isActiveOrder` therefore drives all the same
+    // finalize gates for ORDER and checked-in APPOINTMENT alike.
+    const isActiveOrder = isActiveOrderForGates({
+      effectiveStatus,
+      appointmentStatus: existing?.appointment?.status ?? null,
+      checkIn: dto.checkIn === true,
+    });
+
+    // Referral Panel Settings credit gate (Section 4) on the UPDATE path — mirrors
+    // create() so finalizing a DRAFT/QUOTE/APPOINTMENT to ORDER (or adding items
+    // to an existing order), AND checking an appointment in, cannot bypass a linked
+    // Cash/Postpaid referral's Credit Limit / Credit Allowed Days. Excludes THIS
+    // order from the balance (it is the one being edited); effective referral ids
+    // use the patched value, else the stored one (same resolution as
+    // effectiveReferralPanelId above).
+    if (isActiveOrder) {
+      await this.referralCredit.assertOrderCreationAllowed(
+        tenantId,
+        {
+          referredByDoctorId:
+            dto.referredByDoctorId !== undefined
+              ? dto.referredByDoctorId
+              : (existing?.referredByDoctorId ?? null),
+          referralPanelId: effectiveReferralPanelId,
+          internalReferralId:
+            dto.internalReferralId !== undefined
+              ? dto.internalReferralId
+              : (existing?.internalReferralId ?? null),
+          externalReferralId:
+            dto.externalReferralId !== undefined
+              ? dto.externalReferralId
+              : (existing?.externalReferralId ?? null),
+        },
+        id,
+      );
+    }
 
     // Billing-menu permission gates (branch Registration Settings, keyed on the
     // record's original creator). Loaded once; only consulted when the order has
@@ -5976,11 +6098,22 @@ export class OrderService {
     if (dto.payments !== undefined && !effectiveBillGenerated && payPaid > 0) {
       throw new PaymentWithoutBillGeneratedException(payPaid);
     }
+    // Appointment payments stay DRAFTS until check-in: while the booking is still
+    // a NOT-yet-checked-in APPOINTMENT (so `isActiveOrder` is false — it is not
+    // the Check-In commit and the appointment hasn't been checked in before), the
+    // entered amount is remembered (`draftPaidAmount`) but not collected
+    // (`paidAmount` 0). On Check-In — and on any edit AFTER check-in, when the
+    // order is "active" — payments are collected normally (handled in the ledger
+    // reconciliation below). Mirrors create()'s `deferAppointmentPayment`.
+    const deferAppointmentPayment =
+      effectiveStatus === OrderStatus.APPOINTMENT &&
+      !isActiveOrder &&
+      effectiveBillGenerated;
     // Generate Bill = No ⇒ the order is settled with nothing owed: force PAID and
     // zero the persisted ledger below (mirrors create()).
     const paymentStatus = !effectiveBillGenerated
       ? PaymentStatus.PAID
-      : derivePaymentStatus(payNet, payPaid);
+      : derivePaymentStatus(payNet, deferAppointmentPayment ? 0 : payPaid);
 
     // Collection by another user: when this patch replaces the ledger and the
     // collected total actually changes, a non-creator needs the branch setting on.
@@ -6005,17 +6138,14 @@ export class OrderService {
     }
 
     // Enforce the branch's Previous-Dues + Partial-Billing + TDS/Discount rules
-    // when a draft is finalized (or an order re-saved) to `status = ORDER`. Uses
-    // the incoming ledger/items when this patch replaces them, otherwise the
-    // order's stored rows — so the checks run against the order's effective state.
-    // Skipped when no bill is generated — there is nothing to bill, so the gates
-    // must not block the order. For B2B orders (`isB2bOrder`) only the Previous-Dues
-    // + Partial-Billing check below is skipped; TDS/Discount stays enforced.
-    if (
-      effectiveStatus === OrderStatus.ORDER &&
-      branchId &&
-      effectiveBillGenerated
-    ) {
+    // when a draft is finalized (or an order re-saved) to `status = ORDER`, OR when
+    // an appointment is checked in (`isActiveOrder`). Uses the incoming ledger/items
+    // when this patch replaces them, otherwise the order's stored rows — so the
+    // checks run against the order's effective state. Skipped when no bill is
+    // generated — there is nothing to bill, so the gates must not block the order.
+    // For B2B orders (`isB2bOrder`) only the Previous-Dues + Partial-Billing check
+    // below is skipped; TDS/Discount stays enforced.
+    if (isActiveOrder && branchId && effectiveBillGenerated) {
       const effectivePayments: DiscountTdsPaymentRow[] =
         dto.payments !== undefined
           ? dto.payments
@@ -6086,6 +6216,28 @@ export class OrderService {
         tenantId,
         branchId,
       );
+
+      // Appointment check-in payment gating (Registration Settings →
+      // Appointment). "Check-in for paid only" blocks checking in an unpaid or
+      // partially-paid appointment; its mutually-exclusive counterpart (or
+      // neither flag) permits it. Enforced ONLY on the Check-In action
+      // (`dto.checkIn`) — plain appointment creation is never blocked by payment
+      // (see create()). Enforced for B2B orders too. Uses the effective ledger
+      // (incoming rows, else the stored ones) so the status reflects reality.
+      if (
+        dto.checkIn === true &&
+        settings.Appointment_AllowCheckInForPaidAppointmentsOnly
+      ) {
+        const net = roundToTwoDecimalPlaces(
+          effectivePayments.reduce((s, p) => s + (p.netAmount ?? 0), 0),
+        );
+        const paid = roundToTwoDecimalPlaces(
+          effectivePayments.reduce((s, p) => s + (p.paidAmount ?? 0), 0),
+        );
+        if (derivePaymentStatus(net, paid) !== PaymentStatus.PAID) {
+          throw new AppointmentPaymentRequiredException(net, paid);
+        }
+      }
 
       // Previous-Dues + Partial-Billing — skipped for B2B orders (`isB2bOrder`),
       // whose credit terms are governed by the referral panel instead.
@@ -6269,6 +6421,7 @@ export class OrderService {
           billingType: dto.billingType,
           isUrgentBill: dto.isUrgentBill,
           isBillGenerated: dto.isBillGenerated,
+          isPregnant: dto.isPregnant,
           orderNotes: dto.orderNotes,
           orderTime: dto.orderTime,
           // Replace the billing sub-form when provided; leave untouched otherwise.
@@ -6410,119 +6563,168 @@ export class OrderService {
       // only, never its amount/mode/reference/date/collector — and (2) append any
       // genuinely-new collection as a fresh row. REFUND rows are untouched.
       if (dto.payments !== undefined) {
-        const liveRows = await tx.paymentDetails.findMany({
-          where: {
-            orderId: id,
-            tenantId,
-            deletedAt: null,
-            entryType: PaymentEntryType.PAYMENT,
-          },
-          orderBy: { createdAt: 'asc' },
-          select: { id: true },
-        });
-        const liveIds = liveRows.map((r) => r.id);
-        const { add } = diffOrderPayments(liveIds, dto.payments);
-
-        // The order-level financial snapshot rides on the first incoming row
-        // (the FE's `buildPaymentsDto` convention). Generate Bill = No ⇒ zero
-        // every money field except the gross `totalAmount`, so the order carries
-        // no due and reads as settled (mirrors create()).
-        const snapshotSrc = dto.payments[0];
-        const noBillZero = {
-          orderDiscount: 0,
-          netDiscount: 0,
-          netAmount: 0,
-          payableAmount: 0,
-          remainingBalance: 0,
-          tdsDeduction: 0,
-          visitingCharges: 0,
-          deductFromWallet: 0,
-          deductFromPoints: 0,
-        };
-        const snapshotData: Prisma.PaymentDetailsUpdateInput | null =
-          snapshotSrc
-            ? {
-                totalAmount: snapshotSrc.totalAmount ?? 0,
-                orderDiscount: snapshotSrc.orderDiscount ?? 0,
-                orderDiscountMode: snapshotSrc.orderDiscountMode ?? null,
-                orderDiscountValue: snapshotSrc.orderDiscountValue ?? null,
-                netDiscount: snapshotSrc.netDiscount ?? 0,
-                netAmount: snapshotSrc.netAmount ?? 0,
-                payableAmount: snapshotSrc.payableAmount ?? 0,
-                remainingBalance: snapshotSrc.remainingBalance ?? 0,
-                visitingCharges: snapshotSrc.visitingCharges ?? 0,
-                tdsDeduction: snapshotSrc.tdsDeduction ?? 0,
-                deductFromWallet: snapshotSrc.deductFromWallet ?? 0,
-                deductFromPoints: snapshotSrc.deductFromPoints ?? 0,
-                ...(!effectiveBillGenerated ? noBillZero : {}),
-              }
-            : null;
-
-        const canonicalId = liveIds[0] ?? null;
-
-        // (1) Snapshot update, in place, on the canonical row — snapshot columns
-        // only. Its paidAmount / paymentMode / reference / paymentDate /
-        // collectedBy / id / createdAt are deliberately left untouched.
-        if (canonicalId && snapshotData) {
-          await tx.paymentDetails.update({
-            where: { id: canonicalId },
-            data: snapshotData,
+        if (deferAppointmentPayment) {
+          // Pre-check-in appointment edit: the booking's whole ledger is still
+          // uncollected (every row has `paidAmount` 0), so replace it wholesale —
+          // soft-delete ALL existing PAYMENT rows (REFUNDs untouched) and re-store
+          // the entered amount as a fresh DRAFT (remembered, not collected).
+          await tx.paymentDetails.updateMany({
+            where: {
+              orderId: id,
+              tenantId,
+              deletedAt: null,
+              entryType: PaymentEntryType.PAYMENT,
+            },
+            data: { deletedAt: new Date() },
           });
-        }
+          await tx.paymentDetails.createMany({
+            data: dto.payments.map((p) => ({
+              tenantId,
+              branchId,
+              orderId: id,
+              ...p,
+              id: undefined,
+              entryType: PaymentEntryType.PAYMENT,
+              // Remember the entered amount but collect nothing yet.
+              draftPaidAmount: roundToTwoDecimalPlaces(p.paidAmount ?? 0),
+              paidAmount: 0,
+              remainingBalance: roundToTwoDecimalPlaces(p.payableAmount ?? 0),
+              paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              collectedBy: null,
+            })),
+          });
+        } else {
+          // CHECK-IN commit (and every ORDER save): a draft row carries no
+          // collected money (`paidAmount` 0) and is about to be replaced by the
+          // confirmed collection, so soft-delete only the draft rows first. Any
+          // ordinary unpaid ₹0 canonical row is left in place to keep carrying the
+          // order's net snapshot; the reconciliation below records the confirmed
+          // amount as a real collected payment (its first fresh row carrying the
+          // snapshot when no canonical row remains). REFUND rows are untouched.
+          await tx.paymentDetails.updateMany({
+            where: {
+              orderId: id,
+              tenantId,
+              deletedAt: null,
+              entryType: PaymentEntryType.PAYMENT,
+              draftPaidAmount: { gt: 0 },
+            },
+            data: { deletedAt: new Date() },
+          });
+          const liveRows = await tx.paymentDetails.findMany({
+            where: {
+              orderId: id,
+              tenantId,
+              deletedAt: null,
+              entryType: PaymentEntryType.PAYMENT,
+            },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+          });
+          const liveIds = liveRows.map((r) => r.id);
+          const { add } = diffOrderPayments(liveIds, dto.payments);
 
-        // (2) Append genuinely-new collections. Only the money NOT already on the
-        // ledger is appended (`payPaid − storedPaidTotal`), so a re-sent unchanged
-        // ledger — or an older client that omits row ids — can never fabricate a
-        // duplicate receipt. The first created row carries the snapshot ONLY when
-        // the order had no canonical row to hold it (e.g. first collection on a
-        // previously-unpaid order).
-        let snapshotCarried = canonicalId !== null;
-        let remainingNew = roundToTwoDecimalPlaces(
-          Math.max(0, payPaid - storedPaidTotal),
-        );
-        const rowsToCreate: Prisma.PaymentDetailsCreateManyInput[] = [];
-        for (const p of add) {
-          const carriesSnapshot = !snapshotCarried;
-          const want = effectiveBillGenerated
-            ? roundToTwoDecimalPlaces(p.paidAmount ?? 0)
-            : 0;
-          const paid = Math.min(want, remainingNew);
-          // A new row that neither adds money nor is needed to carry the snapshot
-          // is not a payment — skip it.
-          if (!carriesSnapshot && paid <= 0) continue;
-          rowsToCreate.push({
-            tenantId,
-            branchId,
-            orderId: id,
-            entryType: PaymentEntryType.PAYMENT,
-            paidAmount: paid,
-            paymentMode: p.paymentMode,
-            reference: p.reference ?? null,
-            paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
-            collectedBy: personId,
-            ...(carriesSnapshot && snapshotData
+          // The order-level financial snapshot rides on the first incoming row
+          // (the FE's `buildPaymentsDto` convention). Generate Bill = No ⇒ zero
+          // every money field except the gross `totalAmount`, so the order carries
+          // no due and reads as settled (mirrors create()).
+          const snapshotSrc = dto.payments[0];
+          const noBillZero = {
+            orderDiscount: 0,
+            netDiscount: 0,
+            netAmount: 0,
+            payableAmount: 0,
+            remainingBalance: 0,
+            tdsDeduction: 0,
+            visitingCharges: 0,
+            deductFromWallet: 0,
+            deductFromPoints: 0,
+          };
+          const snapshotData: Prisma.PaymentDetailsUpdateInput | null =
+            snapshotSrc
               ? {
-                  totalAmount: snapshotSrc?.totalAmount ?? 0,
-                  orderDiscount: snapshotSrc?.orderDiscount ?? 0,
-                  orderDiscountMode: snapshotSrc?.orderDiscountMode ?? null,
-                  orderDiscountValue: snapshotSrc?.orderDiscountValue ?? null,
-                  netDiscount: snapshotSrc?.netDiscount ?? 0,
-                  netAmount: snapshotSrc?.netAmount ?? 0,
-                  payableAmount: snapshotSrc?.payableAmount ?? 0,
-                  remainingBalance: snapshotSrc?.remainingBalance ?? 0,
-                  visitingCharges: snapshotSrc?.visitingCharges ?? 0,
-                  tdsDeduction: snapshotSrc?.tdsDeduction ?? 0,
-                  deductFromWallet: snapshotSrc?.deductFromWallet ?? 0,
-                  deductFromPoints: snapshotSrc?.deductFromPoints ?? 0,
+                  totalAmount: snapshotSrc.totalAmount ?? 0,
+                  orderDiscount: snapshotSrc.orderDiscount ?? 0,
+                  orderDiscountMode: snapshotSrc.orderDiscountMode ?? null,
+                  orderDiscountValue: snapshotSrc.orderDiscountValue ?? null,
+                  netDiscount: snapshotSrc.netDiscount ?? 0,
+                  netAmount: snapshotSrc.netAmount ?? 0,
+                  payableAmount: snapshotSrc.payableAmount ?? 0,
+                  remainingBalance: snapshotSrc.remainingBalance ?? 0,
+                  visitingCharges: snapshotSrc.visitingCharges ?? 0,
+                  tdsDeduction: snapshotSrc.tdsDeduction ?? 0,
+                  deductFromWallet: snapshotSrc.deductFromWallet ?? 0,
+                  deductFromPoints: snapshotSrc.deductFromPoints ?? 0,
                   ...(!effectiveBillGenerated ? noBillZero : {}),
                 }
-              : {}),
-          });
-          remainingNew = roundToTwoDecimalPlaces(remainingNew - paid);
-          if (carriesSnapshot) snapshotCarried = true;
-        }
-        if (rowsToCreate.length) {
-          await tx.paymentDetails.createMany({ data: rowsToCreate });
+              : null;
+
+          const canonicalId = liveIds[0] ?? null;
+
+          // (1) Snapshot update, in place, on the canonical row — snapshot columns
+          // only. Its paidAmount / paymentMode / reference / paymentDate /
+          // collectedBy / id / createdAt are deliberately left untouched.
+          if (canonicalId && snapshotData) {
+            await tx.paymentDetails.update({
+              where: { id: canonicalId },
+              data: snapshotData,
+            });
+          }
+
+          // (2) Append genuinely-new collections. Only the money NOT already on the
+          // ledger is appended (`payPaid − storedPaidTotal`), so a re-sent unchanged
+          // ledger — or an older client that omits row ids — can never fabricate a
+          // duplicate receipt. The first created row carries the snapshot ONLY when
+          // the order had no canonical row to hold it (e.g. first collection on a
+          // previously-unpaid order).
+          let snapshotCarried = canonicalId !== null;
+          let remainingNew = roundToTwoDecimalPlaces(
+            Math.max(0, payPaid - storedPaidTotal),
+          );
+          const rowsToCreate: Prisma.PaymentDetailsCreateManyInput[] = [];
+          for (const p of add) {
+            const carriesSnapshot = !snapshotCarried;
+            const want = effectiveBillGenerated
+              ? roundToTwoDecimalPlaces(p.paidAmount ?? 0)
+              : 0;
+            const paid = Math.min(want, remainingNew);
+            // A new row that neither adds money nor is needed to carry the snapshot
+            // is not a payment — skip it.
+            if (!carriesSnapshot && paid <= 0) continue;
+            rowsToCreate.push({
+              tenantId,
+              branchId,
+              orderId: id,
+              entryType: PaymentEntryType.PAYMENT,
+              paidAmount: paid,
+              paymentMode: p.paymentMode,
+              reference: p.reference ?? null,
+              paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              collectedBy: personId,
+              ...(carriesSnapshot && snapshotData
+                ? {
+                    totalAmount: snapshotSrc?.totalAmount ?? 0,
+                    orderDiscount: snapshotSrc?.orderDiscount ?? 0,
+                    orderDiscountMode: snapshotSrc?.orderDiscountMode ?? null,
+                    orderDiscountValue: snapshotSrc?.orderDiscountValue ?? null,
+                    netDiscount: snapshotSrc?.netDiscount ?? 0,
+                    netAmount: snapshotSrc?.netAmount ?? 0,
+                    payableAmount: snapshotSrc?.payableAmount ?? 0,
+                    remainingBalance: snapshotSrc?.remainingBalance ?? 0,
+                    visitingCharges: snapshotSrc?.visitingCharges ?? 0,
+                    tdsDeduction: snapshotSrc?.tdsDeduction ?? 0,
+                    deductFromWallet: snapshotSrc?.deductFromWallet ?? 0,
+                    deductFromPoints: snapshotSrc?.deductFromPoints ?? 0,
+                    ...(!effectiveBillGenerated ? noBillZero : {}),
+                  }
+                : {}),
+            });
+            remainingNew = roundToTwoDecimalPlaces(remainingNew - paid);
+            if (carriesSnapshot) snapshotCarried = true;
+          }
+          if (rowsToCreate.length) {
+            await tx.paymentDetails.createMany({ data: rowsToCreate });
+          }
         }
       }
 
@@ -6598,19 +6800,44 @@ export class OrderService {
         }
       }
 
-      // Generate / reconcile accession samples once the order is confirmed as a
-      // diagnostic order (e.g. a DRAFT/QUOTE flipped to ORDER/APPOINTMENT).
-      // - First-time (no samples yet): generate the full item set (idempotent).
-      // - Already accessioned + items changed: reconcile only the delta (add new
-      //   samples for added items, tombstone samples for removed ones).
+      // Check-In (Appointments → Create Order → Confirm): advance the linked
+      // appointment to CHECKED_IN so the order enters the active workflow. The
+      // order itself stays `status = APPOINTMENT`. Idempotent — a no-op when the
+      // appointment is already checked in / in progress / completed / cancelled.
+      if (
+        dto.checkIn &&
+        existing?.appointmentId &&
+        existing.appointment &&
+        PRE_CHECKIN_APPOINTMENT_STATUSES.includes(existing.appointment.status)
+      ) {
+        await this.appointmentService.transitionStatusInTx(
+          tx,
+          tenantId,
+          branchId,
+          existing.appointmentId,
+          personId,
+          AppointmentStatus.CHECKED_IN,
+          'Checked in',
+        );
+      }
+
+      // Generate / reconcile accession samples. Samples enter accession when the
+      // order is confirmed as a diagnostic ORDER, or when an appointment is checked
+      // in (`dto.checkIn`) — an APPOINTMENT does NOT enter accession before check-in.
+      // Once accessioned, an item-set change reconciles the delta regardless of the
+      // order's status (a checked-in appointment stays `status = APPOINTMENT`).
       const hasDiagnostics = Boolean(dto.diagnostics ?? existing?.diagnostics);
-      if (this.shouldGenerateSamples(effectiveStatus, hasDiagnostics)) {
+      if (hasDiagnostics) {
         const alreadyAccessioned =
           (await tx.orderSample.count({
             where: { orderId: id, tenantId, deletedAt: null },
           })) > 0;
+        const shouldGenerate =
+          this.shouldGenerateSamples(effectiveStatus, hasDiagnostics) ||
+          Boolean(dto.checkIn);
         if (alreadyAccessioned && dto.items !== undefined && itemDiff) {
-          // Already accessioned + item set changed -> reconcile the delta only.
+          // Already accessioned + item set changed -> reconcile the delta only (add
+          // new samples for added items, tombstone samples for removed ones).
           await this.orderSamples.reconcileForOrderInTx(
             tx,
             tenantId,
@@ -6623,7 +6850,7 @@ export class OrderService {
               now,
             },
           );
-        } else {
+        } else if (!alreadyAccessioned && shouldGenerate) {
           // First-time generation for the whole final item set (idempotent). Do
           // NOT also reconcile here — the added items are already part of the
           // order, so generating the whole order covers them.
@@ -6647,12 +6874,14 @@ export class OrderService {
         id,
       );
 
-      // Cross-order settlement — applied only on the TRANSITION into ORDER (e.g.
-      // a draft finalized to ORDER), never on re-saving an already-ORDER order,
-      // so the cleared amount is settled exactly once.
+      // Cross-order settlement — applied only on the TRANSITION into the active
+      // workflow: a draft finalized to ORDER, or an appointment checked in
+      // (`dto.checkIn`, sent once on Confirm). Never on re-saving an already-active
+      // order, so the cleared amount is settled exactly once.
       if (
-        existing?.status !== OrderStatus.ORDER &&
-        effectiveStatus === OrderStatus.ORDER &&
+        ((existing?.status !== OrderStatus.ORDER &&
+          effectiveStatus === OrderStatus.ORDER) ||
+          dto.checkIn === true) &&
         branchId &&
         existing?.patientId &&
         effectiveBillGenerated &&
@@ -7373,18 +7602,40 @@ export class OrderService {
 
   /**
    * Assert the patient exists (active, same tenant).
+   * @returns the patient's gender (`null` when not recorded), for
+   *          {@link assertPregnancyAllowed}
    * @throws OrderPatientNotFoundException if it doesn't resolve
    */
   private async assertPatient(
     tenantId: string,
     patientId: string,
-  ): Promise<void> {
+  ): Promise<Gender | null> {
     const patient = await this.prisma.patient.findFirst({
       where: { id: patientId, tenantId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, gender: true },
     });
     if (!patient) {
       throw new OrderPatientNotFoundException(patientId);
+    }
+    return patient.gender;
+  }
+
+  /**
+   * An order may be flagged pregnant only when its patient is FEMALE. `false` /
+   * omitted is always allowed.
+   * @param isPregnant the requested `isPregnant` value from the DTO
+   * @param patientId the order's patient (for the error context)
+   * @param gender that patient's current gender
+   * @throws OrderPregnancyRequiresFemalePatientException when `isPregnant` is
+   *         `true` and the patient is not FEMALE
+   */
+  private assertPregnancyAllowed(
+    isPregnant: boolean | undefined,
+    patientId: string,
+    gender: Gender | null,
+  ): void {
+    if (isPregnant === true && gender !== Gender.FEMALE) {
+      throw new OrderPregnancyRequiresFemalePatientException(patientId, gender);
     }
   }
 

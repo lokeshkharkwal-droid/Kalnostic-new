@@ -23,6 +23,7 @@ function build(sentSamples: { id: string; branchId: string }[]) {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   // the status transition itself is covered elsewhere; here only the guard matters
   const transition = jest

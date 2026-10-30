@@ -81,6 +81,27 @@ export class LabReportResultsNotEditableException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a parameter's Note can only be changed while the report is Pending, Partial Pending or Saved (the same rule as
+ * its result values). Once the report is submitted or has moved further, nothing is written; Edit Report sends it back
+ * to Saved when a change is really needed.
+ */
+export class LabReportParameterNoteNotEditableException extends KaltrosException {
+  constructor(id: string, currentStatus: string) {
+    const label = currentStatus
+      .toLowerCase()
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    super(
+      'LAB_REPORT_PARAMETER_NOTE_NOT_EDITABLE',
+      `The note can no longer be changed: this report is ${label}. A note can only be changed while the report is Pending, Partial Pending or Saved.`,
+      { id, currentStatus },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — a locked report cannot be edited (results, save, submit, etc.). */
 export class LabReportLockedException extends KaltrosException {
   constructor(id: string) {

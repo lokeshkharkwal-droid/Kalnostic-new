@@ -1,0 +1,67 @@
+meta {
+  name: Reset Abnormal Flag Logic to Bold (SiteAdmin)
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/master-data/abnormal-flag-logic/reset-to-bold?tenantId={{tenantId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  tenantId: {{tenantId}}
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an update summary", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("referenceRangesUpdated");
+    expect(d).to.have.property("referenceValuesUpdated");
+  });
+}
+
+docs {
+  **SiteAdmin maintenance** — for the tenant given by the `tenantId` **query
+  param**, normalise the "Abnormal Flag Logic" of all its existing reference
+  ranges **and** reference values from **Bold and Red** (`BOLD_AND_RED`) to
+  **Bold** (`BOLD_ONLY`). Any row carrying a different flag (`ITALIC`, …) is left
+  untouched, and no other reference-value setting is changed.
+
+  Auth: **SiteAdmin** token (`jwt-siteadmin`), requires `master-data:write`
+  (CONTENT_ADMIN and above). `@Public()` only opts out of the *business* JWT guard.
+
+  ## Query params
+
+  | Param      | Type | Required | Notes                                             |
+  | ---------- | ---- | -------- | ------------------------------------------------- |
+  | `tenantId` | UUID | **yes**  | The tenant whose test records are updated. Accepted here on purpose — SiteAdmin cross-tenant tooling (CLAUDE.md §4.7). |
+
+  ## Response (`data`)
+
+  ```json
+  {
+    "referenceRangesUpdated": 128,
+    "referenceValuesUpdated": 42
+  }
+  ```
+
+  ## Notes & errors
+
+  - Runs inside an RLS tenant transaction, so it works whether or not
+    `RLS_ENABLED` is set. SITE_ADMIN template rows (`tenantId IS NULL`) are
+    platform content, not a tenant's master data, and are **out of scope**.
+  - Soft-deleted rows (`deletedAt`) are skipped.
+  - Idempotent: re-running after it has run updates 0 rows (nothing is
+    `BOLD_AND_RED` anymore).
+  - `400 VALIDATION_ERROR` if `tenantId` is missing or not a UUID.
+  - `404 TENANT_NOT_FOUND` if `tenantId` does not exist.
+}

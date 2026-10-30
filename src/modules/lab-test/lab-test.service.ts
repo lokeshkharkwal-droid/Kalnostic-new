@@ -99,6 +99,7 @@ import {
   summariseSampleNameNotes,
   type SampleNameNote,
 } from './utils/sample-name.util';
+import { blankNotesToNull } from './utils/param-notes.util';
 import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
 import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import {
@@ -110,9 +111,14 @@ import {
   LabTestNotFoundException,
   LabTestParamCodeConflictException,
   LabTestSampleRequiredException,
+  MasterDataImportConflictException,
   UnknownFormulaReferenceException,
 } from './exceptions/lab-test.exceptions';
 import { FormulaParam, validateFormulaSet } from '../../common/utils/formula';
+import {
+  MASTER_DATA_SYNC_BATCH_SIZE,
+  MasterDataSyncProgressListener,
+} from './master-data-sync-progress';
 import {
   TAT_SELECT,
   TatConfig,
@@ -1500,9 +1506,18 @@ export class LabTestService {
   /**
    * Sync (update-or-create-or-delete) all active lab tests from a Tenant Master
    * Data into a Branch Master Data, keyed on `sourceMasterLabTestId` (falling
-   * back to `testCode` to adopt a legacy branch row and avoid a unique
-   * collision). A matched branch test has its scalars fully overwritten from
-   * the tenant test (version bumped); its samples are rebuilt (full-replace)
+   * back to `testCode`, then — only for a row whose link is stale — `testName`,
+   * to adopt a legacy or stale-linked branch row: both are unique per master
+   * data, so creating alongside one would collide; e.g. a tenant test deleted
+   * and re-created under the same name with a new code). Matching is tiered
+   * across all tenant tests and each branch row is adopted at most once. An
+   * end state that would still duplicate a name/code is rejected up front
+   * with `MasterDataImportConflictException` (409) before any write. Runs in
+   * order: match, delete orphans/duplicates, park swapped names/codes on a
+   * placeholder, update matched, clone unmatched — so no step trips the
+   * name/code unique indexes on a row a later step would have removed. A
+   * matched branch test has its scalars fully overwritten from the tenant
+   * test (version bumped); its samples are rebuilt (full-replace)
    * but its result params are matched-and-patched by `parameterCode` via
    * `upsertTestChildren`, preserving each matched param's id (and thus any
    * `LabReportResultValue` already saved against it) — see that method's doc.
@@ -1528,6 +1543,7 @@ export class LabTestService {
       branchMasterDataId: string;
       actorId: string | null;
     },
+    onProgress?: MasterDataSyncProgressListener,
   ): Promise<{
     testIdMap: Map<string, string>;
     created: number;
@@ -1547,13 +1563,105 @@ export class LabTestService {
     const branchTests = await tx.labTest.findMany({
       where: { masterDataId: branchMasterDataId, tenantId, deletedAt: null },
     });
-    const bySource = new Map<string, LabTest>();
-    const byCode = new Map<string, LabTest>();
-    for (const t of branchTests) {
-      if (t.sourceMasterLabTestId) bySource.set(t.sourceMasterLabTestId, t);
-      byCode.set(t.testCode, t);
-    }
     const sourceIds = new Set(sourceTests.map((t) => t.id));
+
+    // Match in tiers across ALL tenant tests — every source link first, then
+    // every code, then every name — so a weaker key (e.g. a re-created test's
+    // name) can never claim a branch row that a stronger key of another tenant
+    // test points at, whatever order `sourceTests` comes back in. Each branch
+    // row is adopted at most once; oldest first, so if two branch rows carry
+    // the same source link the older one is kept. The name tier only adopts a
+    // row whose source link is stale (its tenant test is gone) — never a
+    // hand-created row (NULL link) that merely shares a name.
+    const byAge = [...branchTests].sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+    const matches = new Map<string, LabTest>(); // tenant test id → branch row
+    const matchedIds = new Set<string>();
+    const isStale = (t: LabTest) =>
+      t.sourceMasterLabTestId !== null &&
+      !sourceIds.has(t.sourceMasterLabTestId);
+    const tiers: [(t: LabTest) => string | null, (s: LabTest) => string][] = [
+      [(t) => t.sourceMasterLabTestId, (s) => s.id],
+      [(t) => t.testCode, (s) => s.testCode],
+      [(t) => (isStale(t) ? t.testName : null), (s) => s.testName],
+    ];
+    for (const [branchKey, sourceKey] of tiers) {
+      const index = new Map<string, LabTest>();
+      for (const t of byAge) {
+        const key = branchKey(t);
+        if (key && !matchedIds.has(t.id) && !index.has(key)) index.set(key, t);
+      }
+      for (const src of sourceTests) {
+        if (matches.has(src.id)) continue;
+        const target = index.get(sourceKey(src));
+        if (target && !matchedIds.has(target.id)) {
+          matches.set(src.id, target);
+          matchedIds.add(target.id);
+        }
+      }
+    }
+
+    // Leftovers: unadopted branch rows that were sync-derived — either their
+    // tenant source is gone (orphan) or another, older branch row already
+    // carries the same source link (duplicate). Hand-created rows (NULL link)
+    // are never touched.
+    const orphans = branchTests.filter(
+      (t) => !matchedIds.has(t.id) && t.sourceMasterLabTestId !== null,
+    );
+    const orphanIds = new Set(orphans.map((t) => t.id));
+
+    // Pre-flight: the end state must not have two active tests sharing a name
+    // or code (the partial unique indexes would reject it mid-way). Fail with
+    // a readable 409 before any write instead of a raw P2002 → 500.
+    const finalRows = [
+      ...branchTests.filter(
+        (t) => !matchedIds.has(t.id) && !orphanIds.has(t.id),
+      ),
+      ...sourceTests,
+    ];
+    const conflicts: { field: 'name' | 'code'; value: string }[] = [];
+    for (const field of ['name', 'code'] as const) {
+      const seen = new Set<string>();
+      for (const t of finalRows) {
+        const value = field === 'name' ? t.testName : t.testCode;
+        if (seen.has(value)) conflicts.push({ field, value });
+        seen.add(value);
+      }
+    }
+    if (conflicts.length) {
+      throw new MasterDataImportConflictException(conflicts);
+    }
+    await onProgress?.({
+      type: 'tests-planned',
+      total: sourceTests.length,
+      toUpdate: matches.size,
+      toCreate: sourceTests.length - matches.size,
+    });
+
+    // Orphans are soft-deleted BEFORE any update or create, so one still
+    // holding a name/code can't trip the partial unique indexes when another
+    // test is renamed/re-coded onto it.
+    await onProgress?.({
+      type: 'phase',
+      phase: 'REMOVING',
+      count: orphans.length,
+    });
+    const now = new Date();
+    let deleted = 0;
+    for (const orphan of orphans) {
+      await this.cascadeDeleteTest(tx, orphan.id, tenantId, now);
+      deleted += 1;
+    }
+    if (orphans.length) {
+      await this.cascadeDeleteBranchLabTestCopies(
+        tx,
+        tenantId,
+        branchId,
+        orphans.map((o) => o.id),
+        now,
+      );
+    }
 
     const testIdMap = new Map<string, string>();
     const tatChanges: {
@@ -1563,8 +1671,49 @@ export class LabTestService {
     }[] = [];
     let created = 0;
     let updated = 0;
+    const toCreate: LabTest[] = [];
+    // Progress is reported per batch of tests processed (updated or cloned);
+    // everything stays inside the caller's transaction.
+    let processed = 0;
+    const tick = async () => {
+      processed += 1;
+      if (processed % MASTER_DATA_SYNC_BATCH_SIZE === 0) {
+        await onProgress?.({ type: 'tests-processed', processed });
+      }
+    };
+    await onProgress?.({ type: 'phase', phase: 'TESTS' });
+
+    // Matched rows that must move OFF a name/code another matched row is
+    // moving ONTO (e.g. two tenant tests swapped names) first get a unique
+    // placeholder, so the per-row updates below can't collide mid-way.
+    const wantedNames = new Set<string>();
+    const wantedCodes = new Set<string>();
     for (const src of sourceTests) {
-      const target = bySource.get(src.id) ?? byCode.get(src.testCode);
+      const target = matches.get(src.id);
+      if (!target) continue;
+      if (src.testName !== target.testName) wantedNames.add(src.testName);
+      if (src.testCode !== target.testCode) wantedCodes.add(src.testCode);
+    }
+    for (const src of sourceTests) {
+      const target = matches.get(src.id);
+      if (!target) continue;
+      const freeName =
+        src.testName !== target.testName && wantedNames.has(target.testName);
+      const freeCode =
+        src.testCode !== target.testCode && wantedCodes.has(target.testCode);
+      if (freeName || freeCode) {
+        await tx.labTest.update({
+          where: { id: target.id },
+          data: {
+            ...(freeName && { testName: `__import__${target.id}` }),
+            ...(freeCode && { testCode: `__import__${target.id}` }),
+          },
+        });
+      }
+    }
+
+    for (const src of sourceTests) {
+      const target = matches.get(src.id);
       if (target) {
         tatChanges.push({
           branchTestId: target.id,
@@ -1607,17 +1756,9 @@ export class LabTestService {
         });
         testIdMap.set(src.id, target.id);
         updated += 1;
+        await tick();
       } else {
-        const cloned = await this.clonePersistTest(tx, src, {
-          tenantId,
-          branchId,
-          masterDataId: branchMasterDataId,
-          source: DataSource.TENANT,
-          actorId,
-          sourceMasterLabTestId: src.id,
-        });
-        testIdMap.set(src.id, cloned.id);
-        created += 1;
+        toCreate.push(src);
       }
     }
     // Carry the (possibly new) TAT on into the branch's Lab Test List copies —
@@ -1629,25 +1770,21 @@ export class LabTestService {
       tatChanges,
     );
 
-    const orphans = branchTests.filter(
-      (t) =>
-        t.sourceMasterLabTestId !== null &&
-        !sourceIds.has(t.sourceMasterLabTestId),
-    );
-    const now = new Date();
-    let deleted = 0;
-    for (const orphan of orphans) {
-      await this.cascadeDeleteTest(tx, orphan.id, tenantId, now);
-      deleted += 1;
-    }
-    if (orphans.length) {
-      await this.cascadeDeleteBranchLabTestCopies(
-        tx,
+    for (const src of toCreate) {
+      const cloned = await this.clonePersistTest(tx, src, {
         tenantId,
         branchId,
-        orphans.map((o) => o.id),
-        now,
-      );
+        masterDataId: branchMasterDataId,
+        source: DataSource.TENANT,
+        actorId,
+        sourceMasterLabTestId: src.id,
+      });
+      testIdMap.set(src.id, cloned.id);
+      created += 1;
+      await tick();
+    }
+    if (processed % MASTER_DATA_SYNC_BATCH_SIZE !== 0 || processed === 0) {
+      await onProgress?.({ type: 'tests-processed', processed });
     }
 
     return { testIdMap, created, updated, deleted };
@@ -1893,7 +2030,8 @@ export class LabTestService {
   /**
    * Refresh an EXISTING test's children (samples, result params, and each
    * param's reference ranges/values) from `srcTestId`, matching params by
-   * `parameterCode` (case-insensitive) and patching them in place instead of
+   * `parameterCode` then `parameterName` (both case-insensitive, tiered across
+   * all params) and patching them in place instead of
    * blindly deleting and recreating — same rationale as `upsertParamsByCode`:
    * other modules hold logical (non-FK) references to `LabTestResultParam.id`
    * (`LabReportResultValue.resultParamId`, `CriticalAlert.resultParamId`,
@@ -1934,23 +2072,47 @@ export class LabTestService {
 
     const existingParams = await tx.labTestResultParam.findMany({
       where: { labTestId, tenantId, deletedAt: null },
-      select: { id: true, parameterCode: true },
+      select: { id: true, parameterCode: true, parameterName: true },
     });
-    const existingByCode = new Map(
-      existingParams.map((p) => [p.parameterCode.toLowerCase(), p.id]),
-    );
-    const matchedIds = new Set<string>();
-
     const srcParams = await tx.labTestResultParam.findMany({
       where: { labTestId: srcTestId, tenantId: srcTenantId, deletedAt: null },
     });
+
+    // Match by `parameterCode` across ALL source params first, then fall back
+    // to `parameterName` (both case-insensitive) for the rest, so a param whose
+    // code changed upstream keeps its id — and the results saved against it.
+    // Each existing param is matched at most once.
+    const matchedIds = new Set<string>();
+    const matchedBySrc = new Map<string, string>(); // src param id → existing id
+    const paramTiers: ((p: {
+      parameterCode: string;
+      parameterName: string;
+    }) => string)[] = [
+      (p) => p.parameterCode.toLowerCase(),
+      (p) => p.parameterName.trim().toLowerCase(),
+    ];
+    for (const key of paramTiers) {
+      const index = new Map<string, string>();
+      for (const p of existingParams) {
+        if (!matchedIds.has(p.id) && !index.has(key(p)))
+          index.set(key(p), p.id);
+      }
+      for (const param of srcParams) {
+        if (matchedBySrc.has(param.id)) continue;
+        const existingId = index.get(key(param));
+        if (existingId && !matchedIds.has(existingId)) {
+          matchedBySrc.set(param.id, existingId);
+          matchedIds.add(existingId);
+        }
+      }
+    }
+
     for (const param of srcParams) {
       const scalars = this.stripMeta(param);
-      const existingId = existingByCode.get(param.parameterCode.toLowerCase());
+      const existingId = matchedBySrc.get(param.id);
 
       let paramId: string;
       if (existingId) {
-        matchedIds.add(existingId);
         await tx.labTestResultParam.update({
           where: { id: existingId },
           data: scalars,
@@ -4746,7 +4908,7 @@ export class LabTestService {
       } = p;
       const param = await tx.labTestResultParam.create({
         data: {
-          ...paramScalars,
+          ...blankNotesToNull(paramScalars),
           reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
           tenantId,
           branchId,
@@ -4851,7 +5013,7 @@ export class LabTestService {
       await tx.labTestResultParam.update({
         where: { id: existingId },
         data: {
-          ...paramScalars,
+          ...blankNotesToNull(paramScalars),
           ...(fromImport && reflexTests === undefined
             ? {}
             : {
@@ -4926,7 +5088,7 @@ export class LabTestService {
       } = p;
       const created = await tx.labTestResultParam.create({
         data: {
-          ...paramScalars,
+          ...blankNotesToNull(paramScalars),
           reflexTests: (reflexTests ?? []) as unknown as Prisma.InputJsonValue,
           tenantId,
           branchId,

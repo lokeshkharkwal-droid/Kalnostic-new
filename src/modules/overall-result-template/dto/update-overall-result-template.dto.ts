@@ -6,7 +6,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { OverallResultTemplateStatus } from '@prisma/client';
-import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
+import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
 
 /**
  * Partial update of an Overall Result template (all fields optional; rules
@@ -27,7 +27,7 @@ export class UpdateOverallResultTemplateDto {
 
   @IsString()
   @IsOptional()
-  @NoteMaxLength('Overall Result')
+  @RichTextNote('Overall Result')
   content?: string;
 
   @IsEnum(OverallResultTemplateStatus)

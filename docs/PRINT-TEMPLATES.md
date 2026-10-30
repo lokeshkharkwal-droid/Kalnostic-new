@@ -98,8 +98,46 @@ most common source of "my tag didn't work".
 - **ONE LEVEL ONLY.** You cannot nest `{{#each}}` inside `{{#each}}`. A nested
   block is left as literal text. (This is why multi-sample labels and
   `lab_all_report` flatten their data into a single top-level section.)
-- **No `{{#if}}` / conditionals** in the classic engine.
+- **No `{{else}}`.** A `{{#if key}}…{{/if}}` inside the block is decided **per row**
+  (see 2.2b).
 - Missing/empty/non-array section → the whole block collapses to nothing.
+
+### 2.2b Show a block only when a value has content — `{{#if key}}…{{/if}}`
+
+```html
+{{#if useful_for}}
+<div class="note-block-title">USEFUL FOR</div>
+{useful_for}
+{{/if}}
+```
+
+- The inner markup (heading, box, the tag itself) is kept only when
+  `variables[key]` shows something; otherwise the **whole block disappears**,
+  heading included.
+- "Shows something" = text (HTML tags, `&nbsp;` and spaces do not count, an
+  `<img>` does), a number, a true flag, or a non-empty list. A missing, null or
+  empty value hides the block, so a blank rich-text box such as `<p>&nbsp;</p>`
+  hides too.
+- Blocks may be **nested**. There is **no `{{else}}`** (the Latte engine would
+  mistake it for its own tag). A block that is never closed is left as literal text.
+- **Outside** an `{{#each}}` the key is looked up in the top-level variables.
+  **Inside** one it is looked up in **that row's** fields first, then the top-level
+  variables (the same fallback a bare `{col}` has), so every row decides for itself:
+  `{{#each reports}}…{{#if is_lab_panel}}Panel: {lab_panel_name}{{/if}}…{{/each}}`.
+  The decision is made on the template text before the row's values go in, so text
+  inside a value is never read as a tag.
+- **Use it for the Notes sections.** A technician can leave a Notes section out of
+  one report's print (Branch Admin > Branch Settings > Technician Settings > Report Printing: Lab Test / Lab Panel). The tag then
+  prints empty. Without an `{{#if}}` wrapper the section's heading and box would
+  still print, with nothing in them. Wrap each of `{useful_for}`,
+  `{interpretation}`, `{limitations}`, `{remarks}`, `{references}` as above.
+  (In a Latte template use `{if $test->useful_for}…{/if}`.)
+- **Use it for lab-panel-only blocks.** `{is_lab_panel}` is `Yes` when the test was
+  ordered as part of a lab panel and empty otherwise (never `No`, because any text
+  counts as true), so `{{#if is_lab_panel}}…{{/if}}` shows a block (a panel header, a
+  panel footer, the panel name and code) only for panel tests. It works in the
+  header, body and footer. The flat engine has **no `{{else}}` and no "not"**: to show
+  something only for a single test, use a Latte template (`{if $test->is_lab_panel}…{else}…{/if}`).
 
 ### 2.3 Uploaded image — `{{image:id}}` (double brace)
 
@@ -498,8 +536,11 @@ their tag lists are identical.
 | `{referred_by}` | Referring doctor. |
 | `{referral_panel}` | Referring panel. |
 | `{test_name}` | Test/panel name being reported. |
+| `{is_lab_panel}` | `Yes` when this test belongs to a lab panel (ordered as part of a panel: each member test of a panel, and an old combined panel report), empty otherwise. Use it as `{{#if is_lab_panel}}…{{/if}}` in the header, body or footer. Latte: `{if $test->is_lab_panel}` (a real boolean). |
+| `{lab_panel_name}` | The panel's name, empty for a single test. Latte: `$test->lab_panel_name`. |
+| `{lab_panel_code}` | The panel's code, empty for a single test. Latte: `$test->lab_panel_code`. |
 | `{report_status}` | Report status (SAVED/APPROVED/PUBLISHED…). |
-| `{useful_for}` | Clinical "useful for" (report → test-master fallback). |
+| `{useful_for}` | Clinical "useful for" (report → test-master fallback). Empty when the technician left this Notes section out of this report's print (same for `{interpretation}`, `{limitations}`, `{remarks}`, `{references}`); wrap the block in `{{#if useful_for}}…{{/if}}` so its heading goes too. |
 | `{interpretation}` | Interpretation text. |
 | `{limitations}` | Limitations text. |
 | `{references}` | References text. |
@@ -592,9 +633,9 @@ a 3-page PDF attachment prints **8 pages**, and an image becomes one appended pa
 | `{is_observed_1_abnormal}` / `{is_observed_2_abnormal}` | Boolean — `true` when that reading is a **Quantitative** value outside the Lower/Upper limits of its resolved reference range, else `false`. Same evaluation that drives the abnormal styling. In a classic template it renders the literal `true`/`false`; in a Latte template it is a real boolean, so branch on it (`{if $row->is_observed_1_abnormal}…{/if}`) — e.g. to print a `H`/`L` flag or an arrow column. |
 | `{unit}` | Measurement unit. |
 | `{methodology}` / `{method_name}` | Method (aliases). |
-| `{reference_display}` | Formatted reference range. When it was typed over several lines in Master Data ("Display of Reference Range"), the lines print one under another, as typed. (Latte templates get the plain text in `$row->reference_display`; Latte escapes it and HTML joins the lines, so a Latte template that needs the lines should add `style="white-space:pre-line"` to that cell.) |
+| `{reference_display}` | Formatted reference range. When it was typed over several lines in Master Data ("Display of Reference Range"), the lines print one under another, as typed. (Latte templates keep the lines too: `{$row->reference_display}` is printed escaped, and `{$row->reference_display|noescape}` raw, each inside a `white-space:pre-wrap` span when the text has line breaks. For any other text, `{$x|nl2br}` escapes it and turns each line break into `<br />`.) |
 | `{group_name}` | Parameter group heading. |
-| `{result_note}` | Per-parameter note. |
+| `{result_note}` | Per-parameter note. It is the technician's own text for **this report** when they wrote one (Technician > Reporting > Patient Entry / Test Entry > the Notes icon beside Sync), otherwise the parameter's configured Note from Master Data (Add Test > Add Result > Notes). A note the technician blanked prints nothing (the configured Note does not come back). It is a **rich-text** tag like `{overall_result}`: the technician's formatting prints as formatting, and the configured Note (plain text) is escaped and keeps its line breaks. Wrap it in `{{#if result_note}}…{{/if}}` so a row with no note shows no empty block. In a **Latte** template print it with `|noescape` (`{$row->result_note|noescape}`), otherwise the tags show as text. An unfinished report prints "Result pending" and no note. |
 
 **Signatories:** up to 3 → use `<signing_authority_tag>` in the footer (keys:
 `{name}`, `{designation}`, `{registrationNumber}`, `{signatureImage}`,
@@ -680,6 +721,9 @@ The context is:
 | `sample_collected_date` | Collection time. |
 | `sample_received_date` | Receipt time. |
 | `report_prepared_on` | Approval/publish time. |
+| `is_lab_panel` | Whether this test belongs to a lab panel: a real boolean for `{if $report->is_lab_panel}`. In a flat `{{#each reports}}` template it is the text `Yes` or empty, and `{{#if is_lab_panel}}` inside the block decides per test. It is empty at the top level (not a property of the whole order). |
+| `lab_panel_name` | That test's panel name (empty for a single test). |
+| `lab_panel_code` | That test's panel code (empty for a single test). |
 | `test_file_attachment` | That test's File+ PDF(s) — `{$report->test_file_attachment\|noescape}`. Already inside `body_html` when that test's own `lab_report` template uses the tag. In a flat `{{#each reports}}` template it is a per-row `{test_file_attachment}`; it is blank at the top level, so one test's file never prints for the whole order. |
 | `test_file_attachment_without_header` | That test's File+ files **appended as pages** instead of drawn inline — `{$report->test_file_attachment_without_header\|noescape}`. Same test-scoping/`body_html` notes as `test_file_attachment`; every test's appended files land after all report pages. |
 | `lab_test_id` | Tenant-master test id. |

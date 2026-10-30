@@ -32,10 +32,25 @@ docs {
   linked LabTest (a panel item, a direct/free-text entry, or a branch-only
   test with no tenant catalogue source).
 
+  Each `resultParams[]` entry also carries `notes`: the parameter's CONFIGURED Note (Master Data > Add Test > Add
+  Result > Notes), plain text or null. It is only the default. `parameterNotes: [{ resultParamId, content }]` lists the
+  parameters whose Note the technician wrote for THIS report (rich-text HTML, may be empty = "no note on this report",
+  saved with `PATCH .../parameter-note/:resultParamId`); a parameter with no entry shows its configured Note.
+
   404 `LAB_REPORT_NOT_FOUND` if missing/other-tenant/other-branch.
 
   **TAT after a transfer (Phase 2).** The limit (Max TAT, processing window, schedule) comes from the entry the holding
   branch works the test with, and the start is the earliest accept among the samples AT THE HOLDING BRANCH (the sender's
   original, still Sent, no longer counts at the receiver). Back at the sender the clock restarts when it accepts the tube
   again.
+
+  Response also includes `notesPrint` - `{ enabled, isPanelMember, excludedSections }`:
+  which Notes sections print on this report. `enabled` is the effective
+  Branch Setting (Branch Admin > Branch Settings > Technician Settings > Report Printing: the Lab Panel switch when the report's order line is a panel,
+  the Lab Test switch otherwise, read from the branch that holds the report; while
+  it is off every section prints and no checkboxes should show). `isPanelMember`
+  is true for a report on a panel order line (including reports made before the
+  per-member split). `excludedSections` lists the section keys
+  (`useful_for`, `interpretation`, `limitations`, `remarks`, `references`) left out
+  of the printed version. Change it with `PATCH .../note-print-sections`.
 }

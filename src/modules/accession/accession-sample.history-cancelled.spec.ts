@@ -50,6 +50,7 @@ function build(opts: {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   const internals = service as unknown as {
     findById: jest.Mock;
@@ -120,6 +121,31 @@ describe('Sample History of a cancelled order', () => {
       'order-cancelled',
       'send',
     ]);
+  });
+
+  it('keeps a transfer Retrieve row even though it changes no SAMPLE status (from == to)', async () => {
+    // §B.13 transfer undo moves only the TRANSFER status; the sample's own status is
+    // unchanged, so the row is from==to. It must still appear in the trail (it was
+    // being silently dropped before `retrieve` was whitelisted alongside the other
+    // meaningful no-status-change rows: transfer-accept / returned-by-receiver).
+    const m = build({
+      rows: [
+        history({
+          id: 'tr-retrieve',
+          action: 'retrieve',
+          fromStatus: SampleStatus.SENT_INTERNAL,
+          toStatus: SampleStatus.SENT_INTERNAL,
+          createdAt: at(50),
+        }),
+      ],
+      order: null,
+    });
+    const trail = (await m.service.findHistory(
+      's1',
+      't1',
+      'A',
+    )) as unknown as Row[];
+    expect(trail.map((r) => r.action)).toEqual(['retrieve']);
   });
 
   it('still shows when the sample has no other movement at all', async () => {

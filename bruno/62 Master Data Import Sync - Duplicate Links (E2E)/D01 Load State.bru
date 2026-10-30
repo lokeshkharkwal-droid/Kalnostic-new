@@ -1,0 +1,28 @@
+meta {
+  name: D01 Load State
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/master-data/branch
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{branchToken}}
+}
+
+script:pre-request {
+  const s = JSON.parse(require('fs').readFileSync(bru.getEnvVar('e2eStateFile'), 'utf8'));
+  bru.setVar('tenantToken', s.tenantToken);
+  bru.setVar('branchToken', s.branchToken);
+  bru.setVar('tenantMdId', s.tenantMdId);
+  bru.setVar('branchMdId', s.branchMdId);
+  bru.setVar('tenantIds', JSON.stringify(s.tenantIds));
+}
+
+tests {
+  test("200 OK", function () { expect(res.status).to.equal(200); });
+}

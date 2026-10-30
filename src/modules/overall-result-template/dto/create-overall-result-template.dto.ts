@@ -6,7 +6,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { OverallResultTemplateStatus } from '@prisma/client';
-import { NoteMaxLength } from '../../../common/validators/note-max-length.validator';
+import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
 
 /**
  * Body for creating an Overall Result template. `tenantId` is never accepted
@@ -29,7 +29,7 @@ export class CreateOverallResultTemplateDto {
   groupName: string;
 
   @IsString()
-  @NoteMaxLength('Overall Result')
+  @RichTextNote('Overall Result')
   content: string;
 
   @IsEnum(OverallResultTemplateStatus)

@@ -30,7 +30,6 @@ import { ScheduledTestService } from './scheduled-test.service';
 import { MultiStepProcessService } from './multi-step-process.service';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import { LabReportCatalogueOptionsQueryDto } from './dto/lab-report-catalogue-options-query.dto';
-import { TatSummaryQueryDto } from './dto/tat-summary-query.dto';
 import { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 import { ReferenceRangeQueryDto } from './dto/reference-range-query.dto';
 import { ReferenceRangeMethodsQueryDto } from './dto/reference-range-methods-query.dto';
@@ -58,7 +57,9 @@ import {
 } from './dto/notes-attachments.dto';
 import { ApproveReportDto } from './dto/approve-report.dto';
 import { UpdateContentSectionsDto } from './dto/update-content-sections.dto';
+import { UpdateNotePrintSectionsDto } from './dto/update-note-print-sections.dto';
 import { UpdateOverallResultDto } from './dto/update-overall-result.dto';
+import { UpdateParameterNoteDto } from './dto/update-parameter-note.dto';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
@@ -182,28 +183,33 @@ export class LabReportController {
 
   /**
    * TAT analytics summary (SRS §9): counts by band, average net working time
-   * and breach rate over approved reports in a period. Declared before `:id`
-   * routes so `tat` isn't captured as a report id.
+   * and breach rate over the reports the worklist's Approved tab counts. Takes
+   * the same filters as `counts` (`status` is ignored — always Approved) and
+   * the same branch/department scope, so the totals agree. Declared before
+   * `:id` routes so `tat` isn't captured as a report id.
    */
   @Get('tat/summary')
   async getTatSummary(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
-    @Query() query: TatSummaryQueryDto,
+    @Query() query: ListLabReportsDto,
   ) {
-    // A branch other than the caller's own must be one they may reach through the
-    // Technician module (throws BRANCH_NOT_ACCESSIBLE otherwise). Without this the
-    // analytics would aggregate any branch of the tenant.
-    if (query.branchId && query.branchId !== profile.branchId) {
-      await this.branchAccess.resolveScope(
-        tenantId,
-        personId,
-        profile,
-        query.branchId,
-      );
-    }
-    return this.tatService.summary(tenantId, profile.branchId, query);
+    // Same branch resolution as `counts`: an explicit branch (or `all`) must be one
+    // the caller may reach through the Technician module (throws
+    // BRANCH_NOT_ACCESSIBLE otherwise).
+    const scope = await this.branchAccess.resolveScope(
+      tenantId,
+      personId,
+      profile,
+      query.branchId,
+    );
+    return this.labReportService.getTatSummary(
+      tenantId,
+      scope,
+      query,
+      personId,
+    );
   }
 
   @Get()
@@ -563,6 +569,35 @@ export class LabReportController {
   }
 
   /**
+   * Choose which of the five Notes sections are LEFT OUT of this report's
+   * printed version (the checkbox beside each section on the report). The body's
+   * `excludedSections` replaces the stored list; an empty list prints all five.
+   * It only changes the printed and shared PDF, never what the screen shows, and
+   * only counts while the matching Branch Setting (Branch Settings > Technician
+   * Settings > Report Printing: Lab Test / Lab Panel) is on. No permission key by design; the report's write locks still apply
+   * (locked, sent-out and cancelled reports are refused).
+   */
+  @Patch(':id/note-print-sections')
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.UPDATE,
+    description: 'Updated which notes sections print on a lab report',
+  })
+  updateNotePrintSections(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Body() dto: UpdateNotePrintSectionsDto,
+  ) {
+    return this.labReportService.updateNotePrintSections(
+      id,
+      tenantId,
+      profile.branchId,
+      dto,
+    );
+  }
+
+  /**
    * Apply an Overall Result template to ONE result parameter on a report, or
    * edit that parameter's already-applied content — gated by
    * `TechnicianSetting.isOverallResultEditable` (default false). Each
@@ -585,6 +620,35 @@ export class LabReportController {
     @Body() dto: UpdateOverallResultDto,
   ) {
     return this.labReportService.updateOverallResult(
+      id,
+      tenantId,
+      profile.branchId,
+      resultParamId,
+      dto,
+    );
+  }
+
+  /**
+   * Save the technician's own text for ONE result parameter's Note on this report (the Notes icon beside Sync on
+   * Patient Entry / Test Entry). The parameter's configured Note is only the default and is never changed here.
+   * Allowed while the report is Pending, Partial Pending or Saved (409 afterwards, like the result values). No
+   * technician setting gates it. See `UpdateParameterNoteDto`.
+   */
+  @Patch(':id/parameter-note/:resultParamId')
+  @RequirePermission(PERMISSION_KEYS.LAB_EDIT_REPORT)
+  @Audit({
+    module: AuditModule.LAB_REPORT,
+    action: AuditAction.UPDATE,
+    description: "Updated a lab report parameter's note",
+  })
+  updateParameterNote(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+    @Param('resultParamId') resultParamId: string,
+    @Body() dto: UpdateParameterNoteDto,
+  ) {
+    return this.labReportService.updateParameterNote(
       id,
       tenantId,
       profile.branchId,

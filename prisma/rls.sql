@@ -2018,6 +2018,13 @@ CREATE POLICY lab_report_overall_results_tenant_isolation ON lab_report_overall_
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+ALTER TABLE lab_report_parameter_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lab_report_parameter_notes FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lab_report_parameter_notes_tenant_isolation ON lab_report_parameter_notes;
+CREATE POLICY lab_report_parameter_notes_tenant_isolation ON lab_report_parameter_notes
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 ALTER TABLE lab_report_inventory_usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lab_report_inventory_usage FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS lab_report_inventory_usage_tenant_isolation ON lab_report_inventory_usage;
@@ -2169,3 +2176,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS business_channel_overrides_tenant_level_unique
   ON business_channel_overrides (tenant_id, feature, channel) WHERE branch_id IS NULL AND deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS business_channel_overrides_branch_level_unique
   ON business_channel_overrides (tenant_id, branch_id, feature, channel) WHERE branch_id IS NOT NULL AND deleted_at IS NULL;
+
+-- ── master_data_import_jobs ───────────────────────────────────────────────────
+-- Background "Import Master Data" runs. Never global, so plain tenant isolation.
+ALTER TABLE master_data_import_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE master_data_import_jobs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS master_data_import_jobs_tenant_isolation ON master_data_import_jobs;
+CREATE POLICY master_data_import_jobs_tenant_isolation ON master_data_import_jobs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+-- At most one RUNNING import per tenant (imports run one at a time to keep DB load bounded).
+CREATE UNIQUE INDEX IF NOT EXISTS master_data_import_jobs_one_running_per_tenant
+  ON master_data_import_jobs (tenant_id) WHERE status = 'RUNNING';

@@ -36,6 +36,7 @@ describe('OrderSampleService - sent-to / forward-partner / logistics filters', (
       undefined as never,
       undefined as never,
       { resolveDepartmentIds: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
     );
   });
 
@@ -181,6 +182,7 @@ describe('OrderSampleService.withTransferNames - names for the Send details colu
     };
     const svc = new OrderSampleService(
       prisma as never,
+      undefined as never,
       undefined as never,
       undefined as never,
       undefined as never,

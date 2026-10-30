@@ -80,6 +80,15 @@ export class UpdateOrderDto {
   @IsBoolean()
   isBillGenerated?: boolean;
 
+  /**
+   * Patient is pregnant at the time of this order; omit to leave it unchanged.
+   * `true` is only allowed when the patient's gender is FEMALE — otherwise 422
+   * `ORDER_PREGNANCY_REQUIRES_FEMALE`.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isPregnant?: boolean;
+
   @IsOptional()
   @IsString()
   @MaxLength(2048)
@@ -168,4 +177,14 @@ export class UpdateOrderDto {
   @IsInt()
   @Min(0)
   previousDuesCleared?: number;
+
+  /**
+   * Check-In action (Appointments → Create Order → Confirm). When `true` the order
+   * keeps `status = APPOINTMENT` but its linked appointment is advanced to
+   * CHECKED_IN and its accession samples are generated (appointments do not enter
+   * accession until check-in). Transient — not persisted on the order.
+   */
+  @IsOptional()
+  @IsBoolean()
+  checkIn?: boolean;
 }

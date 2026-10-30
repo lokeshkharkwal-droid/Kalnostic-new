@@ -8,6 +8,7 @@ const CHILD_TABLES = [
   'labReportNote',
   'labReportAttachment',
   'labReportOverallResult',
+  'labReportParameterNote',
   'reRunRequest',
   'criticalAlert',
   'outOfRangeFlag',
@@ -162,6 +163,7 @@ describe('LabReportService.isReportUntouched - a report returned for repeat star
   it.each([
     'labReportResultValue',
     'labReportOverallResult',
+    'labReportParameterNote',
     'reRunRequest',
     'criticalAlert',
     'outOfRangeFlag',

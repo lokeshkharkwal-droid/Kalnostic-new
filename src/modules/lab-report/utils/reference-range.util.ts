@@ -126,6 +126,31 @@ export function abnormalFlagStyle(flag: AbnormalFlag): string {
 }
 
 /**
+ * Visual style for a value the technician manually flagged via the Test Entry
+ * "Highlight in Report" control (QUALITATIVE / SEMI_QUANTITATIVE only). Kept
+ * SEPARATE from {@link abnormalFlagStyle} on purpose: out-of-range quantitative
+ * values keep their long-standing bright bold red, while this manual highlight
+ * uses a calmer, more professional clinical treatment — semibold weight with a
+ * deeper, less-saturated red — so a deliberately-emphasised categorical result
+ * reads as a clean highlight rather than an alarm. Shares the `AbnormalFlag`
+ * palette for the non-default options so the one field can drive both.
+ */
+export function reportHighlightStyle(flag: AbnormalFlag): string {
+  switch (flag) {
+    case AbnormalFlag.BOLD_AND_RED:
+      return 'font-weight:600;color:#b91c1c';
+    case AbnormalFlag.BOLD_ONLY:
+      return 'font-weight:600';
+    case AbnormalFlag.ITALIC:
+      return 'font-style:italic';
+    case AbnormalFlag.UNDERLINE:
+      return 'text-decoration:underline';
+    case AbnormalFlag.COLOUR_HIGHLIGHT:
+      return 'background-color:#fde68a;padding:0 2px;border-radius:2px';
+  }
+}
+
+/**
  * Put candidate reference rows in a deterministic order for the technician side:
  * the range that STARTS LATER (the higher Age From) comes first, then the narrower
  * one (the lower Age To). The database returns rows in no guaranteed order, and
