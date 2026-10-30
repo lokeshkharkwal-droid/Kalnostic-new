@@ -160,6 +160,7 @@ import {
   isExactAgeMatch,
   isObservedAbnormal,
   rangeAgeMatch,
+  reportHighlightStyle,
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
@@ -4556,7 +4557,10 @@ export class LabReportService {
         raw.trim() !== ''
       ) {
         return {
-          html: `<span style="${abnormalFlagStyle(highlight.logic ?? AbnormalFlag.BOLD_AND_RED)}">${safe}</span>`,
+          // `reportHighlightStyle` (not `abnormalFlagStyle`): the manual
+          // highlight uses a calmer semibold/deep-red treatment, kept distinct
+          // from the brighter out-of-range abnormal styling above.
+          html: `<span style="${reportHighlightStyle(highlight.logic ?? AbnormalFlag.BOLD_AND_RED)}">${safe}</span>`,
           abnormal: false,
         };
       }

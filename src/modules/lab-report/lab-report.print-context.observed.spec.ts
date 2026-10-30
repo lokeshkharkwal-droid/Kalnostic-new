@@ -206,15 +206,17 @@ describe('buildPrintContext — the result readings a template receives', () => 
     expect(String(row!.observed1)).not.toContain('color:#d32f2f');
   });
 
-  it('a Qualitative result flagged "Highlight in Report" (Bold and Red) is wrapped in bold-red, but stays non-abnormal', async () => {
+  it('a Qualitative result flagged "Highlight in Report" (Bold and Red) is wrapped in the semibold deep-red highlight style, but stays non-abnormal', async () => {
     const [row] = await rowsOf([
       value(QUAL, 'Positive', {
         highlightInReport: true,
         highlightLogic: 'BOLD_AND_RED',
       }),
     ]);
+    // The manual highlight uses the calmer `reportHighlightStyle` (semibold +
+    // deeper red), distinct from the brighter out-of-range `abnormalFlagStyle`.
     expect(row!.observed1).toBe(
-      '<span style="font-weight:bold;color:#d32f2f">Positive</span>',
+      '<span style="font-weight:600;color:#b91c1c">Positive</span>',
     );
     // The styling is a presentation choice, not an out-of-range signal.
     expect(row!.is_observed_1_abnormal).toBe(false);
@@ -229,10 +231,10 @@ describe('buildPrintContext — the result readings a template receives', () => 
       }),
     ]);
     expect(row!.observed1).toBe(
-      '<span style="font-weight:bold;color:#d32f2f">Positive</span>',
+      '<span style="font-weight:600;color:#b91c1c">Positive</span>',
     );
     expect(row!.observed2).toBe(
-      '<span style="font-weight:bold;color:#d32f2f">Reactive</span>',
+      '<span style="font-weight:600;color:#b91c1c">Reactive</span>',
     );
   });
 
