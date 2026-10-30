@@ -8139,6 +8139,12 @@ model PaymentDetails {
   tdsDeduction           Decimal     @default(0) @map("tds_deduction") @db.Decimal(12, 2)
   payableAmount          Decimal     @default(0) @map("payable_amount") @db.Decimal(12, 2)
   paidAmount             Decimal     @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  /// DRAFT (not-yet-collected) amount for an APPOINTMENT booking. An appointment
+  /// is not a bill: the amount entered at creation is remembered here but NOT
+  /// collected (`paidAmount` stays 0, so no collected-money sum, due or report
+  /// counts it) until the appointment is checked in, when it is committed to a
+  /// real collected `paidAmount`. 0 on every ordinary (already-collected) row.
+  draftPaidAmount        Decimal     @default(0) @map("draft_paid_amount") @db.Decimal(12, 2)
   remainingBalance       Decimal     @default(0) @map("remaining_balance") @db.Decimal(12, 2)
   paymentMode            PaymentMode @default(CASH) @map("payment_mode")
   paymentDate            DateTime?   @map("payment_date")
