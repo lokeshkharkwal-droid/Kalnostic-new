@@ -35,7 +35,7 @@ describe('effectiveParameterNoteHtml', () => {
     expect(effectiveParameterNoteHtml(undefined, '   \n ')).toBe('');
   });
 
-  it('passes the technician\'s HTML through untouched (it is rich text, not escaped)', () => {
+  it("passes the technician's HTML through untouched (it is rich text, not escaped)", () => {
     const html = '<ul><li>one</li><li><strong>two</strong></li></ul>';
     expect(effectiveParameterNoteHtml(html, 'ignored')).toBe(html);
   });

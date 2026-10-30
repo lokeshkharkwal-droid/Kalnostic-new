@@ -7374,6 +7374,18 @@ model LabReport {
   /// is decided at order-creation time and not expected to change afterward.
   isOutsourced Boolean @default(false) @map("is_outsourced")
 
+  /// Superset "Outsource" signal for the Technician Reporting worklist's
+  /// standalone Outsource checkbox (distinct from the ALL/IN_HOUSE/OUTSOURCE
+  /// source pill, which stays on `isOutsourced`). True when this report is
+  /// outsourced-out (same as `isOutsourced`, stamped at creation) OR its sample
+  /// reached ACCEPTED through a cross-branch/external transfer: the INTERNAL
+  /// clone created at the receiving branch, or the sender's own report once an
+  /// EXTERNAL/OUTSOURCE transfer is accepted. Stamped at accept time (not at
+  /// send) so a sample only counts as referral work once the receiving/outside
+  /// party has taken it. A plain indexed column so the checkbox filter stays a
+  /// simple equality and never has to join through OrderSample/SampleTransfer.
+  isReferral Boolean @default(false) @map("is_referral")
+
   resultValues     LabReportResultValue[]
   overallResults   LabReportOverallResult[]
   parameterNotes   LabReportParameterNote[]
@@ -7408,6 +7420,7 @@ model LabReport {
   @@index([memberBranchLabTestId])
   @@index([performingBranchLabTestId])
   @@index([isOutsourced])
+  @@index([isReferral])
   @@index([tatBand])
   @@index([deletedAt])
   @@map("lab_reports")
