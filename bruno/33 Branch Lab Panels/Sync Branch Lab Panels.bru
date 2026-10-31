@@ -28,26 +28,36 @@ tests {
   test("201/200", function () {
     expect([200, 201]).to.include(res.getStatus());
   });
-  test("reports synced/skipped", function () {
+  test("reports created/updated/deleted/failed", function () {
     const data = res.getBody() && res.getBody().data;
-    expect(data).to.have.property("synced");
-    expect(data).to.have.property("skipped");
+    expect(data).to.have.property("created");
+    expect(data).to.have.property("updated");
+    expect(data).to.have.property("deleted");
+    expect(data).to.have.property("failed");
   });
 }
 
 docs {
-  Re-snapshot branch lab panels from their source Master Data panels, scoped
-  to one pricing list. Send `{}` to sync **all** copies in the target list, or
-  add `"branchLabPanelIds": ["<id>", ...]` for a subset.
+  **Reconcile** a branch's Lab Panel List against its Branch Master Data so the
+  list is an accurate reflection of it, scoped to one pricing list. Send `{}` for a
+  full reconcile, or add `"branchLabPanelIds": ["<id>", ...]` to restrict
+  update/delete to a subset (a subset run never adds).
 
-  `listId` (optional) targets a specific `BranchLabPanelList` — must belong to
-  the caller's branch (404 `BRANCH_LAB_PANEL_LIST_NOT_FOUND` otherwise). Omit
-  it to sync the branch's default **Walk-in** panel list, which is always
-  ensured to exist first regardless of which list `listId` targets. Member
+  `listId` (optional) targets a specific `BranchLabPanelList` — must belong to the
+  caller's branch (404 `BRANCH_LAB_PANEL_LIST_NOT_FOUND` otherwise). Omit it to
+  sync the branch's default **Walk-in** panel list, always ensured first. Member
   tests are always rebuilt into the Walk-in **test** list, same as import.
 
-  **Overwrite semantics:** each copy's parent fields are replaced and its member
-  composition (`BranchLabPanelTest`) is **rebuilt** from the source (materializing
-  any missing member-test copies). Branch-level edits are discarded. Copies whose
-  source is gone are skipped → `{ synced, skipped }`.
+  **Reconcile semantics** (Master Data is the source of truth):
+  - **UPDATE** — an existing imported original is re-snapshotted and its member
+    composition (`BranchLabPanelTest`) rebuilt from the source.
+  - **DELETE** — an imported original whose source no longer exists in Master Data
+    is soft-deleted (joins retired; a sibling promoted to default if needed).
+
+  Sync does **not** ADD — adding is "Import from Master Data" (so `created` is
+  always 0). User duplicates are never touched. Writes commit in batches and a
+  failing batch is counted and skipped → `{ created, updated, deleted, failed }`.
+
+  This is the synchronous endpoint (also the FE's fallback). For live progress use
+  the background job: `POST /branch-lab-panels/sync/jobs` (see "Start Sync Job").
 }

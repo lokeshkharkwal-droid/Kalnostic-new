@@ -30,7 +30,7 @@ import {
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantTime,
-  patientSingleUnitAgeDisplay,
+  patientPrintAgeDisplay,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { AppointmentService } from '../appointment/appointment.service';
@@ -2246,12 +2246,12 @@ export class OrderSampleService {
             .filter(Boolean)
             .join(' ')
         : '',
-      // Single-unit age ("25 Years" / "6 Months" / "15 Days") from DOB, unit
-      // picked by the registration Age Type rule; stored age/ageType when DOB
-      // is unknown. Labels deliberately skip the full "Y Years, M Months,
-      // D Days" breakdown the order documents print. `now` is the branch-local
-      // date so the age doesn't lag a day between local and UTC midnight.
-      patient_age: patientSingleUnitAgeDisplay(
+      // Single leading-unit age ("25 Years" / "6 Months" / "15 Days") via the
+      // shared `patientPrintAgeDisplay` rule (Years ≥12 months, Months 1–11
+      // months, Days under a month) — identical to the bill/TRF/report tag;
+      // stored age/ageType when DOB is unknown. `now` is the branch-local date
+      // so the age doesn't lag a day between local and UTC midnight.
+      patient_age: patientPrintAgeDisplay(
         patient?.dateOfBirth ?? null,
         patient?.age ?? null,
         patient?.ageType ?? null,

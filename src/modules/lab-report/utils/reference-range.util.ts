@@ -122,6 +122,12 @@ export function abnormalFlagStyle(flag: AbnormalFlag): string {
       return 'text-decoration:underline';
     case AbnormalFlag.COLOUR_HIGHLIGHT:
       return 'background-color:#fff176';
+    case AbnormalFlag.ITALIC_AND_RED:
+      return 'font-style:italic;color:#d32f2f';
+    case AbnormalFlag.BOLD_AND_ITALIC:
+      return 'font-weight:bold;font-style:italic';
+    case AbnormalFlag.BOLD_ITALIC_AND_RED:
+      return 'font-weight:bold;font-style:italic;color:#d32f2f';
   }
 }
 
@@ -147,6 +153,12 @@ export function reportHighlightStyle(flag: AbnormalFlag): string {
       return 'text-decoration:underline';
     case AbnormalFlag.COLOUR_HIGHLIGHT:
       return 'background-color:#fde68a;padding:0 2px;border-radius:2px';
+    case AbnormalFlag.ITALIC_AND_RED:
+      return 'font-style:italic;color:#b91c1c';
+    case AbnormalFlag.BOLD_AND_ITALIC:
+      return 'font-weight:600;font-style:italic';
+    case AbnormalFlag.BOLD_ITALIC_AND_RED:
+      return 'font-weight:600;font-style:italic;color:#b91c1c';
   }
 }
 

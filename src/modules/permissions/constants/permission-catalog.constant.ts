@@ -1,7 +1,7 @@
 /**
  * The full catalogue of fine-grained permissions in the system, grouped for
  * display in the permission-override UI. `code` is the stable identifier used
- * in `PROFILE_PERMISSIONS` and in `user_profile_permission_overrides`.
+ * in `PROFILE_PERMISSIONS` and in `user_profile_permission_overrides `.
  */
 export interface PermissionCatalogEntry {
   code: string;

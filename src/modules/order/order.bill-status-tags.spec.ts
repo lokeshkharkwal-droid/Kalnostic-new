@@ -64,6 +64,7 @@ describe('OrderService — bill status print tags', () => {
     paymentStatus?: PaymentStatus;
     net?: number;
     cancellationCharge?: number;
+    items?: Array<{ unitPrice: number; discount: number; direct: string }>;
     payments: Array<Record<string, unknown>>;
   }) => {
     const payments = overrides.payments;
@@ -77,7 +78,7 @@ describe('OrderService — bill status print tags', () => {
       orderTime: null,
       createdAt: new Date('2026-09-24T06:00:00.000Z'),
       createdBy: null,
-      items: [
+      items: overrides.items ?? [
         { unitPrice: 600, discount: 0, direct: 'Test A' },
         { unitPrice: 400, discount: 0, direct: 'Test B' },
       ],
@@ -147,6 +148,22 @@ describe('OrderService — bill status print tags', () => {
         order({
           paymentStatus: PaymentStatus.PAID,
           payments: [paymentRow(400, { net: 1000 }), paymentRow(600)],
+        }),
+      ),
+    ).toBe('Paid');
+  });
+
+  it('reads Paid for a zero-value order (all items ₹0, nothing collected)', async () => {
+    // Net ₹0 + paid ₹0 is settled: the bill must print "Paid", never "Not Paid".
+    expect(
+      await statusTags(
+        order({
+          net: 0,
+          items: [
+            { unitPrice: 0, discount: 0, direct: 'Free Test A' },
+            { unitPrice: 0, discount: 0, direct: 'Free Test B' },
+          ],
+          payments: [paymentRow(0, { net: 0 })],
         }),
       ),
     ).toBe('Paid');

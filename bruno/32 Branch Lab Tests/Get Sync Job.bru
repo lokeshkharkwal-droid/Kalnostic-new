@@ -1,0 +1,32 @@
+meta {
+  name: Get Sync Job
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/sync/jobs/{{branchLabTestSyncJobId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200", function () {
+    expect(res.getStatus()).to.equal(200);
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("status");
+    expect(data).to.have.property("progress");
+  });
+}
+
+docs {
+  Poll one Lab Test List sync job of the active branch: live `progress` (phase,
+  per-batch table, counts) while RUNNING, then `result`
+  (`{ created, updated, deleted, failed }`) once SUCCEEDED, or `error` if
+  FAILED/INTERRUPTED. `404 BRANCH_LIST_SYNC_JOB_NOT_FOUND` if the id isn't this
+  tenant's + branch's job. Set `branchLabTestSyncJobId` via "Start Sync Job".
+}

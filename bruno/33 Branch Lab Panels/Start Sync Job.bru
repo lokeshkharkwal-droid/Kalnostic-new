@@ -1,0 +1,56 @@
+meta {
+  name: Start Sync Job
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-panels/sync/jobs
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "listId": "{{branchLabPanelListId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("branchLabPanelSyncJobId", data.id);
+}
+
+tests {
+  test("202 Accepted, job RUNNING", function () {
+    expect(res.getStatus()).to.equal(202);
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("id");
+    expect(data.kind).to.equal("LAB_PANEL");
+    expect(data.status).to.equal("RUNNING");
+  });
+}
+
+docs {
+  Start a **background "Sync from Master Data"** job for the active branch's Lab
+  Panel List and return `202` with the job; poll
+  `GET /branch-lab-panels/sync/jobs/:jobId` ("Get Sync Job") for live progress
+  (update + delete in batches — adding is "Import from Master Data") and the result.
+
+  Body: `listId` (optional) picks the pricing list — omit for the branch's Walk-in
+  panel list. The tenant + active branch come from the JWT.
+
+  Same reconcile as the synchronous `POST /branch-lab-panels/sync` (rebuilds member
+  composition on add/update), run as a NON-ATOMIC job (commits per batch; a failing
+  batch is counted and skipped). `409 BRANCH_LIST_SYNC_ALREADY_RUNNING` if a
+  panel-list sync is already running for this branch (a test-list sync may run
+  alongside it). Result once SUCCEEDED: `{ created, updated, deleted, failed }`.
+}

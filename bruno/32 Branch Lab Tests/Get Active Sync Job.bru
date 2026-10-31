@@ -1,0 +1,27 @@
+meta {
+  name: Get Active Sync Job
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-tests/sync/jobs/active
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  The active branch's **running** Lab Test List sync job, or `null` if none is
+  running. Lets a reopened page (another tab / a reload) re-attach to a sync
+  already in progress. The tenant + active branch come from the JWT.
+}

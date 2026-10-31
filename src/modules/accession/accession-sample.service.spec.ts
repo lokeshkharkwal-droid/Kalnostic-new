@@ -391,8 +391,9 @@ describe('OrderSampleService — reconcileForOrderInTx (remove path)', () => {
 /**
  * `{patient_age}` on sample labels (`order_label_print` /
  * `multiple_order_label_print`, both built by the private `buildLabelVariables`)
- * is a single-unit age from DOB — not the full "Y Years, M Months, D Days"
- * breakdown the order documents print.
+ * uses the one shared `patientPrintAgeDisplay` rule (Years at ≥12 months, Months
+ * at 1–11 months, Days under a month) — the same single leading-unit age the
+ * bill, TRF and lab report print.
  */
 describe('OrderSampleService — label variables', () => {
   const service = new OrderSampleService(
@@ -464,8 +465,10 @@ describe('OrderSampleService — label variables', () => {
   });
 
   it('counts the age up to the branch-local date, not the UTC date', () => {
-    // 31 days to the IST date (the 25th); the UTC date would give 30.
-    expect(labelAge('2026-08-25')).toBe('31 Days');
+    // Branch-local date is the 25th: 2026-08-25 → 2026-09-25 is exactly one
+    // completed calendar month → "1 Month". The UTC date (the 24th) would be
+    // 30 days / 0 completed months → "30 Days", so the branch-local count wins.
+    expect(labelAge('2026-08-25')).toBe('1 Month');
   });
 
   it('falls back to the age snapshot without a DOB', () => {
