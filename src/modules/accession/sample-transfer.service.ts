@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { timestampRange } from '../../common/utils/date-range.util';
+import {
+  dateOnlyRange,
+  timestampRange,
+} from '../../common/utils/date-range.util';
 import {
   AccessionGroupingMode,
   AuditAction,
@@ -50,6 +53,27 @@ import {
   SampleTransferWithFlag,
 } from './entities/sample-transfer.entity';
 import { barcodeGroupKey } from './utils/barcode-group-key';
+import { buildSampleFilterConditions } from './utils/sample-filters.util';
+import { resolveAsyncSampleFilters } from './utils/sample-filter-resolvers.util';
+import { escapeLike } from './utils/like-escape.util';
+import {
+  TRANSFER_PICKUP_ACTION,
+  TRANSFER_RECEIVE_ACTION,
+  TRANSFER_STEP_ACTIONS,
+  buildTransferTimeline,
+  inWindow,
+  transferWindow,
+  type TransferTimelineEntry,
+} from './utils/transfer-timeline.util';
+import {
+  isDerivedTransferSort,
+  sortIdsByLabel,
+  transferOrderBy,
+} from './utils/transfer-sort.util';
+import type {
+  DerivedTransferSortKey,
+  SortDirection,
+} from './utils/transfer-sort.util';
 import {
   HIDDEN_FROM_RECEIVER_WHERE,
   isHiddenFromReceiver,
@@ -1259,6 +1283,7 @@ export class SampleTransferService {
       tenantId,
       deletedAt: null,
     };
+    const and: Prisma.SampleTransferWhereInput[] = [];
     if (query.kind) where.kind = query.kind;
     if (query.status) where.transferStatus = query.status;
     if (query.logisticsType) where.logisticsType = query.logisticsType;
@@ -1270,23 +1295,45 @@ export class SampleTransferService {
       // In-Transit with no logistics type: how it travels is not decided yet. It
       // appears once the sender sets one (see receiver-visibility.util). The sender's
       // own (outgoing) view is unchanged.
-      where.AND = [{ NOT: HIDDEN_FROM_RECEIVER_WHERE }];
+      and.push({ NOT: HIDDEN_FROM_RECEIVER_WHERE });
     }
     // A day-only `dateTo` covers that whole day (see `timestampRange`).
     const sendDateRange = timestampRange(query.dateFrom, query.dateTo);
     if (sendDateRange) where.sendDate = sendDateRange;
-    // Filters on the linked sample + its order (accession search, referral refs).
-    const sample: Prisma.OrderSampleWhereInput = {};
-    if (query.search) {
-      sample.accessionNo = { contains: query.search, mode: 'insensitive' };
+
+    // Filters about the transfer itself: where it came from / went, how it travelled.
+    // Each is its own AND entry so it never clobbers the direction scope above.
+    if (query.originBranchId)
+      and.push({ originBranchId: query.originBranchId });
+    if (query.destinationBranchId) {
+      and.push({ destinationBranchId: query.destinationBranchId });
     }
-    const order: Prisma.OrderWhereInput = {};
-    if (query.referredByDoctorId) {
-      order.referredByDoctorId = query.referredByDoctorId;
+    if (query.outsourceCenterId) {
+      and.push({ outsourceCenterId: query.outsourceCenterId });
     }
-    if (query.referralPanelId) order.referralPanelId = query.referralPanelId;
-    if (Object.keys(order).length > 0) sample.order = { is: order };
-    if (Object.keys(sample).length > 0) where.sample = { is: sample };
+    const contains = (text: string) => ({
+      contains: escapeLike(text),
+      mode: 'insensitive' as const,
+    });
+    const partner = query.externalPartnerName?.trim();
+    if (partner) and.push({ externalPartnerName: contains(partner) });
+    const person = query.logisticsPerson?.trim();
+    if (person) and.push({ logisticsPerson: contains(person) });
+    const form = query.sampleForm?.trim();
+    if (form) and.push({ sampleForm: contains(form) });
+
+    // Filters about the linked sample + its order: the SAME builder the In-House list
+    // uses, so a filter means the same on every screen. The transfer-level ones above
+    // are deliberately not passed to it (it would look at the sample's OTHER transfers).
+    const sampleWhere = await this.sampleFiltersFor(tenantId, query, {
+      deletedAt: null,
+      ...(query.kind ? { kind: query.kind } : {}),
+      ...(query.direction === 'outgoing'
+        ? { originBranchId: branchId }
+        : { destinationBranchId: branchId }),
+    });
+    if (sampleWhere) where.sample = { is: sampleWhere };
+    if (and.length > 0) where.AND = and;
 
     // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
     // both queries — array-form bypasses the per-op RLS extension and returns
@@ -1302,14 +1349,37 @@ export class SampleTransferService {
       const mode =
         tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
 
-      const rows = await tx.sampleTransfer.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: TRANSFER_INCLUDE,
-      });
-      const count = await tx.sampleTransfer.count({ where });
+      const dir = query.sortOrder ?? 'asc';
+      const skip = (page - 1) * limit;
+      let rows: SampleTransferWithRelations[];
+      let count: number;
+      if (isDerivedTransferSort(query.sortBy)) {
+        // The name to sort by is not on the row: sort every matching id first, then load the page.
+        const ids = await this.sortedTransferIds(
+          tx,
+          tenantId,
+          where,
+          query.sortBy,
+          dir,
+        );
+        const pageIds = ids.slice(skip, skip + limit);
+        const found = await tx.sampleTransfer.findMany({
+          where: { id: { in: pageIds } },
+          include: TRANSFER_INCLUDE,
+        });
+        const byId = new Map(found.map((t) => [t.id, t]));
+        rows = pageIds.flatMap((id) => byId.get(id) ?? []);
+        count = ids.length;
+      } else {
+        rows = await tx.sampleTransfer.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: transferOrderBy(query.sortBy, dir),
+          include: TRANSFER_INCLUDE,
+        });
+        count = await tx.sampleTransfer.count({ where });
+      }
       const deptRows = await this.withDepartmentLabels(tx, tenantId, rows);
       const centerRows = await this.withOutsourceCenterNames(
         tx,
@@ -1324,6 +1394,275 @@ export class SampleTransferService {
   }
 
   /**
+   * Ids of every transfer matching `where`, sorted by a name the row only holds as an id (its
+   * department, origin / destination branch or outsource center). Prisma cannot order by a name that
+   * lives in another table without a relation, so the ids and the one column are read, the names
+   * resolved in one lookup, and the ids sorted alphabetically (see `sortIdsByLabel`). The same
+   * pattern as the Lab Test list's sort by child count.
+   */
+  private async sortedTransferIds(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    where: Prisma.SampleTransferWhereInput,
+    key: DerivedTransferSortKey,
+    dir: SortDirection,
+  ): Promise<string[]> {
+    const newestFirst: Prisma.SampleTransferOrderByWithRelationInput[] = [
+      { createdAt: 'desc' },
+      { id: 'desc' },
+    ];
+    if (key === 'department') {
+      const rows = await tx.sampleTransfer.findMany({
+        where,
+        orderBy: newestFirst,
+        select: {
+          id: true,
+          sample: {
+            select: {
+              tests: {
+                where: { deletedAt: null },
+                select: {
+                  orderItem: {
+                    select: {
+                      branchLabTest: { select: { departmentId: true } },
+                      branchLabPanel: { select: { departmentId: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      const deptIdsOf = (r: (typeof rows)[number]): string[] =>
+        r.sample.tests
+          .map(
+            (t) =>
+              t.orderItem?.branchLabTest?.departmentId ??
+              t.orderItem?.branchLabPanel?.departmentId ??
+              null,
+          )
+          .filter((v): v is string => !!v);
+      const deptIds = [...new Set(rows.flatMap(deptIdsOf))];
+      const nameById = new Map<string, string>();
+      if (deptIds.length > 0) {
+        const depts = await tx.department.findMany({
+          where: { id: { in: deptIds }, tenantId, deletedAt: null },
+          select: { id: true, name: true },
+        });
+        depts.forEach((d) => nameById.set(d.id, d.name));
+      }
+      return sortIdsByLabel(
+        rows.map((r) => {
+          // the same text the Department column shows
+          const names = [
+            ...new Set(
+              deptIdsOf(r)
+                .map((id) => nameById.get(id))
+                .filter((v): v is string => !!v),
+            ),
+          ];
+          return {
+            id: r.id,
+            label: names.length > 0 ? names.join(', ') : null,
+          };
+        }),
+        dir,
+      );
+    }
+
+    // origin / destination branch or outsource center: one id column on the transfer
+    const rows = await tx.sampleTransfer.findMany({
+      where,
+      orderBy: newestFirst,
+      select: {
+        id: true,
+        originBranchId: true,
+        destinationBranchId: true,
+        outsourceCenterId: true,
+      },
+    });
+    const refOf = (r: (typeof rows)[number]): string | null =>
+      key === 'originBranch'
+        ? r.originBranchId
+        : key === 'destinationBranch'
+          ? r.destinationBranchId
+          : r.outsourceCenterId;
+    const refIds = [
+      ...new Set(rows.map(refOf).filter((v): v is string => !!v)),
+    ];
+    const nameById = new Map<string, string>();
+    if (refIds.length > 0) {
+      // no deletedAt filter: a since-deactivated branch / center keeps its name
+      const named =
+        key === 'outsourceCenter'
+          ? await tx.outsourceCenter.findMany({
+              where: { id: { in: refIds }, tenantId },
+              select: { id: true, name: true },
+            })
+          : await tx.branch.findMany({
+              where: { id: { in: refIds }, tenantId },
+              select: { id: true, name: true },
+            });
+      named.forEach((n) => nameById.set(n.id, n.name));
+    }
+    return sortIdsByLabel(
+      rows.map((r) => {
+        const ref = refOf(r);
+        return { id: r.id, label: ref ? (nameById.get(ref) ?? null) : null };
+      }),
+      dir,
+    );
+  }
+
+  /**
+   * The conditions on a transfer's linked sample and its order that the queue filters
+   * ask for (search, order type / date / branch, report / order / collection status,
+   * category, sample name / type, container, billed by, urgent, home visit, referral).
+   * They go through `buildSampleFilterConditions`, the builder of the In-House list.
+   * Report / order status and category need an extra query first; the reports and
+   * orders read are limited to samples with a transfer in this queue (`transferScope`).
+   * @returns the sample condition, or null when no such filter was asked for
+   */
+  private async sampleFiltersFor(
+    tenantId: string,
+    query: ListTransfersDto,
+    transferScope: Prisma.SampleTransferWhereInput,
+  ): Promise<Prisma.OrderSampleWhereInput | null> {
+    const resolved = await resolveAsyncSampleFilters(
+      this.prisma,
+      tenantId,
+      query,
+      { tenantId, deletedAt: null, transfers: { some: transferScope } },
+    );
+    const { sample, order, and } = buildSampleFilterConditions(
+      {
+        search: query.search,
+        referredByDoctorId: query.referredByDoctorId,
+        referralPanelId: query.referralPanelId,
+        departmentId: query.departmentId,
+        branchLabTestId: query.branchLabTestId,
+        branchLabPanelId: query.branchLabPanelId,
+        collectionStatus: query.collectionStatus,
+        isUrgent: query.isUrgent,
+        isHomeCollection: query.isHomeVisit,
+        orderType: query.orderType,
+        createdByUserId: query.createdByUserId,
+        containerTypes: query.containerTypes,
+        sampleNames: query.sampleNames,
+        sampleNameNotSet: query.sampleNameNotSet,
+        sampleTypes: query.sampleTypes,
+        sampleTypeNotSet: query.sampleTypeNotSet,
+      },
+      // Only read for the TAT band filter, which these queues do not have.
+      { warningMinutes: 0, criticalMinutes: 0, breachedMinutes: 0 },
+      Date.now(),
+      resolved,
+    );
+    // `orders.order_date` is a date-only column, so both ends are plain inclusive days.
+    const orderDate = dateOnlyRange(query.orderDateFrom, query.orderDateTo);
+    if (orderDate) order.orderDate = orderDate;
+    if (query.orderBranchId) order.branchId = query.orderBranchId;
+
+    const where: Prisma.OrderSampleWhereInput = { ...sample };
+    if (Object.keys(order).length > 0) where.order = { is: order };
+    if (and.length > 0) where.AND = and;
+    return Object.keys(where).length > 0 ? where : null;
+  }
+
+  /**
+   * The Internal Referral timeline of ONE transfer: the sender's story, the receiving branch's steps
+   * (picked up, received) and the receiving branch's own copy (accepted, ...) merged into one list,
+   * oldest first, each entry labelled with the branch it happened at and who did it. Read-only.
+   * The sender's story stops where the NEXT transfer of the same sample starts (a sample sent to B and
+   * later to C has two chapters). Transfers made before the steps were recorded have no step entries.
+   * @throws SampleTransferNotFoundException when the transfer is missing or not this branch's
+   */
+  async findTransferTimeline(
+    transferId: string,
+    tenantId: string,
+    actingBranchId: string | null,
+  ): Promise<TransferTimelineEntry[]> {
+    const transfer = await this.findTransferById(
+      transferId,
+      tenantId,
+      actingBranchId,
+    );
+    const siblings = await this.prisma.sampleTransfer.findMany({
+      where: { tenantId, sampleId: transfer.sampleId, deletedAt: null },
+      select: { createdAt: true },
+    });
+    const window = transferWindow(
+      transfer.createdAt,
+      siblings.map((s) => s.createdAt),
+    );
+
+    const senderAll = await this.samples.findHistory(
+      transfer.sampleId,
+      tenantId,
+      actingBranchId,
+    );
+    const sender = senderAll.filter(
+      (r) =>
+        window.end === null || r.createdAt.getTime() < window.end.getTime(),
+    );
+    const stepRows = await this.prisma.orderSampleStatusHistory.findMany({
+      where: {
+        tenantId,
+        sampleId: transfer.sampleId,
+        deletedAt: null,
+        action: { in: [...TRANSFER_STEP_ACTIONS] },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const steps = await this.samples.enrichHistoryActors(
+      stepRows.filter((r) => inWindow(r.createdAt, window)),
+      tenantId,
+      actingBranchId,
+    );
+    let receiver: Awaited<ReturnType<OrderSampleService['findHistory']>> = [];
+    if (transfer.clonedSampleId) {
+      try {
+        receiver = await this.samples.findHistory(
+          transfer.clonedSampleId,
+          tenantId,
+          actingBranchId,
+        );
+      } catch (e) {
+        // the copy may be out of this branch's sight; the rest of the story still stands
+        if (!(e instanceof OrderSampleNotFoundException)) throw e;
+      }
+    }
+
+    const branchIds = [
+      ...new Set(
+        [
+          transfer.originBranchId,
+          transfer.destinationBranchId,
+          ...sender.map((r) => r.branchId),
+          ...steps.map((r) => r.branchId),
+          ...receiver.map((r) => r.branchId),
+        ].filter((id): id is string => !!id),
+      ),
+    ];
+    const branches =
+      branchIds.length > 0
+        ? await this.prisma.branch.findMany({
+            where: { id: { in: branchIds }, tenantId },
+            select: { id: true, name: true },
+          })
+        : [];
+    return buildTransferTimeline({
+      sender,
+      steps,
+      receiver,
+      senderOrigin: transfer.originBranchId,
+      receiverDestination: transfer.destinationBranchId,
+      branchName: new Map(branches.map((b) => [b.id, b.name])),
+    });
+  }
+
+  /**
    * Attach each row's sample `departmentLabel` (the Department column). Batched
    * variant of `OrderSampleService.withDepartments`: the classification lives on
    * `BranchLabTest`/`BranchLabPanel` as a logical `departmentId` (no Prisma
@@ -1333,6 +1672,7 @@ export class SampleTransferService {
    * @param tenantId tenant scope for the Department lookup
    * @param rows the page of transfers (TRANSFER_INCLUDE payload)
    * @returns the rows with `sample.departmentLabel` = distinct names joined with ", " (null when none)
+   *   and `sample.departmentNames` = the same names as a list
    */
   private async withDepartmentLabels(
     tx: Prisma.TransactionClient,
@@ -1372,6 +1712,7 @@ export class SampleTransferService {
         sample: {
           ...row.sample,
           departmentLabel: names.length > 0 ? names.join(', ') : null,
+          departmentNames: names,
         },
       };
     });
@@ -2001,6 +2342,9 @@ export class SampleTransferService {
               throw e;
             }
           }
+          // What this step records on the transfer (built once: the same values feed the
+          // update below and the timeline note).
+          const stepData = build();
           // Conditional on the status we validated: a concurrent Retrieve /
           // action that already moved the transfer makes this a no-op → refuse
           // instead of overwriting it.
@@ -2011,7 +2355,7 @@ export class SampleTransferService {
               transferStatus: transfer.transferStatus,
             },
             data: {
-              ...build(),
+              ...stepData,
               transferStatus: to,
               // Link the transfer to the clone it just created so a later recall
               // (Retrieve) can unwind the clone (§A.10.19).
@@ -2028,6 +2372,41 @@ export class SampleTransferService {
               action,
               transfer.transferStatus,
             );
+          }
+          // The receiving branch's Pick Up / Receive of an INTERNAL transfer leaves a row on the
+          // sender's sample (who, when, at which branch) - the transfer itself keeps only the time,
+          // and the Internal Referral timeline needs the person. It changes no status (from == to) and
+          // the sender's own history does not list it.
+          if (
+            transfer.kind === TransferKind.INTERNAL &&
+            (action === 'pick-up' || action === 'receive')
+          ) {
+            const sample = await tx.orderSample.findFirst({
+              where: { id: transfer.sampleId, tenantId },
+              select: { status: true },
+            });
+            if (sample) {
+              await tx.orderSampleStatusHistory.create({
+                data: {
+                  tenantId,
+                  branchId: actingBranchId,
+                  sampleId: transfer.sampleId,
+                  action:
+                    action === 'pick-up'
+                      ? TRANSFER_PICKUP_ACTION
+                      : TRANSFER_RECEIVE_ACTION,
+                  fromStatus: sample.status,
+                  toStatus: sample.status,
+                  // Pick Up: who carried it; Receive: the condition it arrived in.
+                  notes: plainText(
+                    action === 'pick-up'
+                      ? stepData.pickedUpBy
+                      : stepData.receiveCondition,
+                  ),
+                  changedBy: personId,
+                },
+              });
+            }
           }
           done.push(transfer.id);
         }
@@ -2262,4 +2641,9 @@ export class SampleTransferService {
       throw new AccessionNumberConflictException('');
     }
   }
+}
+
+/** A Prisma update input holds plain text or an operation object; the timeline note wants the text. */
+function plainText(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() !== '' ? v : null;
 }

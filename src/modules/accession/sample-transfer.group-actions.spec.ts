@@ -65,6 +65,8 @@ function group(
     },
     // the "test removed from the order" probe: no removed test
     orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
+    // the step row a pick up / receive leaves on the sender's sample
+    orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
     withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) => fn(tx)),

@@ -14,7 +14,7 @@ params:query {
   page: 1
   ~status: NEW
   ~collectionStatus: PENDING
-  ~search: ACC-00001
+  ~search: ORD-00717
   ~tatStatus: WITHIN
   ~dateFrom: 2026-07-01
   ~dateTo: 2026-07-31
@@ -60,6 +60,8 @@ docs {
   - `DEPARTMENT` (Department-wise) — one final group per Order + Department.
   - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — one per
     Order + Department + Sample (default).
+
+  Each sample item carries `matchedTransfer` while a transfer filter is on (see `01 List Samples`).
 
   Supports the same filters as `01 List Samples`, including `collectionStatus`
   (`PENDING` | `PARTIAL` | `COLLECTED`) — order-level collection progress derived

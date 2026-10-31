@@ -84,6 +84,9 @@ function matchKey(name: string): string {
     .trim();
 }
 
+/** The same key, for code outside this file that groups spelling variants of a sample name / type. */
+export { matchKey as sampleNameMatchKey };
+
 const STANDARD_SET: ReadonlySet<string> = new Set(STANDARD_SAMPLE_NAMES);
 
 /**

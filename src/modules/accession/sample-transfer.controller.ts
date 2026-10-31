@@ -287,6 +287,20 @@ export class SampleTransferController {
    * Fetch one transfer (with sample + order context). Limited to the branches with
    * a stake in it (404 otherwise); a tenant-wide caller is not limited.
    */
+  /**
+   * The Internal Referral timeline of one transfer: the sender's story, the receiving branch's steps
+   * (picked up, received) and its own copy (accepted ...) merged oldest first, each entry labelled by
+   * branch and actor. Read-only; the transfer must be this branch's (sent or received).
+   */
+  @Get('transfers/:id/history')
+  findTransferTimeline(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.transfers.findTransferTimeline(id, tenantId, profile.branchId);
+  }
+
   @Get('transfers/:id')
   findTransfer(
     @CurrentTenant() tenantId: string,

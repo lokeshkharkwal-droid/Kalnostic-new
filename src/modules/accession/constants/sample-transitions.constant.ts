@@ -210,6 +210,20 @@ export const FORCE_TARGET: Partial<Record<SampleAction, SampleStatus>> = {
 };
 
 /**
+ * The statuses a sample is in while it lives at another branch / partner / center
+ * via an open transfer (Send/Forward/Outsource). A local action that moves a sample
+ * OUT of one of these (Retrieve / Repeat) is a "recall": its outstanding
+ * transfer(s) — and, for an accepted internal transfer, the clone materialised in
+ * the receiving branch — must be unwound so no stale record is left cross-branch.
+ * Also read by the list filters (`utils/sample-filters.util.ts`).
+ */
+export const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
+  SampleStatus.SENT_INTERNAL,
+  SampleStatus.FORWARD_EXTERNAL,
+  SampleStatus.OUTSOURCED,
+]);
+
+/**
  * Resolve the target status for an action from a given current status, or `null`
  * when the action is not legal from that status (per §A.9).
  * @param action the action being applied
