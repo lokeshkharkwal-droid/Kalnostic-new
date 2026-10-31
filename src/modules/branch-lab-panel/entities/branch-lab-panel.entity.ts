@@ -32,11 +32,14 @@ export interface BranchLabPanelImportResult {
 }
 
 /**
- * Result of a sync: how many copies were re-snapshotted, how many were soft-deleted
- * because their source no longer exists, and how many were skipped (no source ref).
+ * Result of a sync (reconcile against Master Data): how many copies were newly
+ * added, re-snapshotted (updated), soft-deleted (their source no longer exists in
+ * Master Data), and how many items belonged to a batch that failed and was skipped
+ * so the rest of the sync could continue (partial-failure tolerant).
  */
 export interface BranchLabPanelSyncResult {
-  synced: number;
+  created: number;
+  updated: number;
   deleted: number;
-  skipped: number;
+  failed: number;
 }
