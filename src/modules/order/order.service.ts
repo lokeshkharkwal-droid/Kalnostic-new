@@ -6967,6 +6967,15 @@ export class OrderService {
     if (!item) {
       throw new OrderItemNotFoundException(orderId, itemId);
     }
+    // Department restriction: a user may collect only samples in their department
+    // scope (or unassigned) — the same rule that scopes the Accession In-House /
+    // Technician Reporting listings. Enforced here (not in the shared InTx bridge)
+    // so only this user-initiated collect is gated, not internal auto-collect.
+    await this.orderSamples.assertOrderItemSamplesInDepartmentScope(
+      tenantId,
+      actorId,
+      itemId,
+    );
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Guard only the order-item stamp; the accession bridge runs regardless
       // (its own status filter is idempotent), otherwise a sample shared with an
@@ -7020,6 +7029,13 @@ export class OrderService {
     } = {},
   ): Promise<OrderWithRelations> {
     await this.findById(orderId, tenantId);
+    // Department restriction (same rule as the In-House listing): refuse any
+    // sample in the group that is outside the caller's department scope.
+    await this.orderSamples.assertSamplesInDepartmentScope(
+      tenantId,
+      actorId,
+      sampleIds,
+    );
     await this.prisma.withTenant(tenantId, (tx) =>
       this.orderSamples.collectSamplesInTx(tx, tenantId, actorId, sampleIds, {
         print: !!opts.print,

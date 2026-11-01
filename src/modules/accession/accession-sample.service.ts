@@ -93,6 +93,7 @@ import {
 import {
   AccessionNumberConflictException,
   OrderSampleNotFoundException,
+  SampleDepartmentForbiddenException,
   InvalidSampleTransitionException,
   RetrieveBlockedException,
   TransferWrongBranchException,
@@ -2349,12 +2350,82 @@ export class OrderSampleService {
    * each collected sample that lacks one (`assignBarcodesOnCollectInTx`), in the
    * same transaction.
    */
+  /**
+   * Enforce the department-visibility rule on a COLLECT action: a caller may
+   * collect a sample only when its department is unassigned (NULL → everyone) or
+   * one of their mapped departments (resolved via `UserDepartmentScopeService`); a
+   * caller mapped to no department may collect only unassigned samples. This is
+   * the write-side twin of {@link departmentScopeForSamples}, which hides the same
+   * samples from the Accession In-House / Technician Reporting listings — a sample
+   * the caller cannot see there must not be collectable by id either. It is the
+   * single enforcement point for every user-initiated collect path (the Accession
+   * worklist {@link collect}, the Order Overview per-item and group collect). The
+   * internal order-creation / check-in bridges never pass through here.
+   * @param tenantId tenant scope (from JWT)
+   * @param personId the acting user (null → treated as mapped to no department)
+   * @param sampleIds the accession samples about to be collected
+   * @throws SampleDepartmentForbiddenException if any sample is out of scope
+   */
+  async assertSamplesInDepartmentScope(
+    tenantId: string,
+    personId: string | null,
+    sampleIds: string[],
+  ): Promise<void> {
+    if (sampleIds.length === 0) return;
+    const scopeIds = personId
+      ? await this.userDepartmentScope.resolveDepartmentIds(tenantId, personId)
+      : [];
+    const samples = await this.prisma.orderSample.findMany({
+      where: { id: { in: sampleIds }, tenantId, deletedAt: null },
+      select: { id: true, departmentId: true },
+    });
+    const forbidden = samples
+      .filter(
+        (s) => !(s.departmentId === null || scopeIds.includes(s.departmentId)),
+      )
+      .map((s) => s.id);
+    if (forbidden.length > 0) {
+      throw new SampleDepartmentForbiddenException(forbidden);
+    }
+  }
+
+  /**
+   * Department guard for the per-order-item collect (the Order Overview modal's
+   * per-test Collect / Collect & Print): resolve the item's accession sample ids,
+   * then apply {@link assertSamplesInDepartmentScope}. Covers both a standalone
+   * test and a panel member — each has its own samples carrying their own
+   * `departmentId`.
+   * @throws SampleDepartmentForbiddenException if any of the item's samples is out of scope
+   */
+  async assertOrderItemSamplesInDepartmentScope(
+    tenantId: string,
+    personId: string | null,
+    orderItemId: string,
+  ): Promise<void> {
+    const samples = await this.prisma.orderSample.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        tests: { some: { orderItemId, tenantId, deletedAt: null } },
+      },
+      select: { id: true },
+    });
+    await this.assertSamplesInDepartmentScope(
+      tenantId,
+      personId,
+      samples.map((s) => s.id),
+    );
+  }
+
   async collect(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: CollectSampleDto,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    // Department restriction (same rule as the In-House listing): refuse any
+    // sample outside the caller's department scope before transitioning.
+    await this.assertSamplesInDepartmentScope(tenantId, personId, ids);
     return this.transitionIds(
       ids,
       tenantId,

@@ -564,6 +564,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/sub-categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>PATCH /siteadmin/sub-categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>DELETE /siteadmin/sub-categories/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
+  <tr><td>GET /departments/my-scope</td><td>Business JWT</td><td>the caller's own department ids (<code>{ departmentIds }</code>); drives FE department-gated actions (e.g. disabling Collect outside the caller's departments), mirroring the collect guard</td></tr>
   <tr><td>GET /departments/templates</td><td>Business JWT</td><td>browse Site Admin department templates (read-only)</td></tr>
   <tr><td>GET /departments/templates/:id</td><td>Business JWT</td><td>browse Site Admin department template (read-only)</td></tr>
   <tr><td>POST /departments/:id/clone</td><td>Business JWT</td><td>clone a Site Admin department template into the tenant (no body; idempotent via clonedFromId)</td></tr>

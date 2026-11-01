@@ -1,8 +1,10 @@
 import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { DepartmentService } from './department.service';
+import { UserDepartmentScopeService } from './user-department-scope.service';
 import { ListDepartmentQueryDto } from './dto/list-department-query.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
@@ -15,7 +17,32 @@ import { Audit } from '../../common/decorators/audit.decorator';
  */
 @Controller('departments')
 export class DepartmentOptionsController {
-  constructor(private readonly departmentService: DepartmentService) {}
+  constructor(
+    private readonly departmentService: DepartmentService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
+  ) {}
+
+  /**
+   * The caller's OWN department ids (membership via `UserDepartmentAssignment`).
+   * The front end uses this to gate department-restricted actions — e.g. disabling
+   * the Order Overview Collect buttons for a test whose department the caller is
+   * not in — mirroring the server-side collect guard
+   * (`OrderSampleService.assertSamplesInDepartmentScope`). An empty array means the
+   * caller belongs to no department and may act only on department-less items,
+   * exactly the rule the Accession In-House / Technician Reporting listings use.
+   * Declared before `:id` routes so `my-scope` isn't matched as an id.
+   */
+  @Get('my-scope')
+  async myScope(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+  ): Promise<{ departmentIds: string[] }> {
+    const departmentIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    return { departmentIds };
+  }
 
   /**
    * Browse SITE_ADMIN global template departments (read-only) so the tenant can
