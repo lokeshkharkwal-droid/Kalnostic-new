@@ -91,12 +91,36 @@ describe('decision table: kind x setting x chosen x stored list', () => {
   for (const kind of ['TEST', 'PANEL'] as const) {
     for (const setting of [true, false]) {
       // nobody chose: the setting decides, a stray stored list is ignored
-      rows.push({ kind, setting, chosen: false, stored: [], expected: setting ? [] : ALL_KEYS });
-      rows.push({ kind, setting, chosen: false, stored: ['remarks'], expected: setting ? [] : ALL_KEYS });
+      rows.push({
+        kind,
+        setting,
+        chosen: false,
+        stored: [],
+        expected: setting ? [] : ALL_KEYS,
+      });
+      rows.push({
+        kind,
+        setting,
+        chosen: false,
+        stored: ['remarks'],
+        expected: setting ? [] : ALL_KEYS,
+      });
       // chosen: the stored list is the choice, whatever the setting says
       rows.push({ kind, setting, chosen: true, stored: [], expected: [] });
-      rows.push({ kind, setting, chosen: true, stored: ['remarks'], expected: ['remarks'] });
-      rows.push({ kind, setting, chosen: true, stored: ALL_KEYS, expected: ALL_KEYS });
+      rows.push({
+        kind,
+        setting,
+        chosen: true,
+        stored: ['remarks'],
+        expected: ['remarks'],
+      });
+      rows.push({
+        kind,
+        setting,
+        chosen: true,
+        stored: ALL_KEYS,
+        expected: ALL_KEYS,
+      });
     }
   }
 
@@ -104,11 +128,18 @@ describe('decision table: kind x setting x chosen x stored list', () => {
     '$kind, setting ON=$setting, chosen=$chosen, stored=$stored -> left out $expected',
     async ({ kind, setting, chosen, stored, expected }) => {
       const { priv } = makeService({
-        switches: kind === 'TEST' ? { labTest: setting, labPanel: !setting } : { labTest: !setting, labPanel: setting },
+        switches:
+          kind === 'TEST'
+            ? { labTest: setting, labPanel: !setting }
+            : { labTest: !setting, labPanel: setting },
       });
       const out = await priv.resolveNotesPrint(
         't1',
-        reportRow({ line: kind === 'TEST' ? TEST_LINE : PANEL_LINE, chosen, stored }),
+        reportRow({
+          line: kind === 'TEST' ? TEST_LINE : PANEL_LINE,
+          chosen,
+          stored,
+        }),
       );
       expect(out.enabled).toBe(true);
       expect(out.isPanelMember).toBe(kind === 'PANEL');
@@ -116,34 +147,85 @@ describe('decision table: kind x setting x chosen x stored list', () => {
     },
   );
 
-  it('the OTHER kind\'s setting never leaks in (Lab Test ON / Lab Panel OFF and the reverse)', async () => {
-    const testOnPanelOff = makeService({ switches: { labTest: true, labPanel: false } });
-    expect((await testOnPanelOff.priv.resolveNotesPrint('t1', reportRow({ line: TEST_LINE, chosen: false }))).excludedSections).toEqual([]);
-    expect((await testOnPanelOff.priv.resolveNotesPrint('t1', reportRow({ line: PANEL_LINE, chosen: false }))).excludedSections).toEqual(ALL_KEYS);
-    const testOffPanelOn = makeService({ switches: { labTest: false, labPanel: true } });
-    expect((await testOffPanelOn.priv.resolveNotesPrint('t1', reportRow({ line: TEST_LINE, chosen: false }))).excludedSections).toEqual(ALL_KEYS);
-    expect((await testOffPanelOn.priv.resolveNotesPrint('t1', reportRow({ line: PANEL_LINE, chosen: false }))).excludedSections).toEqual([]);
+  it("the OTHER kind's setting never leaks in (Lab Test ON / Lab Panel OFF and the reverse)", async () => {
+    const testOnPanelOff = makeService({
+      switches: { labTest: true, labPanel: false },
+    });
+    expect(
+      (
+        await testOnPanelOff.priv.resolveNotesPrint(
+          't1',
+          reportRow({ line: TEST_LINE, chosen: false }),
+        )
+      ).excludedSections,
+    ).toEqual([]);
+    expect(
+      (
+        await testOnPanelOff.priv.resolveNotesPrint(
+          't1',
+          reportRow({ line: PANEL_LINE, chosen: false }),
+        )
+      ).excludedSections,
+    ).toEqual(ALL_KEYS);
+    const testOffPanelOn = makeService({
+      switches: { labTest: false, labPanel: true },
+    });
+    expect(
+      (
+        await testOffPanelOn.priv.resolveNotesPrint(
+          't1',
+          reportRow({ line: TEST_LINE, chosen: false }),
+        )
+      ).excludedSections,
+    ).toEqual(ALL_KEYS);
+    expect(
+      (
+        await testOffPanelOn.priv.resolveNotesPrint(
+          't1',
+          reportRow({ line: PANEL_LINE, chosen: false }),
+        )
+      ).excludedSections,
+    ).toEqual([]);
   });
 
   it('a free-text line offers nothing and reads no setting, chosen or not', async () => {
     for (const chosen of [true, false]) {
       const { priv, getNotesPrintSwitches } = makeService({});
-      const out = await priv.resolveNotesPrint('t1', reportRow({ line: FREE_TEXT_LINE, chosen, stored: ['remarks'] }));
-      expect(out).toEqual({ enabled: false, isPanelMember: false, excludedSections: [] });
+      const out = await priv.resolveNotesPrint(
+        't1',
+        reportRow({ line: FREE_TEXT_LINE, chosen, stored: ['remarks'] }),
+      );
+      expect(out).toEqual({
+        enabled: false,
+        isPanelMember: false,
+        excludedSections: [],
+      });
       expect(getNotesPrintSwitches).not.toHaveBeenCalled();
     }
   });
 
   it('"none selected" always means every section the app knows, so a future 6th section is covered', () => {
-    expect([...excludedSectionsToApply(false, false, [])]).toEqual([...NOTE_SECTION_KEYS]);
-    expect(excludedSectionsToApply(false, false, []).size).toBe(NOTE_SECTION_KEYS.length);
+    expect([...excludedSectionsToApply(false, false, [])]).toEqual([
+      ...NOTE_SECTION_KEYS,
+    ]);
+    expect(excludedSectionsToApply(false, false, []).size).toBe(
+      NOTE_SECTION_KEYS.length,
+    );
   });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe('odd stored values are tolerated, never crash a print', () => {
   it('unknown keys are dropped, duplicates collapse, order is the canonical one', () => {
-    expect(normaliseNoteSections(['references', 'bogus', 'useful_for', 'references', ''])).toEqual(['useful_for', 'references']);
+    expect(
+      normaliseNoteSections([
+        'references',
+        'bogus',
+        'useful_for',
+        'references',
+        '',
+      ]),
+    ).toEqual(['useful_for', 'references']);
   });
 
   it('null / undefined / empty stored lists mean "nothing left out" once chosen', () => {
@@ -154,26 +236,43 @@ describe('odd stored values are tolerated, never crash a print', () => {
   });
 
   it('a chosen list holding only unknown keys leaves nothing out', async () => {
-    const { priv } = makeService({ switches: { labTest: false, labPanel: false } });
-    const out = await priv.resolveNotesPrint('t1', reportRow({ chosen: true, stored: ['bogus'] }));
+    const { priv } = makeService({
+      switches: { labTest: false, labPanel: false },
+    });
+    const out = await priv.resolveNotesPrint(
+      't1',
+      reportRow({ chosen: true, stored: ['bogus'] }),
+    );
     expect(out.excludedSections).toEqual([]);
   });
 
   it('a report with no branch uses the built-in defaults (ON) and never calls the settings service', async () => {
-    const { priv, getNotesPrintSwitches } = makeService({ switches: { labTest: false, labPanel: false } });
-    const out = await priv.resolveNotesPrint('t1', reportRow({ chosen: false, branchId: null }));
+    const { priv, getNotesPrintSwitches } = makeService({
+      switches: { labTest: false, labPanel: false },
+    });
+    const out = await priv.resolveNotesPrint(
+      't1',
+      reportRow({ chosen: false, branchId: null }),
+    );
     expect(out.excludedSections).toEqual([]);
     expect(getNotesPrintSwitches).not.toHaveBeenCalled();
   });
 
   it('when the settings cannot be read the error is NOT swallowed (no silent wrong default)', async () => {
     const { priv } = makeService({ settingsFails: true });
-    await expect(priv.resolveNotesPrint('t1', reportRow({ chosen: false }))).rejects.toThrow('settings unavailable');
+    await expect(
+      priv.resolveNotesPrint('t1', reportRow({ chosen: false })),
+    ).rejects.toThrow('settings unavailable');
   });
 
   it('a chosen report does not need the setting to decide, but it is still read for the screen state', async () => {
-    const { priv, getNotesPrintSwitches } = makeService({ switches: { labTest: false, labPanel: false } });
-    const out = await priv.resolveNotesPrint('t1', reportRow({ chosen: true, stored: ['remarks'] }));
+    const { priv, getNotesPrintSwitches } = makeService({
+      switches: { labTest: false, labPanel: false },
+    });
+    const out = await priv.resolveNotesPrint(
+      't1',
+      reportRow({ chosen: true, stored: ['remarks'] }),
+    );
     expect(out.excludedSections).toEqual(['remarks']);
     expect(getNotesPrintSwitches).toHaveBeenCalledTimes(1);
   });
@@ -249,7 +348,9 @@ describe('approval freezes the default (and never overwrites a real choice)', ()
       lockReportForWrite: jest.fn().mockResolvedValue(undefined),
       recordHistory: jest.fn().mockResolvedValue(undefined),
     });
-    (base.svc as unknown as { prisma: Record<string, unknown> }).prisma.withTenant = (
+    (
+      base.svc as unknown as { prisma: Record<string, unknown> }
+    ).prisma.withTenant = (
       _t: string,
       fn: (t: typeof tx) => Promise<unknown>,
     ) => fn(tx);
@@ -259,32 +360,60 @@ describe('approval freezes the default (and never overwrites a real choice)', ()
     (update.mock.calls[0] as [{ data: Record<string, unknown> }])[0].data;
 
   it('no choice + setting ON: stores "all selected"', async () => {
-    const m = makeApprove({ chosen: false, switches: { labTest: true, labPanel: true } });
+    const m = makeApprove({
+      chosen: false,
+      switches: { labTest: true, labPanel: true },
+    });
     await m.svc.approve('r1', 't1', 'A', 'actor', {});
-    expect(dataOf(m.update)).toMatchObject({ status: LabReportStatus.APPROVED, excludedNoteSections: [], hasChosenNotePrint: true });
+    expect(dataOf(m.update)).toMatchObject({
+      status: LabReportStatus.APPROVED,
+      excludedNoteSections: [],
+      hasChosenNotePrint: true,
+    });
   });
 
   it('no choice + setting OFF: stores "none selected" (every section left out)', async () => {
-    const m = makeApprove({ chosen: false, switches: { labTest: false, labPanel: true } });
+    const m = makeApprove({
+      chosen: false,
+      switches: { labTest: false, labPanel: true },
+    });
     await m.svc.approve('r1', 't1', 'A', 'actor', {});
-    expect(dataOf(m.update)).toMatchObject({ excludedNoteSections: ALL_KEYS, hasChosenNotePrint: true });
+    expect(dataOf(m.update)).toMatchObject({
+      excludedNoteSections: ALL_KEYS,
+      hasChosenNotePrint: true,
+    });
   });
 
   it('a panel report freezes the Lab Panel default, not the Lab Test one', async () => {
-    const m = makeApprove({ chosen: false, line: PANEL_LINE, switches: { labTest: true, labPanel: false } });
+    const m = makeApprove({
+      chosen: false,
+      line: PANEL_LINE,
+      switches: { labTest: true, labPanel: false },
+    });
     await m.svc.approve('r1', 't1', 'A', 'actor', {});
-    expect(dataOf(m.update)).toMatchObject({ excludedNoteSections: ALL_KEYS, hasChosenNotePrint: true });
+    expect(dataOf(m.update)).toMatchObject({
+      excludedNoteSections: ALL_KEYS,
+      hasChosenNotePrint: true,
+    });
   });
 
   it("freezes the HOLDER branch's default (the report's branch), read once", async () => {
-    const m = makeApprove({ chosen: false, branchId: 'B', switches: { labTest: false, labPanel: false } });
+    const m = makeApprove({
+      chosen: false,
+      branchId: 'B',
+      switches: { labTest: false, labPanel: false },
+    });
     await m.svc.approve('r1', 't1', 'A', 'actor', {});
     expect(m.getNotesPrintSwitches).toHaveBeenCalledWith('t1', 'B');
     expect(m.getNotesPrintSwitches).toHaveBeenCalledTimes(1);
   });
 
   it('an existing choice is left exactly as it is: approval writes neither field', async () => {
-    const m = makeApprove({ chosen: true, stored: ['remarks'], switches: { labTest: false, labPanel: false } });
+    const m = makeApprove({
+      chosen: true,
+      stored: ['remarks'],
+      switches: { labTest: false, labPanel: false },
+    });
     await m.svc.approve('r1', 't1', 'A', 'actor', {});
     const data = dataOf(m.update);
     expect(data).not.toHaveProperty('excludedNoteSections');
@@ -302,14 +431,23 @@ describe('approval freezes the default (and never overwrites a real choice)', ()
 
   it('if the settings cannot be read, approval FAILS and writes nothing (it never guesses a default)', async () => {
     const m = makeApprove({ chosen: false, settingsFails: true });
-    await expect(m.svc.approve('r1', 't1', 'A', 'actor', {})).rejects.toThrow('settings unavailable');
+    await expect(m.svc.approve('r1', 't1', 'A', 'actor', {})).rejects.toThrow(
+      'settings unavailable',
+    );
     expect(m.update).not.toHaveBeenCalled();
   });
 
   it('a stray stored list on an unchosen report never leaks into the frozen value', async () => {
-    const m = makeApprove({ chosen: false, stored: ['remarks'], switches: { labTest: true, labPanel: true } });
+    const m = makeApprove({
+      chosen: false,
+      stored: ['remarks'],
+      switches: { labTest: true, labPanel: true },
+    });
     await m.svc.approve('r1', 't1', 'A', 'actor', {});
-    expect(dataOf(m.update)).toMatchObject({ excludedNoteSections: [], hasChosenNotePrint: true });
+    expect(dataOf(m.update)).toMatchObject({
+      excludedNoteSections: [],
+      hasChosenNotePrint: true,
+    });
   });
 });
 
@@ -328,7 +466,8 @@ describe('Repeat / return resets the choice', () => {
               get: (_m, method: string) =>
                 jest.fn((arg: unknown) => {
                   calls.push({ model, method, arg });
-                  if (model === 'labReport' && method === 'findMany') return Promise.resolve(reports);
+                  if (model === 'labReport' && method === 'findMany')
+                    return Promise.resolve(reports);
                   if (method === 'findMany') return Promise.resolve([]);
                   return Promise.resolve({ count: 0 });
                 }),
@@ -341,7 +480,15 @@ describe('Repeat / return resets the choice', () => {
 
   it('puts every returned report back to "no choice yet" with an empty list', async () => {
     const { tx, calls } = recordingTx([
-      { id: 'r1', status: 'APPROVED', usefulFor: 'x', interpretationOfResults: null, limitations: null, remarks: null, references: null },
+      {
+        id: 'r1',
+        status: 'APPROVED',
+        usefulFor: 'x',
+        interpretationOfResults: null,
+        limitations: null,
+        remarks: null,
+        references: null,
+      },
     ]);
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
@@ -353,10 +500,13 @@ describe('Repeat / return resets the choice', () => {
       (c) =>
         c.model === 'labReport' &&
         c.method === 'updateMany' &&
-        (c.arg as { data: Record<string, unknown> }).data.status === LabReportStatus.PENDING,
+        (c.arg as { data: Record<string, unknown> }).data.status ===
+          LabReportStatus.PENDING,
     );
     expect(reset).toBeDefined();
-    expect((reset!.arg as { data: Record<string, unknown> }).data).toMatchObject({
+    expect(
+      (reset!.arg as { data: Record<string, unknown> }).data,
+    ).toMatchObject({
       excludedNoteSections: [],
       hasChosenNotePrint: false,
       usefulFor: null,
@@ -375,7 +525,10 @@ describe('Repeat / return resets the choice', () => {
 // Design guards: they fail when a later change breaks the architecture instead of the behaviour.
 describe('architecture guards', () => {
   const srcRoot = join(__dirname, '..', '..'); // src/
-  const service = readFileSync(join(__dirname, 'lab-report.service.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const service = readFileSync(
+    join(__dirname, 'lab-report.service.ts'),
+    'utf8',
+  ).replace(/\r\n/g, '\n');
 
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
@@ -388,7 +541,9 @@ describe('architecture guards', () => {
 
   it('lab-report.service.ts is the ONLY non-test file that touches the stored Print choice', () => {
     const users = walk(srcRoot)
-      .filter((f) => /excludedNoteSections|hasChosenNotePrint/.test(readFileSync(f, 'utf8')))
+      .filter((f) =>
+        /excludedNoteSections|hasChosenNotePrint/.test(readFileSync(f, 'utf8')),
+      )
       .map((f) => f.slice(srcRoot.length + 1).replace(/\\/g, '/'));
     expect(users).toEqual(['modules/lab-report/lab-report.service.ts']);
   });
@@ -397,22 +552,37 @@ describe('architecture guards', () => {
     const lines = service.split('\n');
     const writers = lines
       .map((l, i) => ({ l, i }))
-      .filter(({ l }) => /^\s*excludedNoteSections(: \[\]|: NoteSectionKey\[\]|),?$/.test(l) && !/:\s*(string|NoteSectionKey)\[\];/.test(l));
+      .filter(
+        ({ l }) =>
+          /^\s*excludedNoteSections(: \[\]|: NoteSectionKey\[\]|),?$/.test(l) &&
+          !/:\s*(string|NoteSectionKey)\[\];/.test(l),
+      );
     // the two resets (`excludedNoteSections: [],`) and the choice save (`excludedNoteSections,`)
-    const resets = lines.map((l, i) => ({ l, i })).filter(({ l }) => /^\s*excludedNoteSections: \[\],$/.test(l));
+    const resets = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => /^\s*excludedNoteSections: \[\],$/.test(l));
     expect(resets.length).toBeGreaterThanOrEqual(2);
-    for (const { i } of resets) expect(lines[i + 1]).toMatch(/hasChosenNotePrint: false,/);
-    const saves = lines.map((l, i) => ({ l, i })).filter(({ l }) => /^\s*excludedNoteSections,$/.test(l));
+    for (const { i } of resets)
+      expect(lines[i + 1]).toMatch(/hasChosenNotePrint: false,/);
+    const saves = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => /^\s*excludedNoteSections,$/.test(l));
     expect(saves.length).toBeGreaterThanOrEqual(1);
-    for (const { i } of saves) expect(lines[i + 1]).toMatch(/hasChosenNotePrint: true,/);
+    for (const { i } of saves)
+      expect(lines[i + 1]).toMatch(/hasChosenNotePrint: true,/);
     expect(writers.length).toBeGreaterThan(0);
   });
 
   it('approval is the only place a report becomes APPROVED, and it freezes the choice there', () => {
     const setters = service.match(/status: LabReportStatus\.APPROVED,/g) ?? [];
     // one in the tx update of approve() and one in a worklist filter; the update must carry the freeze
-    const approveBody = service.slice(service.indexOf('async approve('), service.indexOf('private async freezeNotePrintChoice'));
-    expect(approveBody).toMatch(/const notePrintChoice = await this\.freezeNotePrintChoice\(/);
+    const approveBody = service.slice(
+      service.indexOf('async approve('),
+      service.indexOf('private async freezeNotePrintChoice'),
+    );
+    expect(approveBody).toMatch(
+      /const notePrintChoice = await this\.freezeNotePrintChoice\(/,
+    );
     expect(approveBody).toMatch(/\.\.\.notePrintChoice,/);
     expect(setters.length).toBeGreaterThanOrEqual(1);
   });
@@ -425,7 +595,10 @@ describe('architecture guards', () => {
   });
 
   it('the Print choice is only saved through the status-gated writer', () => {
-    const save = service.slice(service.indexOf('async updateNotePrintSections('), service.indexOf('private async updateNotesWhileEditable'));
+    const save = service.slice(
+      service.indexOf('async updateNotePrintSections('),
+      service.indexOf('private async updateNotesWhileEditable'),
+    );
     expect(save).toMatch(/this\.assertParameterNoteEditable\(/);
     expect(save).toMatch(/this\.updateNotesWhileEditable\(/);
     expect(save).not.toMatch(/this\.prisma\.labReport\.update\(/);
@@ -438,23 +611,44 @@ describe('architecture guards', () => {
   });
 
   describe('migration and schema agree', () => {
-    const migrationDir = join(__dirname, '..', '..', '..', 'prisma', 'migrations');
-    const name = readdirSync(migrationDir).find((d) => d.endsWith('_add_lab_report_has_chosen_note_print'));
-    const sql = name ? readFileSync(join(migrationDir, name, 'migration.sql'), 'utf8') : '';
-    const schema = readFileSync(join(__dirname, '..', '..', '..', 'prisma', 'schema.prisma'), 'utf8');
+    const migrationDir = join(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      'prisma',
+      'migrations',
+    );
+    const name = readdirSync(migrationDir).find((d) =>
+      d.endsWith('_add_lab_report_has_chosen_note_print'),
+    );
+    const sql = name
+      ? readFileSync(join(migrationDir, name, 'migration.sql'), 'utf8')
+      : '';
+    const schema = readFileSync(
+      join(__dirname, '..', '..', '..', 'prisma', 'schema.prisma'),
+      'utf8',
+    );
 
     it('the migration exists and adds a NOT NULL boolean defaulting to false', () => {
       expect(name).toBeDefined();
-      expect(sql).toMatch(/ALTER TABLE "lab_reports" ADD COLUMN "has_chosen_note_print" BOOLEAN NOT NULL DEFAULT false;/);
+      expect(sql).toMatch(
+        /ALTER TABLE "lab_reports" ADD COLUMN "has_chosen_note_print" BOOLEAN NOT NULL DEFAULT false;/,
+      );
     });
 
     it('the schema maps the field to that same column with the same default', () => {
-      expect(schema).toMatch(/hasChosenNotePrint\s+Boolean\s+@default\(false\)\s+@map\("has_chosen_note_print"\)/);
+      expect(schema).toMatch(
+        /hasChosenNotePrint\s+Boolean\s+@default\(false\)\s+@map\("has_chosen_note_print"\)/,
+      );
     });
 
     it('the backfill only names statuses that exist, and freezes issued reports', () => {
       const enumBlock = /enum LabReportStatus \{([^}]*)\}/.exec(schema)![1]!;
-      const known = enumBlock.split('\n').map((l) => l.trim().split(/\s/)[0]!).filter(Boolean);
+      const known = enumBlock
+        .split('\n')
+        .map((l) => l.trim().split(/\s/)[0]!)
+        .filter(Boolean);
       const named = [...sql.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]!);
       expect(named.length).toBeGreaterThan(0);
       for (const s of named) expect(known).toContain(s);

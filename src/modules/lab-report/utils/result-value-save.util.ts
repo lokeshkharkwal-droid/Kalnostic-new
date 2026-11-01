@@ -61,8 +61,12 @@ export function describeRangeForAudit(
   analyzerName?: string,
 ): string {
   if (!range) return '(no range)';
-  const bound = (v: unknown): string =>
-    v === null || v === undefined ? '' : String(v as string | number).trim();
+  // A limit is a string, a number, or a Prisma Decimal (its own `toString` gives the plain number).
+  const bound = (v: unknown): string => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'string' || typeof v === 'number') return String(v).trim();
+    return (v as { toString(): string }).toString().trim();
+  };
   const limits = [bound(range.lowerLimit), bound(range.upperLimit)].some(
     Boolean,
   )

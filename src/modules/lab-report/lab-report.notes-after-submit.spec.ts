@@ -64,9 +64,10 @@ function makeService(status: Status, freshStatus: Status = status) {
       .mockResolvedValue({ enabled: true, excludedSections: [] }),
     prisma: {
       orderItem: {
-        findFirst: jest
-          .fn()
-          .mockResolvedValue({ branchLabPanelId: null, branchLabTestId: 'bt1' }),
+        findFirst: jest.fn().mockResolvedValue({
+          branchLabPanelId: null,
+          branchLabTestId: 'bt1',
+        }),
       },
       labReport: {
         findFirstOrThrow: jest.fn().mockResolvedValue({
@@ -110,13 +111,16 @@ describe('LabReportService.updateContentSections: only while the report can stil
     });
   });
 
-  it.each(MOVED_ON)('refuses once the report is %s, and writes nothing', async (status) => {
-    const { svc, update } = makeService(status);
-    await expect(edit(svc)).rejects.toBeInstanceOf(
-      LabReportParameterNoteNotEditableException,
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
+  it.each(MOVED_ON)(
+    'refuses once the report is %s, and writes nothing',
+    async (status) => {
+      const { svc, update } = makeService(status);
+      await expect(edit(svc)).rejects.toBeInstanceOf(
+        LabReportParameterNoteNotEditableException,
+      );
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
 
   it('reads the status again after locking the row: a Submit that committed in between is not overwritten', async () => {
     const { svc, update, lockReportForWrite } = makeService(
@@ -137,24 +141,33 @@ describe('LabReportService.updateNotePrintSections: only while the report can st
       excludedSections: ['limitations'],
     });
 
-  it.each(EDITABLE)('saves the choice while the report is %s', async (status) => {
-    const { svc, update } = makeService(status);
-    await expect(choose(svc)).resolves.toMatchObject({
-      excludedSections: ['limitations'],
-    });
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 'r1' },
-      data: { excludedNoteSections: ['limitations'], hasChosenNotePrint: true },
-    });
-  });
+  it.each(EDITABLE)(
+    'saves the choice while the report is %s',
+    async (status) => {
+      const { svc, update } = makeService(status);
+      await expect(choose(svc)).resolves.toMatchObject({
+        excludedSections: ['limitations'],
+      });
+      expect(update).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+        data: {
+          excludedNoteSections: ['limitations'],
+          hasChosenNotePrint: true,
+        },
+      });
+    },
+  );
 
-  it.each(MOVED_ON)('refuses once the report is %s, and writes nothing', async (status) => {
-    const { svc, update } = makeService(status);
-    await expect(choose(svc)).rejects.toBeInstanceOf(
-      LabReportParameterNoteNotEditableException,
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
+  it.each(MOVED_ON)(
+    'refuses once the report is %s, and writes nothing',
+    async (status) => {
+      const { svc, update } = makeService(status);
+      await expect(choose(svc)).rejects.toBeInstanceOf(
+        LabReportParameterNoteNotEditableException,
+      );
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
 
   it('reads the status again after locking the row', async () => {
     const { svc, update } = makeService(
@@ -228,7 +241,13 @@ describe('LabReportService.resetForRerun starts the notes over', () => {
 });
 
 describe('approval freezes the default Print selection', () => {
-  const ALL_FIVE = ['useful_for', 'interpretation', 'limitations', 'remarks', 'references'];
+  const ALL_FIVE = [
+    'useful_for',
+    'interpretation',
+    'limitations',
+    'remarks',
+    'references',
+  ];
 
   function makeFreeze(opts: {
     switches: { labTest: boolean; labPanel: boolean };
@@ -243,11 +262,16 @@ describe('approval freezes the default Print selection', () => {
         orderItem: {
           findFirst: jest
             .fn()
-            .mockResolvedValue(opts.line ?? { branchLabPanelId: null, branchLabTestId: 'bt1' }),
+            .mockResolvedValue(
+              opts.line ?? { branchLabPanelId: null, branchLabTestId: 'bt1' },
+            ),
         },
       },
     });
-    return (report: { hasChosenNotePrint: boolean; excludedNoteSections?: string[] }) =>
+    return (report: {
+      hasChosenNotePrint: boolean;
+      excludedNoteSections?: string[];
+    }) =>
       (
         svc as unknown as {
           freezeNotePrintChoice: (t: string, r: unknown) => Promise<unknown>;
@@ -287,7 +311,7 @@ describe('approval freezes the default Print selection', () => {
     });
   });
 
-  it("leaves a choice the technician already made alone", async () => {
+  it('leaves a choice the technician already made alone', async () => {
     const freeze = makeFreeze({ switches: { labTest: true, labPanel: true } });
     await expect(
       freeze({ hasChosenNotePrint: true, excludedNoteSections: ['remarks'] }),

@@ -184,7 +184,8 @@ describe('printing: Notes sections left out of a report', () => {
     );
     const { variables } = await printed(svc);
     expect(variables.limitations).toBe('');
-    for (const k of SECTION_KEYS.filter((s) => s !== 'limitations')) expect(variables[k]).not.toBe('');
+    for (const k of SECTION_KEYS.filter((s) => s !== 'limitations'))
+      expect(variables[k]).not.toBe('');
   });
 
   it('selecting every section with the setting OFF prints all five', async () => {
@@ -201,13 +202,15 @@ describe('printing: Notes sections left out of a report', () => {
       report({ kind: 'PANEL' }),
       jest.fn().mockResolvedValue({ labTest: false, labPanel: true }),
     );
-    for (const k of SECTION_KEYS) expect((await printed(panelOn)).variables[k]).not.toBe('');
+    for (const k of SECTION_KEYS)
+      expect((await printed(panelOn)).variables[k]).not.toBe('');
 
     const panelOff = makeService(
       report({ kind: 'PANEL' }),
       jest.fn().mockResolvedValue({ labTest: true, labPanel: false }),
     );
-    for (const k of SECTION_KEYS) expect((await printed(panelOff)).variables[k]).toBe('');
+    for (const k of SECTION_KEYS)
+      expect((await printed(panelOff)).variables[k]).toBe('');
   });
 
   it('a saved choice on a panel report applies whatever the settings say', async () => {
@@ -216,7 +219,10 @@ describe('printing: Notes sections left out of a report', () => {
       { labTest: false, labPanel: true },
       { labTest: true, labPanel: false },
     ]) {
-      const svc = makeService(report({ kind: 'PANEL', excluded: left }), jest.fn().mockResolvedValue(switches));
+      const svc = makeService(
+        report({ kind: 'PANEL', excluded: left }),
+        jest.fn().mockResolvedValue(switches),
+      );
       const { variables } = await printed(svc);
       expect(variables.interpretation).toBe('');
       expect(variables.remarks).toBe('R-text');
@@ -261,7 +267,10 @@ describe('printing: Notes sections left out of a report', () => {
 });
 
 describe('updateNotePrintSections', () => {
-  function updating(switches: NotesPrintSwitches, kind: 'TEST' | 'PANEL' | 'DIRECT') {
+  function updating(
+    switches: NotesPrintSwitches,
+    kind: 'TEST' | 'PANEL' | 'DIRECT',
+  ) {
     const rep = report({ kind });
     const update = jest.fn().mockResolvedValue({});
     const svc = Object.create(LabReportService.prototype) as LabReportService;
@@ -349,7 +358,12 @@ describe('updateNotePrintSections', () => {
     expect(update).toHaveBeenCalledWith({
       where: { id: 'r1' },
       data: {
-        excludedNoteSections: ['useful_for', 'limitations', 'remarks', 'references'],
+        excludedNoteSections: [
+          'useful_for',
+          'limitations',
+          'remarks',
+          'references',
+        ],
         hasChosenNotePrint: true,
       },
     });
@@ -375,46 +389,81 @@ describe('updateNotePrintSections', () => {
 });
 
 describe('the screen state of the Print checkboxes (resolveNotesPrint through the report detail)', () => {
-  const resolve = (rep: ReturnType<typeof report>, switches: NotesPrintSwitches) => {
+  const resolve = (
+    rep: ReturnType<typeof report>,
+    switches: NotesPrintSwitches,
+  ) => {
     const svc = makeService(rep, jest.fn().mockResolvedValue(switches));
     return (
       svc as unknown as {
-        resolveNotesPrint: (t: string, r: unknown) => Promise<{ enabled: boolean; excludedSections: string[] }>;
+        resolveNotesPrint: (
+          t: string,
+          r: unknown,
+        ) => Promise<{ enabled: boolean; excludedSections: string[] }>;
       }
     ).resolveNotesPrint('t1', rep);
   };
-  const ALL_FIVE = ['useful_for', 'interpretation', 'limitations', 'remarks', 'references'];
+  const ALL_FIVE = [
+    'useful_for',
+    'interpretation',
+    'limitations',
+    'remarks',
+    'references',
+  ];
 
   it('Lab Test setting ON: checkboxes shown, every section selected by default', async () => {
-    expect(await resolve(report(), ALL_ON)).toMatchObject({ enabled: true, excludedSections: [] });
+    expect(await resolve(report(), ALL_ON)).toMatchObject({
+      enabled: true,
+      excludedSections: [],
+    });
   });
 
   it('Lab Test setting OFF: checkboxes STILL shown, every section unselected by default', async () => {
-    expect(await resolve(report(), { labTest: false, labPanel: true })).toMatchObject({
+    expect(
+      await resolve(report(), { labTest: false, labPanel: true }),
+    ).toMatchObject({
       enabled: true,
       excludedSections: ALL_FIVE,
     });
   });
 
   it('Lab Panel setting ON/OFF behaves the same for a report on a panel line', async () => {
-    expect(await resolve(report({ kind: 'PANEL' }), { labTest: false, labPanel: true })).toMatchObject({
+    expect(
+      await resolve(report({ kind: 'PANEL' }), {
+        labTest: false,
+        labPanel: true,
+      }),
+    ).toMatchObject({
       enabled: true,
       excludedSections: [],
     });
-    expect(await resolve(report({ kind: 'PANEL' }), { labTest: true, labPanel: false })).toMatchObject({
+    expect(
+      await resolve(report({ kind: 'PANEL' }), {
+        labTest: true,
+        labPanel: false,
+      }),
+    ).toMatchObject({
       enabled: true,
       excludedSections: ALL_FIVE,
     });
   });
 
   it('a saved choice wins over the default', async () => {
-    expect(await resolve(report({ excluded: ['remarks'] }), { labTest: false, labPanel: false })).toMatchObject({
+    expect(
+      await resolve(report({ excluded: ['remarks'] }), {
+        labTest: false,
+        labPanel: false,
+      }),
+    ).toMatchObject({
       enabled: true,
       excludedSections: ['remarks'],
     });
   });
 
   it('a free-text line shows no checkboxes', async () => {
-    expect(await resolve(report({ kind: 'DIRECT' }), ALL_ON)).toMatchObject({ enabled: false, excludedSections: [] });
+    expect(await resolve(report({ kind: 'DIRECT' }), ALL_ON)).toMatchObject({
+      enabled: false,
+      excludedSections: [],
+    });
   });
 });

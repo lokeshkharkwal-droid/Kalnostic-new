@@ -264,18 +264,43 @@ describe('describeRangeForAudit', () => {
   it('names the analyzer, method, unit and display text', () => {
     expect(
       describeRangeForAudit(
-        { method: 'Refractometry', unit: 'g/mL', displayOfReferenceRange: '1.010 - 1.030 (Analyzer default)' },
+        {
+          method: 'Refractometry',
+          unit: 'g/mL',
+          displayOfReferenceRange: '1.010 - 1.030 (Analyzer default)',
+        },
         'Hematology Bridge 1',
       ),
-    ).toBe('Hematology Bridge 1 · Refractometry · g/mL · 1.010 - 1.030 (Analyzer default)');
+    ).toBe(
+      'Hematology Bridge 1 · Refractometry · g/mL · 1.010 - 1.030 (Analyzer default)',
+    );
   });
   it('leaves out what is empty (a range with no analyzer, no method)', () => {
-    expect(describeRangeForAudit({ unit: 'g/mL', displayOfReferenceRange: '1.015 - 1.035 (Adult)' })).toBe('g/mL · 1.015 - 1.035 (Adult)');
-    expect(describeRangeForAudit({ method: '  ', unit: null, displayOfReferenceRange: '12 - 17' })).toBe('12 - 17');
+    expect(
+      describeRangeForAudit({
+        unit: 'g/mL',
+        displayOfReferenceRange: '1.015 - 1.035 (Adult)',
+      }),
+    ).toBe('g/mL · 1.015 - 1.035 (Adult)');
+    expect(
+      describeRangeForAudit({
+        method: '  ',
+        unit: null,
+        displayOfReferenceRange: '12 - 17',
+      }),
+    ).toBe('12 - 17');
   });
   it('falls back to the limits when there is no display text', () => {
-    expect(describeRangeForAudit({ unit: 'g/L', lowerLimit: '120', upperLimit: '170' })).toBe('g/L · 120 - 170');
-    expect(describeRangeForAudit({ unit: 'g/L', lowerLimit: null, upperLimit: 170 })).toBe('g/L · - 170');
+    expect(
+      describeRangeForAudit({
+        unit: 'g/L',
+        lowerLimit: '120',
+        upperLimit: '170',
+      }),
+    ).toBe('g/L · 120 - 170');
+    expect(
+      describeRangeForAudit({ unit: 'g/L', lowerLimit: null, upperLimit: 170 }),
+    ).toBe('g/L · - 170');
   });
   it('says so when there is no range at all', () => {
     expect(describeRangeForAudit(undefined)).toBe('(no range)');
@@ -297,7 +322,9 @@ describe('describeAnalyzerOverwrite — when the RANGE was changed', () => {
         '01 Nov 2026, 05:18 pm',
         { before, after },
       ),
-    ).toBe(`Range changed — Specific Gravity: ${before} → ${after}; result 1.025 g/mL kept (analyzer: Cobas, sent 01 Nov 2026, 05:18 pm)`);
+    ).toBe(
+      `Range changed — Specific Gravity: ${before} → ${after}; result 1.025 g/mL kept (analyzer: Cobas, sent 01 Nov 2026, 05:18 pm)`,
+    );
   });
 
   it('number unchanged, unit changed: says the unit moved and that the number was kept, not converted', () => {
@@ -310,7 +337,9 @@ describe('describeAnalyzerOverwrite — when the RANGE was changed', () => {
         undefined,
         { before, after: 'Cobas · g/dL · 1.000 - 1.200' },
       ),
-    ).toBe(`Range changed — Specific Gravity: ${before} → Cobas · g/dL · 1.000 - 1.200; result 1.025 kept (unit g/mL → g/dL) (analyzer: Cobas)`);
+    ).toBe(
+      `Range changed — Specific Gravity: ${before} → Cobas · g/dL · 1.000 - 1.200; result 1.025 kept (unit g/mL → g/dL) (analyzer: Cobas)`,
+    );
   });
 
   it('keeps Observed 2 in the kept result', () => {
@@ -336,12 +365,19 @@ describe('describeAnalyzerOverwrite — when the RANGE was changed', () => {
         undefined,
         { before: '(no range)', after: 'g/dL · 12 - 17' },
       ),
-    ).toBe('Value and range edited — Hemoglobin: 130 g/L → 13.5 g/dL; range (no range) → g/dL · 12 - 17 (analyzer: Cobas)');
+    ).toBe(
+      'Value and range edited — Hemoglobin: 130 g/L → 13.5 g/dL; range (no range) → g/dL · 12 - 17 (analyzer: Cobas)',
+    );
   });
 
   it('without the ranges (range not changed) the older wording is unchanged', () => {
     expect(
-      describeAnalyzerOverwrite('Hemoglobin', 'Cobas', { observed1: '130', observed2: null, unit: 'g/L' }, { observed1: '13.5', unit: 'g/dL' }),
+      describeAnalyzerOverwrite(
+        'Hemoglobin',
+        'Cobas',
+        { observed1: '130', observed2: null, unit: 'g/L' },
+        { observed1: '13.5', unit: 'g/dL' },
+      ),
     ).toBe('Value edited — Hemoglobin: 130 g/L → 13.5 g/dL (analyzer: Cobas)');
   });
 });

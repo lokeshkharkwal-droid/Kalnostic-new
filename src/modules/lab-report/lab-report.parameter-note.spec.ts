@@ -312,14 +312,18 @@ describe('print context: {result_note}', () => {
 describe('print context: {result_note} edge cases', () => {
   it('a saved note whose parameter is no longer on the test (it was renamed, recoded or removed) is ignored, not an error', async () => {
     const notes = await rowNotes(
-      printReport(LabReportStatus.APPROVED, [{ resultParamId: 'gone-param', content: '<p>orphan</p>' }]),
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'gone-param', content: '<p>orphan</p>' },
+      ]),
     );
     expect(JSON.stringify(notes)).not.toContain('orphan');
     expect(notes['Bilirubin']).toBe('Fasting &lt;sample&gt; needed'); // the default still shows for the parameter that exists
   });
 
   it('a parameter with no saved value row has no print row, so its note (even a configured one) cannot print', async () => {
-    const rep = printReport(LabReportStatus.APPROVED, [{ resultParamId: 'p2', content: '<p>orphan-ish</p>' }]);
+    const rep = printReport(LabReportStatus.APPROVED, [
+      { resultParamId: 'p2', content: '<p>orphan-ish</p>' },
+    ]);
     rep.resultValues = rep.resultValues.filter((v) => v.resultParamId === 'p1');
     const notes = await rowNotes(rep);
     expect(Object.keys(notes)).toEqual(['Bilirubin']);
@@ -337,18 +341,30 @@ describe('print context: {result_note} edge cases', () => {
   });
 
   it('a note holding only whitespace markup is passed through as saved (the template hides the empty line)', async () => {
-    const notes = await rowNotes(printReport(LabReportStatus.APPROVED, [{ resultParamId: 'p1', content: '<p>&nbsp;</p>' }]));
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p1', content: '<p>&nbsp;</p>' },
+      ]),
+    );
     expect(notes['Bilirubin']).toBe('<p>&nbsp;</p>');
   });
 
   it('a very long note is passed through whole', async () => {
     const long = `<p>${'x'.repeat(50_000)}</p>`;
-    const notes = await rowNotes(printReport(LabReportStatus.APPROVED, [{ resultParamId: 'p1', content: long }]));
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p1', content: long },
+      ]),
+    );
     expect(notes['Bilirubin']).toHaveLength(long.length);
   });
 
   it('a note the report has for one parameter does not change what the OTHER parameter shows by default', async () => {
-    const notes = await rowNotes(printReport(LabReportStatus.APPROVED, [{ resultParamId: 'p2', content: '' }]));
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p2', content: '' },
+      ]),
+    );
     expect(notes['SGOT']).toBe('');
     expect(notes['Bilirubin']).toBe('Fasting &lt;sample&gt; needed');
   });
