@@ -58,9 +58,16 @@ docs {
   with a high `limit` to get the whole order in one page.
 
   `search` matches Patient Name (first/last), Order ID (order code), Test
-  Name (the order item's branch lab test name), or Ref Panel (the order's
-  referral panel name) — a hit on any one field matches (substring,
-  case-insensitive), independent of the other filters above.
+  Name (the order item's branch lab test name), Ref Panel (the order's
+  referral panel name), or the sample Barcode (any live sample linked to the
+  order line — the value the row's Barcode column shows; one barcode can be
+  shared by several samples, so a scanned tube lists every test on it) — a hit
+  on any one field matches (substring, case-insensitive), independent of the
+  other filters above. The text is trimmed first (spaces, tabs and line breaks
+  around it are ignored, and a blank value is no search); `%`, `_` and `\` are
+  matched as typed, never as wildcards. At most 50 characters; a longer value
+  is refused with 400. The status counts (`GET /lab-reports/counts`) follow
+  the same search.
 
   `sampleStatus` is `NOT_COLLECTED` | `COLLECTED` only — Accession's own
   New/Collected/Accepted/... sample lifecycle doesn't exist in the backend

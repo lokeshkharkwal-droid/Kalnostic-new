@@ -40,18 +40,25 @@ docs {
   Body: `excludedSections` - the FULL list of section keys to leave out; it
   replaces the stored list. Allowed keys: `useful_for`, `interpretation`,
   `limitations`, `remarks`, `references` (anything else is a 400; duplicates
-  are a 400). An empty list means all five print (the default for every report).
-  The list is stored on this report only (`lab_reports.excluded_note_sections`).
+  are a 400). An empty list means all five print. The list is stored on this report
+  only (`lab_reports.excluded_note_sections`), and the first save marks the report as
+  having a choice of its own (`lab_reports.has_chosen_note_print`); until then the Branch
+  Setting decides the default. Approval writes the default down, so an approved report
+  prints the same forever, even if the Branch Setting changes later. Re-run and Repeat
+  reset the report to no choice yet.
+
+  Allowed only while the report is Pending, Partial Pending or Saved (409
+  `LAB_REPORT_PARAMETER_NOTE_NOT_EDITABLE` otherwise).
 
   It only changes the PRINTED and SHARED PDF (single print, Print All, Share
   Email / WhatsApp attachment). It never changes what the screen shows.
 
-  It only counts while the matching Branch Setting (Branch Admin > Branch Settings > Technician Settings > Report Printing) is ON: the **Lab Panel**
-  switch (`isLabPanelNotesSelectable`) for a report whose order line is a
-  panel, the **Lab Test** switch (`isLabTestNotesSelectable`) for a single test,
-  read from the branch that HOLDS the report. While the switch is OFF nothing is
-  saved and the current state comes back unchanged (same "silently ignore"
-  convention as `content-sections`); every section then prints.
+  It works whether the matching Branch Setting (Branch Admin > Branch Settings > Technician
+  Settings > Report Printing) is ON or OFF: that setting only sets the default selection (the
+  **Lab Panel** switch `isLabPanelNotesSelectable` for a report whose order line is a panel,
+  the **Lab Test** switch `isLabTestNotesSelectable` for a single test, read from the branch
+  that HOLDS the report). A free-text line has no Notes: nothing is saved and the current
+  state (`enabled: false`) comes back unchanged.
 
   Response: `{ enabled, isPanelMember, excludedSections }`. The same object is
   returned as `notesPrint` by `GET /lab-reports/:id`.

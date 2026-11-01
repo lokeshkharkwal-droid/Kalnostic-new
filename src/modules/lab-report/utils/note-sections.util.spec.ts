@@ -51,15 +51,39 @@ describe('normaliseNoteSections', () => {
 });
 
 describe('excludedSectionsToApply', () => {
-  it('leaves out the saved sections while the switch is on', () => {
-    expect([...excludedSectionsToApply(true, ['limitations'])]).toEqual([
+  const ALL = [
+    'useful_for',
+    'interpretation',
+    'limitations',
+    'remarks',
+    'references',
+  ];
+
+  it('before anyone chose: the setting ON selects everything, so nothing is left out', () => {
+    expect(excludedSectionsToApply(true, false, []).size).toBe(0);
+  });
+
+  it('before anyone chose: the setting OFF selects nothing, so every section is left out', () => {
+    expect([...excludedSectionsToApply(false, false, [])]).toEqual(ALL);
+  });
+
+  it('before anyone chose, a stray stored list is ignored', () => {
+    expect(excludedSectionsToApply(true, false, ['remarks']).size).toBe(0);
+    expect([...excludedSectionsToApply(false, false, ['remarks'])]).toEqual(
+      ALL,
+    );
+  });
+
+  it('once chosen, the saved list is the choice whether the setting is ON or OFF', () => {
+    expect([...excludedSectionsToApply(true, true, ['limitations'])]).toEqual([
+      'limitations',
+    ]);
+    expect([...excludedSectionsToApply(false, true, ['limitations'])]).toEqual([
       'limitations',
     ]);
   });
 
-  it('leaves nothing out while the switch is off, whatever was saved', () => {
-    expect(
-      excludedSectionsToApply(false, ['limitations', 'remarks']).size,
-    ).toBe(0);
+  it('once chosen, an empty list means every section prints, even with the setting OFF', () => {
+    expect(excludedSectionsToApply(false, true, []).size).toBe(0);
   });
 });

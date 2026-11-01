@@ -10,6 +10,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  MaxLength,
   Min,
 } from 'class-validator';
 import {
@@ -47,8 +48,13 @@ export class ListLabReportsDto {
   @IsIn(['ALL', 'IN_HOUSE', 'OUTSOURCE'])
   source?: ReportSource;
 
+  /**
+   * Case-insensitive match against the patient name, order id, test / panel name,
+   * referral panel, or the sample barcode. At most 50 characters (as in Accession).
+   */
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   search?: string;
 
   @IsOptional()
