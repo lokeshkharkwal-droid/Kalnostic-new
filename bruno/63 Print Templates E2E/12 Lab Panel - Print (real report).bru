@@ -34,10 +34,12 @@ docs {
 
   The five Notes tags (`{useful_for}`, `{interpretation}`, `{limitations}`,
   `{remarks}`, `{references}`) are blank for any section the technician left out
-  of THIS report (`PATCH /lab-reports/:id/note-print-sections`). It applies only
-  while the matching Branch Setting (Branch Admin > Branch Settings > Technician Settings > Report Printing) is on (Lab Panel switch for a report on a
-  panel order line, Lab Test switch otherwise, read from the branch that holds the
-  report); while it is off every section prints. A flat template hides the heading
+  of THIS report (`PATCH /lab-reports/:id/note-print-sections`). Until the technician
+  chooses, the matching Branch Setting (Branch Admin > Branch Settings > Technician Settings >
+  Report Printing; Lab Panel switch for a report on a panel order line, Lab Test switch
+  otherwise, read from the branch that holds the report) sets the DEFAULT: ON = every section
+  prints, OFF = none prints. Approval freezes that default, so an approved report prints the
+  same later. A flat template hides the heading
   and box of a blank section by wrapping the block in `{{#if useful_for}}...{{/if}}`
   (see docs/PRINT-TEMPLATES.md); a Latte template uses `{if $test->useful_for}`.
 
