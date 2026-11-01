@@ -853,7 +853,13 @@ export class LabReportService {
   private async panelMemberBranchLabTests(
     tx: Prisma.TransactionClient,
     branchLabPanelId: string,
-  ): Promise<{ id: string; sourceLabTestId: string | null }[]> {
+  ): Promise<
+    {
+      id: string;
+      sourceLabTestId: string | null;
+      departmentId: string | null;
+    }[]
+  > {
     const panelTests = await tx.branchLabPanelTest.findMany({
       where: { branchLabPanelId, deletedAt: null },
       select: { branchLabTestId: true },
@@ -864,14 +870,54 @@ export class LabReportService {
 
     const branchLabTests = await tx.branchLabTest.findMany({
       where: { id: { in: branchLabTestIds }, deletedAt: null },
-      select: { id: true, sourceLabTestId: true },
+      // departmentId is read so the per-member report can denormalize the
+      // MEMBER test's own department (not the panel's) — see
+      // createReportForAcceptedItem / LabReport.departmentId.
+      select: { id: true, sourceLabTestId: true, departmentId: true },
     });
     const byId = new Map(branchLabTests.map((t) => [t.id, t]));
     // Preserve the panel's own member-test sortOrder (branchLabTests above
     // has no guaranteed order matching branchLabTestIds).
     return branchLabTestIds
       .map((id) => byId.get(id))
-      .filter((t): t is { id: string; sourceLabTestId: string | null } => !!t);
+      .filter(
+        (
+          t,
+        ): t is {
+          id: string;
+          sourceLabTestId: string | null;
+          departmentId: string | null;
+        } => !!t,
+      );
+  }
+
+  /**
+   * Resolve a test's department id for the denormalized `LabReport.departmentId`:
+   * prefer the branch test's own logical `departmentId`, falling back to its
+   * source Master Data test's `departmentId`. Mirrors the accession module's
+   * identical resolution for `OrderSample.departmentId` so a report and its
+   * sample always agree on the owning department.
+   * @param tx the caller's transaction
+   * @param tenantId tenant scope
+   * @param branchDepartmentId the branch lab test's own department (preferred)
+   * @param sourceLabTestId the source Master Data test id (fallback lookup)
+   * @returns the resolved department id, or null when neither resolves one
+   */
+  private async resolveReportDepartmentId(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchDepartmentId: string | null,
+    sourceLabTestId: string | null,
+  ): Promise<string | null> {
+    if (branchDepartmentId) return branchDepartmentId;
+    if (sourceLabTestId) {
+      const src = await tx.labTest.findFirst({
+        where: { id: sourceLabTestId, tenantId, deletedAt: null },
+        select: { departmentId: true },
+      });
+      return src?.departmentId ?? null;
+    }
+    return null;
   }
 
   private async createReportForAcceptedItem(
@@ -904,6 +950,7 @@ export class LabReportService {
     const createOne = async (
       labTestId: string | null,
       memberBranchLabTestId: string | null,
+      departmentId: string | null,
     ): Promise<void> => {
       const report = await tx.labReport.create({
         data: {
@@ -912,6 +959,11 @@ export class LabReportService {
           orderItemId,
           memberBranchLabTestId,
           labTestId,
+          // Denormalized department of this report's test — the member test's own
+          // for a panel member, the standalone test's otherwise. Mirrors
+          // OrderSample.departmentId so Reporting's department-visibility scope
+          // filters directly on the report (see LabReport.departmentId).
+          departmentId,
           status: LabReportStatus.PENDING,
           isOutsourced: orderItem.outsourceCenterId !== null,
           // An outsourced-out item counts as referral work from the moment its
@@ -954,7 +1006,13 @@ export class LabReportService {
       }
       for (const member of memberTests) {
         if (existingMemberIds.has(member.id)) continue;
-        await createOne(member.sourceLabTestId, member.id);
+        const departmentId = await this.resolveReportDepartmentId(
+          tx,
+          tenantId,
+          member.departmentId,
+          member.sourceLabTestId,
+        );
+        await createOne(member.sourceLabTestId, member.id, departmentId);
       }
       return;
     }
@@ -963,7 +1021,13 @@ export class LabReportService {
     // unchanged behaviour — exactly one report, memberBranchLabTestId null.
     if (existingMemberIds.has(null)) return;
     const labTestId = orderItem.branchLabTest?.sourceLabTestId ?? null;
-    await createOne(labTestId, null);
+    const departmentId = await this.resolveReportDepartmentId(
+      tx,
+      tenantId,
+      orderItem.branchLabTest?.departmentId ?? null,
+      labTestId,
+    );
+    await createOne(labTestId, null, departmentId);
   }
 
   // ── Worklist ────────────────────────────────────────────────────────────
@@ -1028,6 +1092,12 @@ export class LabReportService {
     // forwarded on an accepted EXTERNAL/OUTSOURCE transfer. A plain equality on
     // the denormalized flag; see LabReport.isReferral.
     if (filters.outsource) where.isReferral = true;
+    // Explicit "Department" dropdown filter: match the report's OWN denormalized
+    // department directly (same column the visibility scope uses). Previously this
+    // joined through orderItem.branchLabTest.departmentId, which is null for panel
+    // order items, so filtering by a department never returned panel-member reports
+    // in that department.
+    if (filters.departmentId) where.departmentId = filters.departmentId;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -1037,8 +1107,6 @@ export class LabReportService {
     // sends the shared source id so one filter selection matches the test/
     // panel regardless of which list's copy a given order actually used.
     const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {};
-    if (filters.departmentId)
-      branchLabTestWhere.departmentId = filters.departmentId;
     if (filters.branchLabTestId) {
       branchLabTestWhere.OR = [
         { id: filters.branchLabTestId },
@@ -1174,9 +1242,18 @@ export class LabReportService {
   ): void {
     const rules = usableRules(scope);
     if (rules.length === 0) return; // the branch scope already matches nothing
-    const lineOk: Prisma.LabReportWhereInput = {
-      orderItem: { is: this.departmentScopeForOrderItem(scopeIds) },
-    };
+    // The report's OWN denormalized department (stamped at creation from the
+    // test's own department — the panel MEMBER test's for a panel-member report,
+    // the standalone test's otherwise; mirrors OrderSample.departmentId). Filtered
+    // directly on the report, NOT joined through orderItem.branchLabTest /
+    // branchLabPanel: that join resolved a panel member to the PANEL's single
+    // department and hid it from the member test's own department. A report is
+    // visible when its department is unassigned (NULL → everyone) or one of the
+    // caller's; a user with no department sees only unassigned reports.
+    const lineOk: Prisma.LabReportWhereInput =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : { departmentId: null };
     const entryOk: Prisma.BranchLabTestWhereInput =
       scopeIds.length > 0
         ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
@@ -1206,31 +1283,6 @@ export class LabReportService {
       ...(Array.isArray(and) ? and : and ? [and] : []),
       { OR: perBranch },
     ];
-  }
-
-  /**
-   * The department-visibility condition for a report's order item. A report maps
-   * to exactly one order item, which is EITHER a branch lab test OR a branch lab
-   * panel (the other relation is null), so only the matching pair of branches can
-   * apply — giving correct per-item department resolution. Unassigned tests/panels
-   * (NULL department) are visible to all; an empty scope (user with no department)
-   * therefore sees only unassigned items.
-   * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
-   */
-  private departmentScopeForOrderItem(
-    scopeIds: string[],
-  ): Prisma.OrderItemWhereInput {
-    const or: Prisma.OrderItemWhereInput[] = [
-      { branchLabTest: { is: { departmentId: null } } },
-      { branchLabPanel: { is: { departmentId: null } } },
-    ];
-    if (scopeIds.length > 0) {
-      or.push(
-        { branchLabTest: { is: { departmentId: { in: scopeIds } } } },
-        { branchLabPanel: { is: { departmentId: { in: scopeIds } } } },
-      );
-    }
-    return { OR: or };
   }
 
   /**

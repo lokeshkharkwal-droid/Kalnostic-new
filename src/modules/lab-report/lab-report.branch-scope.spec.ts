@@ -55,7 +55,7 @@ describe('worklist branch scope → query', () => {
     expect(and[1]!.OR.map((r) => r.branchId)).toEqual(['A', 'B']);
   });
 
-  it('department visibility is per branch: what a branch HOLDS uses the entry it works with, what it only SENT uses the order line', () => {
+  it('department visibility is per branch: what a branch HOLDS uses the entry it works with, what it only SENT uses the report line department', () => {
     const w = whereFor({
       rules: [{ branchId: 'A', statuses: 'ALL', senderLinked: true }],
     });
@@ -63,18 +63,22 @@ describe('worklist branch scope → query', () => {
     expect(dept).toHaveLength(1);
     const [rule] = dept as Array<{ OR: Where[] }>;
     const [held, sent] = rule!.OR as [Where, Where];
-    // held by A: the setup entry A works with (null = the order line's), else the order line
+    // held by A: not-yet-transferred reports filter on the report's OWN
+    // denormalized department (no join); transferred ones use the chosen entry.
     expect(held.branchId).toBe('A');
     expect(held.OR).toEqual([
-      expect.objectContaining({ performingBranchLabTestId: null }),
+      // empty scope → only unassigned, filtered directly on the report line
+      { performingBranchLabTestId: null, departmentId: null },
       expect.objectContaining({
         performingBranchLabTestId: { not: null },
         performingEntry: { is: { departmentId: null } },
       }),
     ]);
-    // sent by A and held elsewhere: always the order line's entry
+    // sent by A and held elsewhere: the report's own department, filtered
+    // directly (no join through orderItem.branchLabTest/branchLabPanel).
     expect(sent.branchId).toEqual({ not: 'A' });
-    expect(sent.orderItem).toBeDefined();
+    expect(sent.departmentId).toBeNull();
+    expect(sent.orderItem).toBeUndefined();
     expect(sent.performingEntry).toBeUndefined();
   });
 
