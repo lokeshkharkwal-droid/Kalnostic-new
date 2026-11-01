@@ -488,30 +488,60 @@ describe('upsertResultValues — a screen that is out of date', () => {
 });
 
 describe('upsertResultValues — the history names the ranges when the technician changes the range of an analyzer value', () => {
-  const rangeChange = (stored: StoredRow, ranges: RangeRow[], incoming: Record<string, unknown>) => {
+  const rangeChange = (
+    stored: StoredRow,
+    ranges: RangeRow[],
+    incoming: Record<string, unknown>,
+  ) => {
     const m = build([stored], ranges);
-    return save(m, [{ resultParamId: P1, observed1: stored.observed1 ?? '', ...incoming } as UpsertResultValuesDto['values'][number]]).then(() => m);
+    return save(m, [
+      {
+        resultParamId: P1,
+        observed1: stored.observed1 ?? '',
+        ...incoming,
+      },
+    ]).then(() => m);
   };
-  const notesOf = (m: ReturnType<typeof build>) => m.labReportHistory.create.mock.calls[0]![0].data.notes as string;
+  const notesOf = (m: ReturnType<typeof build>) =>
+    m.labReportHistory.create.mock.calls[0]![0].data.notes as string;
 
   it('old range to new range, both named (the old one from the value, the new one from the save)', async () => {
     const m = await rangeChange(
       machine(P1, { referenceRangeId: 'old' }),
-      [range('old', { labAdapterId: 'adapter-1', unit: 'g/L', displayOfReferenceRange: '10 - 20 (Default)' }), range('new', { unit: 'g/L', displayOfReferenceRange: '12 - 17 (Adult)' })],
+      [
+        range('old', {
+          labAdapterId: 'adapter-1',
+          unit: 'g/L',
+          displayOfReferenceRange: '10 - 20 (Default)',
+        }),
+        range('new', {
+          unit: 'g/L',
+          displayOfReferenceRange: '12 - 17 (Adult)',
+        }),
+      ],
       { overridesAnalyzer: true, referenceRangeId: 'new' },
     );
-    expect(notesOf(m)).toContain('Range changed — Hemoglobin: Cobas · Refractometry · g/L · 10 - 20 (Default) → Refractometry · g/L · 12 - 17 (Adult); result 130 g/L kept');
+    expect(notesOf(m)).toContain(
+      'Range changed — Hemoglobin: Cobas · Refractometry · g/L · 10 - 20 (Default) → Refractometry · g/L · 12 - 17 (Adult); result 130 g/L kept',
+    );
   });
 
   it('a range in another unit: the entry says the unit moved and the result was kept, never converted; the stored number is untouched', async () => {
     const m = await rangeChange(
       machine(P1, { referenceRangeId: 'old' }),
-      [range('old', { unit: 'g/L' }), range('new', { unit: 'g/dL', displayOfReferenceRange: '12 - 17' })],
+      [
+        range('old', { unit: 'g/L' }),
+        range('new', { unit: 'g/dL', displayOfReferenceRange: '12 - 17' }),
+      ],
       { overridesAnalyzer: true, referenceRangeId: 'new', unit: 'g/dL' },
     );
     expect(notesOf(m)).toContain('result 130 kept (unit g/L → g/dL)');
     const update = m.labReportResultValue.update.mock.calls[0]![0];
-    expect(update.data).toMatchObject({ observed1: '130', unit: 'g/dL', referenceRangeId: 'new' });
+    expect(update.data).toMatchObject({
+      observed1: '130',
+      unit: 'g/dL',
+      referenceRangeId: 'new',
+    });
     expect(update.data).not.toHaveProperty('source');
     expect(update.data).not.toHaveProperty('enteredBy');
   });
@@ -528,17 +558,84 @@ describe('upsertResultValues — the history names the ranges when the technicia
   it('number and range changed together: one entry that shows both', async () => {
     const m = await rangeChange(
       machine(P1, { referenceRangeId: 'old' }),
-      [range('old'), range('new', { displayOfReferenceRange: '12 - 17 (Adult)' })],
+      [
+        range('old'),
+        range('new', { displayOfReferenceRange: '12 - 17 (Adult)' }),
+      ],
       { observed1: '13.5', overridesAnalyzer: true, referenceRangeId: 'new' },
     );
-    expect(notesOf(m)).toContain('Value and range edited — Hemoglobin: 130 g/L → 13.5 g/L; range');
+    expect(notesOf(m)).toContain(
+      'Value and range edited — Hemoglobin: 130 g/L → 13.5 g/L; range',
+    );
   });
 
   it('the range is only looked up when it changed (a value edit with the same range does not query ranges)', async () => {
     const m = build([machine(P1, { referenceRangeId: 'same' })]);
-    await save(m, [{ resultParamId: P1, observed1: '131', referenceRangeId: 'same' }]);
-    const tx = (m.prisma.withTenant.mock.calls[0] as unknown[])[1] as unknown;
-    expect(notesOf(m)).toContain('Value edited — Hemoglobin: 130 g/L → 131 g/L');
+    await save(m, [
+      { resultParamId: P1, observed1: '131', referenceRangeId: 'same' },
+    ]);
+    const tx = (m.prisma.withTenant.mock.calls[0] as unknown[])[1];
+    expect(notesOf(m)).toContain(
+      'Value edited — Hemoglobin: 130 g/L → 131 g/L',
+    );
     expect(typeof tx).toBe('function');
+  });
+});
+
+describe('upsertResultValues — a parameter with NO reference range configured never blocks the save', () => {
+  const notesOf = (m: ReturnType<typeof build>) =>
+    m.labReportHistory.create.mock.calls[0]![0].data.notes as string;
+
+  it("an analyzer's value saved with no range: accepted, nothing is written for the range, the analyzer's record is untouched", async () => {
+    const m = build([machine(P1)]);
+    await expect(
+      save(m, [{ resultParamId: P1, observed1: '130', unit: 'g/L' }]),
+    ).resolves.toBeDefined();
+    expect(m.labReportResultValue.upsert).not.toHaveBeenCalled();
+    // number and unit are the analyzer's own and unchanged, and no range was sent: there is nothing to write
+    expect(m.labReportResultValue.update).not.toHaveBeenCalled();
+    expect(m.labReportHistory.create).not.toHaveBeenCalled();
+  });
+
+  it("a technician's own number over the analyzer's, with no range at all: stored, no range written, the analyzer stays the record, the number change is audited", async () => {
+    const m = build([machine(P1)]);
+    await save(m, [
+      { resultParamId: P1, observed1: '131', overridesAnalyzer: true },
+    ]);
+    const update = m.labReportResultValue.update.mock.calls[0]![0];
+    expect(update.data).toMatchObject({ observed1: '131' });
+    expect(update.data!.referenceRangeId).toBeUndefined();
+    expect(update.data!.referenceDisplay).toBeUndefined();
+    expect(update.data).not.toHaveProperty('source');
+    expect(update.data).not.toHaveProperty('enteredBy');
+    expect(notesOf(m)).toContain(
+      'Value edited — Hemoglobin: 130 g/L → 131 g/L',
+    );
+  });
+
+  it('a value typed by hand with no range at all: saved as entered, no range written', async () => {
+    const m = build([]);
+    await save(m, [{ resultParamId: P1, observed1: '7' }]);
+    const call = m.labReportResultValue.upsert.mock.calls[0]![0];
+    expect(call.create).toMatchObject({ observed1: '7', source: 'MANUAL' });
+    expect(call.create!.referenceRangeId).toBeUndefined();
+    expect(call.update!.referenceRangeId).toBeUndefined();
+  });
+
+  it('several parameters, only one with a range: both are saved', async () => {
+    const m = build([machine(P1), machine(P2, { unit: 'g/dL' })]);
+    await save(m, [
+      {
+        resultParamId: P1,
+        observed1: '130',
+        referenceRangeId: 'rng-1',
+        referenceDisplay: '12 - 17',
+      },
+      { resultParamId: P2, observed1: '130' },
+    ]);
+    const updates = m.labReportResultValue.update.mock.calls.map((c) => c[0]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.data).toMatchObject({ referenceRangeId: 'rng-1' });
+    expect(m.labReportResultValue.upsert).not.toHaveBeenCalled();
   });
 });
