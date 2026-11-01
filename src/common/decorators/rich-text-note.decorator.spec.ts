@@ -130,3 +130,87 @@ describe('every DTO that carries a rich-text note cleans it', () => {
     for (const f of fields) expect([f, dto[f]]).toEqual([f, CLEAN]);
   });
 });
+
+describe('@RichTextNote({ strict: true }) never stores a non-text value as text', () => {
+  class StrictDto {
+    @IsOptional()
+    @IsString()
+    @RichTextNote('Strict Note', { strict: true })
+    note?: string;
+  }
+  const strict = (body: unknown) =>
+    pipe.transform(body, { type: 'body', metatype: StrictDto });
+
+  it.each([
+    ['a number', 5],
+    ['a boolean', true],
+    ['an object', { a: 1 }],
+    ['an array', ['x', 'y']],
+  ])(
+    'rejects %s with a 400 instead of turning it into text',
+    async (_n, value) => {
+      await expect(strict({ note: value })).rejects.toMatchObject({
+        status: 400,
+      });
+    },
+  );
+
+  it('still cleans text, keeps plain text and an empty string, and leaves an omitted field omitted', async () => {
+    expect(((await strict({ note: DIRTY })) as StrictDto).note).toBe(CLEAN);
+    expect(((await strict({ note: 'plain text' })) as StrictDto).note).toBe(
+      'plain text',
+    );
+    expect(((await strict({ note: '' })) as StrictDto).note).toBe('');
+    expect(((await strict({})) as StrictDto).note).toBeUndefined();
+  });
+
+  it('still applies the length limit', async () => {
+    const tooLong = '<p>' + 'x'.repeat(NOTE_MAX_LENGTH) + '</p>';
+    await expect(strict({ note: tooLong })).rejects.toMatchObject({
+      response: {
+        message: [expect.stringContaining('Strict Note is too long')],
+      },
+    });
+  });
+
+  it('the default (non-strict) behaviour is unchanged for every other field: a number is still turned into text', async () => {
+    expect(((await run({ note: 123 })) as SampleDto).note).toBe('123');
+  });
+
+  it.each([
+    ['UpdateParameterNoteDto', UpdateParameterNoteDto, 'content'],
+    ['UpdateContentSectionsDto (remarks)', UpdateContentSectionsDto, 'remarks'],
+    [
+      'UpdateContentSectionsDto (usefulFor)',
+      UpdateContentSectionsDto,
+      'usefulFor',
+    ],
+    [
+      'UpdateContentSectionsDto (interpretation)',
+      UpdateContentSectionsDto,
+      'interpretation',
+    ],
+    [
+      'UpdateContentSectionsDto (limitations)',
+      UpdateContentSectionsDto,
+      'limitations',
+    ],
+    [
+      'UpdateContentSectionsDto (references)',
+      UpdateContentSectionsDto,
+      'references',
+    ],
+  ])(
+    '%s refuses a number, a boolean and an object, so "5" or "[object Object]" can never reach a report',
+    async (_n, Dto, field) => {
+      for (const value of [5, true, { a: 1 }, ['x']]) {
+        await expect(
+          pipe.transform(
+            { [field]: value },
+            { type: 'body', metatype: Dto as never },
+          ),
+        ).rejects.toMatchObject({ status: 400 });
+      }
+    },
+  );
+});
