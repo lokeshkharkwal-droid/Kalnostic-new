@@ -13,9 +13,10 @@ const SINGLE_BRANCH: WorklistBranchScope = {
 /**
  * Technician -> Reporting: a report of a PANEL order line is one report per member test. Its order line is the panel
  * (no `BranchLabTest`), so the member is only known through `LabReport.memberBranchLabTestId`. The worklist judges a
- * panel's test by ITS OWN test entry - the name the search matches, the Lab Test filter, and the department (the
- * Department column, the Department filter and who may see the row) - the same rule Accession applies to a panel's
- * samples. The list, the status-tab counts and the TAT summary share `buildListWhere`.
+ * panel's test by ITS OWN test entry - the name the search matches, the Lab Test filter and the Department column
+ * (through the member entry), and, for the Department filter and who may see the row, the report's own stamped
+ * `LabReport.departmentId` (the member test's own department, set when the report is created) - the same rule
+ * Accession applies to a panel's samples. The list, the status-tab counts and the TAT summary share `buildListWhere`.
  */
 describe('LabReportService — worklist: panel members are judged by their own test entry', () => {
   const deps = Array(11).fill(undefined) as unknown[];
@@ -42,9 +43,7 @@ describe('LabReportService — worklist: panel members are judged by their own t
       SINGLE_BRANCH,
       filters,
       scopeIds,
-      members
-        ? { search: [], testFilter: [], department: [], hidden: [], ...members }
-        : undefined,
+      members ? { search: [], testFilter: [], ...members } : undefined,
     );
   const andOf = (w: Prisma.LabReportWhereInput) =>
     Array.isArray(w.AND) ? w.AND : w.AND ? [w.AND] : [];
@@ -114,7 +113,7 @@ describe('LabReportService — worklist: panel members are judged by their own t
       expect(alts[1]).toEqual({ memberBranchLabTestId: { in: ['m1'] } });
     });
 
-    it("with a Department filter too: a single test must be in that department; a member's own department was already applied when its ids were resolved", () => {
+    it('with a Department filter too: the department is on the report itself, so neither alternative carries one', () => {
       const w = build(
         { branchLabTestId: 'T', departmentId: 'D' },
         { testFilter: ['m1'] },
@@ -122,64 +121,46 @@ describe('LabReportService — worklist: panel members are judged by their own t
       const alts = memberClauses(w)[0]!.OR as Prisma.LabReportWhereInput[];
       expect(alts[0]).toEqual({
         orderItem: {
-          branchLabTest: {
-            departmentId: 'D',
-            OR: [{ id: 'T' }, { sourceLabTestId: 'T' }],
-          },
+          branchLabTest: { OR: [{ id: 'T' }, { sourceLabTestId: 'T' }] },
         },
       });
-      // no condition on the panel: the member's OWN department decides
       expect(alts[1]).toEqual({ memberBranchLabTestId: { in: ['m1'] } });
+      // a single test AND a panel test must both be in the department: the report's own stamped department
+      expect(w.departmentId).toBe('D');
     });
 
-    it('with a Department filter and no member of that test: the old order-line rule, unchanged', () => {
+    it('with a Department filter and no member of that test: the order line carries the test, the report the department', () => {
       const w = build({ branchLabTestId: 'T', departmentId: 'D' });
       expect(w.orderItem?.branchLabTest).toEqual({
-        departmentId: 'D',
         OR: [{ id: 'T' }, { sourceLabTestId: 'T' }],
       });
+      expect(w.departmentId).toBe('D');
       expect(memberClauses(w)).toHaveLength(0);
     });
   });
 
   describe('Department filter', () => {
-    it("alone: a single test / an unsplit panel line by the order line's department, a panel's test by ITS OWN department", () => {
-      const w = build({ departmentId: 'D' }, { department: ['m1', 'm2'] });
-      const clauses = memberClauses(w);
-      expect(clauses).toHaveLength(1);
-      expect(clauses[0]!.OR).toEqual([
-        {
-          memberBranchLabTestId: null,
-          orderItem: {
-            OR: [
-              { branchLabTest: { is: { departmentId: 'D' } } },
-              { branchLabPanel: { is: { departmentId: 'D' } } },
-            ],
-          },
-        },
-        { memberBranchLabTestId: { in: ['m1', 'm2'] } },
-      ]);
-      // never on the order line's test by itself: that is what hid every panel test
+    it('alone: it is the report OWN stamped department - a single test, or a panel test own, never the panel', () => {
+      const w = build({ departmentId: 'D' });
+      expect(w.departmentId).toBe('D');
+      // no join through the order line test / panel (that is what hid every panel test) and no member clause
       expect(w.orderItem?.branchLabTest).toBeUndefined();
-    });
-
-    it('a panel whose tests are in no such department lists none of them (an empty member list matches nothing)', () => {
-      const w = build({ departmentId: 'D' }, { department: [] });
-      const alts = memberClauses(w)[0]!.OR as Prisma.LabReportWhereInput[];
-      expect(alts[1]).toEqual({ memberBranchLabTestId: { in: [] } });
+      expect(w.orderItem?.branchLabPanel).toBeUndefined();
+      expect(memberClauses(w)).toHaveLength(0);
     });
 
     it('no department: nothing is added', () => {
       const w = build({});
+      expect(w.departmentId).toBeUndefined();
       expect(memberClauses(w)).toHaveLength(0);
       expect(w.orderItem?.AND).toBeUndefined();
       expect(w.orderItem?.branchLabTest).toBeUndefined();
     });
 
-    it("it does not use the order line's search slot, so search and department apply together", () => {
+    it('it does not use the order line search slot, so search and department apply together', () => {
       const w = build({ departmentId: 'D', search: 'lipid' });
       expect(w.orderItem?.OR).toHaveLength(4);
-      expect(memberClauses(w)).toHaveLength(1);
+      expect(w.departmentId).toBe('D');
     });
 
     it('it leaves the Lab Panel filter alone', () => {
@@ -187,7 +168,7 @@ describe('LabReportService — worklist: panel members are judged by their own t
       expect(w.orderItem?.branchLabPanel).toEqual({
         OR: [{ id: 'P' }, { sourceLabPanelId: 'P' }],
       });
-      expect(memberClauses(w)).toHaveLength(1);
+      expect(w.departmentId).toBe('D');
     });
   });
 
@@ -203,45 +184,28 @@ describe('LabReportService — worklist: panel members are judged by their own t
     /** The per-branch rule's "held by this branch" alternative for a report with no performing entry. */
     const heldLineRule = (w: Prisma.LabReportWhereInput) => {
       const perBranch = andOf(w).at(-1)!.OR as Prisma.LabReportWhereInput[];
-      const held = (perBranch[0]!.OR as Prisma.LabReportWhereInput[])[0]!;
-      return held.OR as Prisma.LabReportWhereInput[];
+      return (perBranch[0]!.OR as Prisma.LabReportWhereInput[])[0]!;
     };
 
-    it("a single test or an unsplit panel line: the order line's department (as before)", () => {
-      const [line] = heldLineRule(build({}, {}, ['d1']));
-      expect(line).toEqual({
-        memberBranchLabTestId: null,
-        orderItem: {
-          is: {
-            OR: [
-              { branchLabTest: { is: { departmentId: null } } },
-              { branchLabPanel: { is: { departmentId: null } } },
-              { branchLabTest: { is: { departmentId: { in: ['d1'] } } } },
-              { branchLabPanel: { is: { departmentId: { in: ['d1'] } } } },
-            ],
-          },
-        },
+    it('a single test or a panel test alike: the report own stamped department is unassigned or one of the user', () => {
+      expect(heldLineRule(build({}, {}, ['d1']))).toEqual({
+        performingBranchLabTestId: null,
+        OR: [{ departmentId: null }, { departmentId: { in: ['d1'] } }],
       });
     });
 
-    it("a panel's test: visible unless ITS OWN department is one the user is not in (the panel's department is ignored)", () => {
-      const rule = heldLineRule(build({}, { hidden: ['h1', 'h2'] }, ['d1']));
-      expect(rule[1]).toEqual({
-        memberBranchLabTestId: { not: null, notIn: ['h1', 'h2'] },
+    it('a user with no department sees only reports whose own department is unassigned', () => {
+      expect(heldLineRule(build({}, {}, []))).toEqual({
+        performingBranchLabTestId: null,
+        departmentId: null,
       });
     });
 
-    it('a user with no department: every panel test with a department is hidden, one with none stays visible', () => {
-      const rule = heldLineRule(build({}, { hidden: ['h1'] }, []));
-      expect(rule[1]).toEqual({
-        memberBranchLabTestId: { not: null, notIn: ['h1'] },
-      });
-    });
-
-    it('with nothing hidden every panel test passes (not-in an empty list)', () => {
-      expect(heldLineRule(build({}, {}, ['d1']))[1]).toEqual({
-        memberBranchLabTestId: { not: null, notIn: [] },
-      });
+    it('it never joins through the order line test or panel, and never lists member ids (the panel department plays no part)', () => {
+      const rule = JSON.stringify(andOf(build({}, {}, ['d1'])).at(-1));
+      expect(rule).not.toContain('branchLabPanel');
+      expect(rule).not.toContain('"orderItem"');
+      expect(rule).not.toContain('memberBranchLabTestId');
     });
 
     it('a report sent to another branch still uses the receiving branch entry (the performing-entry rule is untouched)', () => {
@@ -274,13 +238,8 @@ describe('LabReportService.resolveMemberEntryMatches', () => {
         ),
     };
     // each lookup is told apart by the condition it carries
-    const kind = (where: Record<string, unknown>) => {
-      const dept = where.departmentId;
-      if (where.testName) return 'search';
-      if (where.OR) return 'testFilter';
-      if (dept && typeof dept === 'object') return 'hidden';
-      return 'department';
-    };
+    const kind = (where: Record<string, unknown>) =>
+      where.testName ? 'search' : 'testFilter';
     const branchLabTest = {
       findMany: jest.fn<Promise<unknown[]>, [Args]>((args) =>
         Promise.resolve(
@@ -293,28 +252,24 @@ describe('LabReportService.resolveMemberEntryMatches', () => {
     const service = new LabReportService(
       ...(deps as ConstructorParameters<typeof LabReportService>),
     );
-    const resolve = (
-      f: Partial<ListLabReportsDto>,
-      scopeIds: string[] = ['d1'],
-    ) =>
+    const resolve = (f: Partial<ListLabReportsDto>) =>
       (
         service as unknown as {
           resolveMemberEntryMatches: (
             t: string,
             s: WorklistBranchScope,
             f: ListLabReportsDto,
-            ids: string[],
           ) => Promise<MemberEntryMatches>;
         }
-      ).resolveMemberEntryMatches('t1', SINGLE_BRANCH, f, scopeIds);
+      ).resolveMemberEntryMatches('t1', SINGLE_BRANCH, f);
     const lookups = () =>
       branchLabTest.findMany.mock.calls.map((c) => c[0].where);
     return { resolve, labReport, branchLabTest, lookups };
   }
 
-  it("looks at the member tests of reports in the caller's branches only", async () => {
+  it('looks at the member tests of reports in the caller branches only', async () => {
     const m = build(['m1']);
-    await m.resolve({});
+    await m.resolve({ search: 'lipid' });
     expect(m.labReport.findMany.mock.calls[0]![0]).toMatchObject({
       where: {
         tenantId: 't1',
@@ -326,37 +281,18 @@ describe('LabReportService.resolveMemberEntryMatches', () => {
     });
   });
 
-  it('no filter: only the "hidden by department" lookup runs (it is part of who may see a row)', async () => {
-    const m = build(['m1', 'm2'], { hidden: ['m2'] });
+  it('no search and no Lab Test filter: nothing is looked up at all (the usual list load costs no extra query)', async () => {
+    const m = build(['m1', 'm2'], { search: ['m1'], testFilter: ['m2'] });
     await expect(m.resolve({})).resolves.toEqual({
       search: [],
       testFilter: [],
-      department: [],
-      hidden: ['m2'],
     });
-    expect(m.lookups()).toHaveLength(1);
-    expect(m.lookups()[0]).toMatchObject({
-      id: { in: ['m1', 'm2'] },
-      deletedAt: null,
-      departmentId: { not: null, notIn: ['d1'] },
+    await expect(m.resolve({ departmentId: 'D' })).resolves.toEqual({
+      search: [],
+      testFilter: [],
     });
-  });
-
-  it('a user with no department: every member entry that has a department is hidden', async () => {
-    const m = build(['m1']);
-    await m.resolve({}, []);
-    expect(m.lookups()[0]!.departmentId).toEqual({ not: null });
-  });
-
-  it('Department filter: the member entries whose own department is that one', async () => {
-    const m = build(['m1', 'm2'], { department: ['m1'] });
-    const r = await m.resolve({ departmentId: 'D' });
-    expect(r.department).toEqual(['m1']);
-    expect(m.lookups()).toContainEqual({
-      id: { in: ['m1', 'm2'] },
-      deletedAt: null,
-      departmentId: 'D',
-    });
+    expect(m.labReport.findMany).not.toHaveBeenCalled();
+    expect(m.branchLabTest.findMany).not.toHaveBeenCalled();
   });
 
   it('search: the member entries whose name contains the text (case-insensitive, trimmed, literal %)', async () => {
@@ -370,7 +306,7 @@ describe('LabReportService.resolveMemberEntryMatches', () => {
     });
   });
 
-  it("Lab Test filter: the entry or any copy of the same test, narrowed to the Department filter's department", async () => {
+  it('Lab Test filter: the entry or any copy of the same test - the Department filter is not part of it (it is on the report)', async () => {
     const m = build([], { testFilter: ['c1', 'c2'] });
     const r = await m.resolve({ branchLabTestId: 'T', departmentId: 'D' });
     expect(r.testFilter).toEqual(['c1', 'c2']);
@@ -378,30 +314,21 @@ describe('LabReportService.resolveMemberEntryMatches', () => {
       tenantId: 't1',
       deletedAt: null,
       OR: [{ id: 'T' }, { sourceLabTestId: 'T' }],
-      departmentId: 'D',
     });
-    const noDept = build([], { testFilter: ['c1'] });
-    await noDept.resolve({ branchLabTestId: 'T' });
-    expect(noDept.lookups()[0]).not.toHaveProperty('departmentId');
+    expect(m.lookups()[0]).not.toHaveProperty('departmentId');
   });
 
-  it('no panel member on any report: only the Lab Test filter (which does not depend on reports) is looked up', async () => {
-    const m = build([], { hidden: ['x'], search: ['x'], department: ['x'] });
-    const r = await m.resolve({ search: 'lipid', departmentId: 'D' });
-    expect(r).toEqual({
-      search: [],
-      testFilter: [],
-      department: [],
-      hidden: [],
-    });
+  it('no panel member on any report: the name search finds nothing and runs no lookup', async () => {
+    const m = build([], { search: ['x'] });
+    const r = await m.resolve({ search: 'lipid' });
+    expect(r).toEqual({ search: [], testFilter: [] });
     expect(m.branchLabTest.findMany).not.toHaveBeenCalled();
   });
 
-  it('a blank search and no department: neither lookup runs', async () => {
+  it('a blank search: no name lookup runs', async () => {
     const m = build(['m1']);
-    await m.resolve({ search: '   ' });
+    await m.resolve({ search: '   ', branchLabTestId: 'T' });
     expect(m.lookups().some((w) => 'testName' in w)).toBe(false);
-    expect(m.lookups().some((w) => w.departmentId === 'D')).toBe(false);
   });
 });
 

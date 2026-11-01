@@ -5,8 +5,9 @@
  * `BranchLabTest`), so the line's own test name / test filter / department can never describe the member: the
  * member is only known through `LabReport.memberBranchLabTestId`, a plain id (no Prisma relation) that the row's
  * displayed test name and department are looked up from. The worklist therefore judges a panel member by ITS OWN
- * test entry: the name the search matches, the Lab Test filter, and the department (the Department column, the
- * Department filter and who may see the row) - the same rule Accession applies to a panel's samples.
+ * test entry: the name the search matches and the Lab Test filter - the same rule Accession applies to a panel's
+ * samples. (The Department filter and who may see the row do NOT go through here: they compare the report's own
+ * stamped `LabReport.departmentId`, which is already the member test's own department.)
  *
  * The matching ids are resolved once per request (they need a query) and handed to the pure `buildListWhere`.
  */
@@ -17,28 +18,14 @@ export interface MemberEntryMatches {
    */
   search: string[];
   /**
-   * `BranchLabTest` ids that are the Lab Test filter's test (the entry itself or any copy of the same master test,
-   * and, when a Department filter is set too, only those whose own department is that department): a report whose
-   * `memberBranchLabTestId` is one of them matches the filter.
+   * `BranchLabTest` ids that are the Lab Test filter's test (the entry itself or any copy of the same master test):
+   * a report whose `memberBranchLabTestId` is one of them matches the filter.
    */
   testFilter: string[];
-  /**
-   * Member entries of existing reports whose own department is the Department filter's department: a report whose
-   * `memberBranchLabTestId` is one of them matches the Department filter.
-   */
-  department: string[];
-  /**
-   * Member entries the caller may NOT see by department: their own department is set and is not one of the
-   * caller's departments. A member report with one of these ids is hidden from them (an entry with no department
-   * is visible to everyone, as everywhere else).
-   */
-  hidden: string[];
 }
 
-/** No panel member matches or is hidden (the usual case, and what a caller that does not resolve members passes). */
+/** No panel member matches (the usual case, and what a caller that does not resolve members passes). */
 export const NO_MEMBER_MATCHES: MemberEntryMatches = {
   search: [],
   testFilter: [],
-  department: [],
-  hidden: [],
 };

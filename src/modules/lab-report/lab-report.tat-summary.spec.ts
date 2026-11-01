@@ -49,28 +49,16 @@ describe('LabReportService.getTatSummary', () => {
       departmentId: 'd9',
     })) as {
       orderItem: { order: { orderDate: unknown } };
-      AND: unknown[];
+      departmentId: string;
     };
     expect(where.orderItem.order.orderDate).toEqual({
       gte: new Date('2026-10-06T00:00:00.000Z'),
       lte: new Date('2026-10-09T00:00:00.000Z'),
     });
-    // the department: a single test / unsplit panel line by the order line's department, a split panel's test by ITS
-    // OWN department (no member of department d9 here)
-    expect(where.AND).toContainEqual({
-      OR: [
-        {
-          memberBranchLabTestId: null,
-          orderItem: {
-            OR: [
-              { branchLabTest: { is: { departmentId: 'd9' } } },
-              { branchLabPanel: { is: { departmentId: 'd9' } } },
-            ],
-          },
-        },
-        { memberBranchLabTestId: { in: [] } },
-      ],
-    });
+    // The explicit Department filter now matches the report's OWN denormalized
+    // department directly (so it works for panel members too), not a join through
+    // orderItem.branchLabTest.departmentId (null for panel order items).
+    expect(where.departmentId).toBe('d9');
   });
 
   it('keeps the tenant, branch scope and department scope of the tab counts', async () => {

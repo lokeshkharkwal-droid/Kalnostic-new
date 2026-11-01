@@ -62,13 +62,11 @@ docs {
   test as a MEMBER of a lab panel (a panel line has one report per member; the
   member is matched through its own entry, not the panel's order line).
 
-  `departmentId` matches the department the row shows in its Department
-  column. A single test is matched by its own department. A test inside a lab
-  panel is matched by ITS OWN department (the department of its test entry),
-  not the panel's, the same rule Accession applies to a panel's samples. A
-  panel line that was never split into member tests is matched by the panel's
-  department. With `branchLabTestId` too, the test must also be in that
-  department. The status counts follow every one of these filters.
+  `departmentId` matches the department stamped on the report itself (`LabReport.departmentId`), set when the
+  report is created from the test's own department: a single test's, and for a test inside a lab panel ITS OWN
+  department, not the panel's (the same rule Accession applies to a panel's samples). With `branchLabTestId` too,
+  the report must satisfy both. Legacy reports of a panel line that was never split into member tests have no
+  stamped department. The status counts follow every one of these filters.
 
   `search` matches Patient Name (first/last), Order ID (order code), Test
   Name (the order item's branch lab test name, or — for a test inside a lab
@@ -131,10 +129,11 @@ docs {
   the holding branch's entry.
 
   **A test inside a lab panel is judged by its own department.** A panel is split into one report per test; each
-  such report is visible when ITS OWN test entry's department is unassigned or one of the caller's departments. The
+  such report is visible when the department stamped on it (that test's OWN department) is unassigned or one of the
+  caller's departments. The
   panel's own department is ignored for them, so a panel with no department no longer shows every test to everyone.
-  The row's `departmentId` (the Department column) is that test's own department. A panel line that was never split
-  into member tests, and a single test, keep the order line's department. A report sent to another branch keeps the
+  The row's `departmentId` (the Department column) is that test's own department. A single test is judged the same way, by the department stamped on its report. Legacy reports of a panel line
+  that was never split into member tests have no stamped department, so they are visible to everyone. A report sent to another branch keeps the
   receiving branch's entry. The Patient Entry popup loads an order's tests through this same list (`orderId`), so it
   shows the same tests as the worklist.
 
