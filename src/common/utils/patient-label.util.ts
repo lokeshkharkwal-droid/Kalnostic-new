@@ -49,11 +49,6 @@ export function patientAgeDisplay(
   return `${age} ${unit}${age === 1 ? '' : 's'}`;
 }
 
-/** Pluralise `n <unit>` — e.g. `1 Year`, `4 Months`. */
-function unitPart(n: number, unit: string): string {
-  return `${n} ${unit}${n === 1 ? '' : 's'}`;
-}
-
 /**
  * Calendar Years/Months/Days elapsed from `dateOfBirth` to `now`.
  * `dateOfBirth` is stored date-only at UTC midnight (`@db.Date`), so the diff
@@ -89,106 +84,29 @@ function ageBreakdownFromDob(
 }
 
 /**
- * Whole days elapsed from `dateOfBirth` (date-only, UTC midnight) to `now`'s
- * calendar day, read via UTC getters like {@link ageBreakdownFromDob}.
- */
-function daysSinceDob(dateOfBirth: Date, now: Date): number {
-  const today = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
-  return Math.round((today - dateOfBirth.getTime()) / (24 * 60 * 60 * 1000));
-}
-
-/**
- * Full patient age as `"25 Years, 4 Months, 12 Days"` for print templates
- * (`{patient_age}`). When the patient's `dateOfBirth` is known this is computed
- * as a Years/Months/Days breakdown from DOB to `now` (all three components are
- * always shown, each singularised for a value of 1). `dateOfBirth` is stored
- * date-only at UTC midnight (`@db.Date`), so the diff is done with UTC getters
- * to avoid timezone drift.
+ * Patient age for **every print template** — the single source of truth for the
+ * `{patient_age}` tag (bill, TRF, order slip, quotation, sample label, single
+ * lab report and lab panel) and the `{client_age}` tag (all-reports header). One
+ * shared rule, so the age reads identically on every document:
+ *
+ *  - **12 months or older → Years.** 25 years 4 months 10 days → `25 Years`;
+ *    1 year 2 months → `1 Year`; exactly 12 months → `1 Year`.
+ *  - **1 to 11 months → Months.** 11 months 20 days → `11 Months`;
+ *    6 months 15 days → `6 Months`; 1 month 15 days → `1 Month`.
+ *  - **Under 1 month → Days.** 20 days → `20 Days`; 5 days → `5 Days`.
+ *
+ * Only the single leading unit is shown (never the full "Y Years, M Months,
+ * D Days" breakdown), singularised for a value of 1 (via
+ * {@link patientAgeDisplay}). The breakdown is computed from `dateOfBirth` to
+ * `now`; `dateOfBirth` is stored date-only at UTC midnight (`@db.Date`), so the
+ * diff uses UTC getters (see {@link ageBreakdownFromDob}) to avoid timezone
+ * drift. Because the bands key off the Years/Months breakdown (completed
+ * calendar units), a baby who is 30 calendar days old but not yet a full month
+ * reads in Days, and one who is exactly one month old reads `1 Month`.
  *
  * When `dateOfBirth` is missing, in the future, or invalid, this falls back to
- * the single-unit {@link patientAgeDisplay} derived from `age`/`ageType`
- * (which is itself `''` when `age` is unknown), so the tag never renders a bare
- * unit or a nonsensical negative breakdown.
- *
- * @param dateOfBirth the patient's date of birth (may be null)
- * @param age the denormalised age snapshot (fallback)
- * @param ageType the unit of `age` (fallback)
- * @param now reference date for the breakdown; defaults to the current date
- * @returns the formatted age string, or `''` when nothing is known
- */
-export function patientFullAgeDisplay(
-  dateOfBirth: Date | null | undefined,
-  age: number | null | undefined,
-  ageType: AgeType | null | undefined,
-  now: Date = new Date(),
-): string {
-  const breakdown = ageBreakdownFromDob(dateOfBirth, now);
-  if (breakdown) {
-    return `${unitPart(breakdown.years, 'Year')}, ${unitPart(breakdown.months, 'Month')}, ${unitPart(breakdown.days, 'Day')}`;
-  }
-  // No DOB (or DOB in the future / invalid) → single-unit snapshot.
-  return patientAgeDisplay(age, ageType);
-}
-
-/**
- * Single-unit patient age — `"25 Years"`, `"6 Months"`, `"15 Days"` — for
- * print templates where the full breakdown of {@link patientFullAgeDisplay}
- * doesn't fit (sample labels). Computed from `dateOfBirth` to `now` with the
- * registration form's Age Type rule (lockstep twin of the FE's
- * `computeAgeFromDob`, which fills the stored `age`/`ageType`):
- *  - up to 31 days old → Days
- *  - over 31 days and up to 12 months → Months
- *  - over 12 months → Years
- * Each value is singularised for 1 (via {@link patientAgeDisplay}).
- *
- * When `dateOfBirth` is missing, in the future, or invalid, this falls back to
- * the stored `age`/`ageType` snapshot (`''` when `age` is unknown).
- *
- * @param dateOfBirth the patient's date of birth (may be null)
- * @param age the denormalised age snapshot (fallback)
- * @param ageType the unit of `age` (fallback)
- * @param now reference date, read via UTC getters; defaults to the current date
- * @returns the formatted age string, or `''` when nothing is known
- */
-export function patientSingleUnitAgeDisplay(
-  dateOfBirth: Date | null | undefined,
-  age: number | null | undefined,
-  ageType: AgeType | null | undefined,
-  now: Date = new Date(),
-): string {
-  const breakdown = ageBreakdownFromDob(dateOfBirth, now);
-  if (!breakdown || !dateOfBirth) {
-    return patientAgeDisplay(age, ageType);
-  }
-  const totalDays = daysSinceDob(dateOfBirth, now);
-  if (totalDays <= 31) {
-    return patientAgeDisplay(totalDays, AgeType.DAYS);
-  }
-  const totalMonths = breakdown.years * 12 + breakdown.months;
-  if (totalMonths <= 12) {
-    return patientAgeDisplay(totalMonths, AgeType.MONTHS);
-  }
-  return patientAgeDisplay(breakdown.years, AgeType.YEARS);
-}
-
-/**
- * Single-unit patient age for lab reports (`{patient_age}` on `lab_report` /
- * `lab_panel` / `lab_all_report`) — `"15 Days"`, `"6 Months"`, `"25 Years"` —
- * computed from `dateOfBirth` to `now` by the report's age bands:
- *  - 0 to 29 days old → Days
- *  - 30 days up to (not including) 1 year → Months; a 30-day-old whose
- *    calendar month isn't complete yet still reads `1 Month`, never `0 Months`
- *  - 1 year and over → Years
- * Each value is singularised for 1 (via {@link patientAgeDisplay}). Distinct
- * from {@link patientSingleUnitAgeDisplay}, whose bands follow the
- * registration form's Age Type rule (up to 31 days / 12 months).
- *
- * When `dateOfBirth` is missing, in the future, or invalid, this falls back to
- * the stored `age`/`ageType` snapshot (`''` when `age` is unknown).
+ * the stored `age`/`ageType` snapshot (itself `''` when `age` is unknown), so
+ * the tag never renders a bare unit or a nonsensical negative breakdown.
  *
  * @param dateOfBirth the patient's date of birth (may be null)
  * @param age the denormalised age snapshot (fallback)
@@ -198,7 +116,7 @@ export function patientSingleUnitAgeDisplay(
  *   calendar day; defaults to the current date
  * @returns the formatted age string, or `''` when nothing is known
  */
-export function patientReportAgeDisplay(
+export function patientPrintAgeDisplay(
   dateOfBirth: Date | null | undefined,
   age: number | null | undefined,
   ageType: AgeType | null | undefined,
@@ -208,12 +126,14 @@ export function patientReportAgeDisplay(
   if (!breakdown || !dateOfBirth) {
     return patientAgeDisplay(age, ageType);
   }
-  const totalDays = daysSinceDob(dateOfBirth, now);
-  if (totalDays < 30) {
-    return patientAgeDisplay(totalDays, AgeType.DAYS);
+  // 12 months or older — `years >= 1` means at least 12 completed months.
+  if (breakdown.years >= 1) {
+    return patientAgeDisplay(breakdown.years, AgeType.YEARS);
   }
-  if (breakdown.years < 1) {
-    return patientAgeDisplay(Math.max(1, breakdown.months), AgeType.MONTHS);
+  // 1 to 11 completed months.
+  if (breakdown.months >= 1) {
+    return patientAgeDisplay(breakdown.months, AgeType.MONTHS);
   }
-  return patientAgeDisplay(breakdown.years, AgeType.YEARS);
+  // Under one completed month — `breakdown.days` is the total age in days here.
+  return patientAgeDisplay(breakdown.days, AgeType.DAYS);
 }

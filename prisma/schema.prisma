@@ -575,13 +575,19 @@ enum AgeUnit {
   YEARS
 }
 
-/// How an out-of-range result is visually flagged on the report.
+/// How an out-of-range result is visually flagged on the report. The first five
+/// are the original styles; the last three are faithful "combined" styles added
+/// so every Master Data → Abnormal Flag Logic label (and the matching Technician
+/// Reporting → Highlighted option) renders exactly as its name reads.
 enum AbnormalFlag {
   BOLD_AND_RED
   BOLD_ONLY
   ITALIC
   UNDERLINE
   COLOUR_HIGHLIGHT
+  ITALIC_AND_RED
+  BOLD_AND_ITALIC
+  BOLD_ITALIC_AND_RED
 }
 
 /// Sample container type (tube/colour or receptacle). One display label per value
@@ -9471,4 +9477,39 @@ enum MasterDataImportJobStatus {
   SUCCEEDED
   FAILED
   INTERRUPTED
+}
+
+/// Background "Sync from Master Data" jobs for a branch's Lab Test / Lab Panel
+/// List (reconcile the list against Branch Master Data) so the branch-admin
+/// dialog can poll live progress — mirrors `MasterDataImportJob`, one table for
+/// both kinds (`kind`). Reuses `MasterDataImportJobStatus` for `status`.
+model BranchListSyncJob {
+  id         String                    @id @default(uuid())
+  tenantId   String                    @map("tenant_id")
+  branchId   String                    @map("branch_id")
+  /// Which branch list this sync reconciles (lab tests vs lab panels).
+  kind       BranchListSyncKind
+  status     MasterDataImportJobStatus @default(RUNNING)
+  /// `MasterDataSyncJobProgress` (phase, batches, counts) — see the service.
+  progress   Json
+  /// `{ created, updated, deleted, failed }` once SUCCEEDED.
+  result     Json?
+  /// `{ code, message, phase }` once FAILED / INTERRUPTED.
+  error      Json?
+  startedBy  String?                   @map("started_by")
+  /// Backend process running it (`host#pm2-instance`); on startup that process
+  /// marks its own leftover RUNNING jobs INTERRUPTED at once.
+  runner     String?                   @map("runner")
+  startedAt  DateTime                  @default(now()) @map("started_at")
+  finishedAt DateTime?                 @map("finished_at")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+
+  @@index([tenantId, branchId, createdAt])
+  @@map("branch_list_sync_jobs")
+}
+
+enum BranchListSyncKind {
+  LAB_TEST
+  LAB_PANEL
 }

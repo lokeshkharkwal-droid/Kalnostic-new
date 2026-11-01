@@ -60,7 +60,9 @@ export class ResultValueItemDto {
 
   /**
    * Which styling to apply when `highlightInReport` is true. Reuses the
-   * `AbnormalFlag` palette; only `BOLD_AND_RED` is offered in the UI today.
+   * `AbnormalFlag` palette; the Technician Reporting → Highlighted dropdown
+   * offers the six faithful styles that mirror Master Data → Abnormal Flag Logic
+   * (Bold, Italic, Bold and Red, Italic and Red, Italic Bold, Bold Italic and Red).
    */
   @IsOptional()
   @IsEnum(AbnormalFlag)
