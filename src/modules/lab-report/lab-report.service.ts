@@ -166,9 +166,11 @@ import {
 } from './utils/reference-range.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
 import { findReceiverReturns } from '../accession/utils/returned-by-receiver.util';
+import { escapeLike } from '../accession/utils/like-escape.util';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
+  describeRangeForAudit,
   formatMomentForAudit,
 } from './utils/result-value-save.util';
 import {
@@ -648,9 +650,10 @@ export class LabReportService {
         limitations: null,
         remarks: null,
         references: null,
-        // The repeat starts a new cycle: every Notes section prints again until
-        // the technician chooses otherwise (like the Notes edits above).
+        // The repeat starts a new cycle: no Print choice yet, so the branch's
+        // setting decides the default again (like the Notes edits above).
         excludedNoteSections: [],
+        hasChosenNotePrint: false,
         status: LabReportStatus.PENDING,
         savedAt: null,
         savedBy: null,
@@ -1155,13 +1158,18 @@ export class LabReportService {
     if (Object.keys(order).length > 0) orderItem.order = order;
 
     // Search bar (LABORATORY.docx §1.1 element 4): Patient Name, Order ID, Test
-    // Name, Ref Panel. Spans both OrderItem-level fields (Test Name, via the
-    // branch lab test/panel snapshot) and Order-level fields (Order ID, Patient
+    // Name, Ref Panel, and the Sample Barcode (the Barcode column the row shows).
+    // Spans both OrderItem-level fields (Test Name, via the
+    // branch lab test/panel snapshot; Barcode, via the order line's samples) and Order-level fields (Order ID, Patient
     // Name, Ref Panel) — combined as a top-level OR so a hit on any one field
     // matches, independent of the other orderItem/order filters above (which
     // still apply as an AND alongside this, via Prisma's implicit top-level AND).
-    if (filters.search) {
-      const search = filters.search;
+    // The text is trimmed first (a scanner or a stray space around a barcode / order id must not make it match
+    // nothing), a blank search is no search, and `%`, `_` and `\` are matched as typed (Prisma hands `contains`
+    // to LIKE as it is, so an unescaped `%` would match every row).
+    const typedSearch = filters.search?.trim();
+    if (typedSearch) {
+      const search = escapeLike(typedSearch);
       // Bug fix: a full-name search (e.g. "Hiroshi Tanaka") never matched
       // anything, because firstName/lastName were only ever checked against
       // the whole search string independently — neither field alone
@@ -1169,7 +1177,10 @@ export class LabReportService {
       // every word to be found somewhere across first/middle/last name (in
       // any order) fixes full-name search without changing single-word
       // search behavior at all (a 1-word split is just the original check).
-      const searchWords = search.trim().split(/\s+/).filter(Boolean);
+      const searchWords = typedSearch
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(escapeLike);
       const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
         AND: searchWords.map((word) => ({
           OR: [
@@ -1188,6 +1199,18 @@ export class LabReportService {
         {
           branchLabPanel: {
             is: { panelName: { contains: search, mode: 'insensitive' } },
+          },
+        },
+        // The Barcode column: the barcode of any live sample linked to this order
+        // line. One barcode is shared by every sample of a grouping bucket, so a
+        // scanned tube lists every test on it. Same case-insensitive "contains" as
+        // the Accession search; the same link the Sample Status filter above uses.
+        {
+          orderSampleTests: {
+            some: {
+              deletedAt: null,
+              sample: { barcode: { contains: search, mode: 'insensitive' } },
+            },
           },
         },
         {
@@ -2734,11 +2757,13 @@ export class LabReportService {
   }
 
   /**
-   * Which Notes sections print on a report, and whether the technician may
-   * choose. The setting that applies is the Lab Panel switch for a report on a
-   * panel order line, the Lab Test switch for a single test, read from the branch
-   * that HOLDS the report. While it is off nothing is left out (every section
-   * prints), whatever choice was saved earlier.
+   * Which Notes sections print on a report. The checkboxes are always offered
+   * (`enabled`) for a test or a panel report. The branch setting only sets the
+   * DEFAULT until someone chooses: the Lab Panel switch for a report on a panel
+   * order line, the Lab Test switch for a single test, read from the branch that
+   * HOLDS the report; ON = every section prints, OFF = none prints. Once a choice
+   * is saved (`hasChosenNotePrint`) it is that choice. A free-text line has no
+   * Notes, so it offers nothing.
    * @param shared per-print cache of the settings already read, so a Print All
    *   reads each branch's switches once instead of once per report
    */
@@ -2747,6 +2772,7 @@ export class LabReportService {
     report: {
       branchId: string | null;
       excludedNoteSections: string[];
+      hasChosenNotePrint: boolean;
       orderItem: {
         branchLabPanelId: string | null;
         branchLabTestId: string | null;
@@ -2764,12 +2790,16 @@ export class LabReportService {
       report.branchId,
       shared,
     );
-    const enabled = notesSelectableFor(kind, switches);
+    const selectedByDefault = notesSelectableFor(kind, switches);
     return {
-      enabled,
+      enabled: true,
       isPanelMember: kind === 'PANEL',
       excludedSections: [
-        ...excludedSectionsToApply(enabled, report.excludedNoteSections),
+        ...excludedSectionsToApply(
+          selectedByDefault,
+          report.hasChosenNotePrint,
+          report.excludedNoteSections,
+        ),
       ],
     };
   }
@@ -2852,6 +2882,11 @@ export class LabReportService {
    * rather than rejecting the whole request — lets the frontend send all 5
    * fields unconditionally without needing to know which are currently
    * allowed.
+   *
+   * Only while the report is Pending, Partial Pending or Saved (same rule as a
+   * parameter Note): a report that was submitted or has moved on is refused, since
+   * an edit after approval would silently change every later print.
+   * @throws LabReportParameterNoteNotEditableException when the report is past Saved
    */
   async updateContentSections(
     id: string,
@@ -2861,6 +2896,7 @@ export class LabReportService {
   ): Promise<LabReportContentSections> {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+    this.assertParameterNoteEditable(id, report.status);
 
     const settings = await this.technicianSettingsService.getForBranch(
       tenantId,
@@ -2890,10 +2926,7 @@ export class LabReportService {
     }
 
     if (Object.keys(patch).length > 0) {
-      await this.prisma.labReport.update({
-        where: { id: report.id },
-        data: patch,
-      });
+      await this.updateNotesWhileEditable(tenantId, report, patch);
     }
 
     const updated = await this.prisma.labReport.findFirstOrThrow({
@@ -2919,13 +2952,16 @@ export class LabReportService {
   /**
    * Save which Notes sections to LEAVE OUT of this report's printed version (the
    * checkbox beside each section on the report). The list replaces the stored one;
-   * a section not in it prints. It never changes what the screen shows, only the
-   * printed and shared PDF.
+   * a section not in it prints. From the first save the report has a choice of its
+   * own (`hasChosenNotePrint`), so the branch setting no longer decides its default.
+   * It never changes what the screen shows, only the printed and shared PDF.
    *
    * Same write rules as editing the notes (a locked, sent-out or cancelled report
-   * is refused), but no permission key. While the matching Technician setting (Lab
-   * Test / Lab Panel) is off, nothing is saved and the current state comes back
-   * unchanged, the same "silently ignore" convention as `updateContentSections`.
+   * is refused, and so is one past Saved: only while the report is Pending, Partial
+   * Pending or Saved), but no permission key. It works whether the matching
+   * Technician setting (Lab Test / Lab Panel) is ON or OFF, because that setting
+   * only sets the default. A free-text line has no Notes: nothing is saved and the
+   * current state comes back unchanged.
    * @returns the report's resulting notes-print state
    */
   async updateNotePrintSections(
@@ -2936,6 +2972,7 @@ export class LabReportService {
   ): Promise<LabReportNotesPrint> {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+    this.assertParameterNoteEditable(id, report.status);
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: report.orderItemId, tenantId },
       select: { branchLabPanelId: true, branchLabTestId: true },
@@ -2945,16 +2982,41 @@ export class LabReportService {
     const current = await this.resolveNotesPrint(tenantId, {
       branchId: report.branchId,
       excludedNoteSections: report.excludedNoteSections,
+      hasChosenNotePrint: report.hasChosenNotePrint,
       orderItem: item,
     });
     if (!current.enabled) return current;
 
     const excludedNoteSections = normaliseNoteSections(dto.excludedSections);
-    await this.prisma.labReport.update({
-      where: { id: report.id },
-      data: { excludedNoteSections },
+    await this.updateNotesWhileEditable(tenantId, report, {
+      excludedNoteSections,
+      hasChosenNotePrint: true,
     });
     return { ...current, excludedSections: excludedNoteSections };
+  }
+
+  /**
+   * Writes the Notes columns of one report (the five section texts and/or the Print choice) only while the report
+   * is still Pending, Partial Pending or Saved. The status is read again after the report row is locked, so a
+   * Submit that commits in between is not overwritten.
+   */
+  private async updateNotesWhileEditable(
+    tenantId: string,
+    report: { id: string; status: string },
+    data: Prisma.LabReportUpdateInput,
+  ): Promise<void> {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, report.id);
+      const fresh = await tx.labReport.findFirst({
+        where: { id: report.id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.assertParameterNoteEditable(
+        report.id,
+        fresh?.status ?? report.status,
+      );
+      await tx.labReport.update({ where: { id: report.id }, data });
+    });
   }
 
   /**
@@ -3113,7 +3175,10 @@ export class LabReportService {
     return { resultParamId, content: dto.content };
   }
 
-  /** Refuses a parameter-note write unless the report is still Pending, Partial Pending or Saved. */
+  /**
+   * Refuses a note write unless the report is still Pending, Partial Pending or Saved. Used for a parameter Note,
+   * the five Notes-section texts and the Print choice alike.
+   */
   private assertParameterNoteEditable(id: string, status: string): void {
     if (
       !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)
@@ -3632,12 +3697,52 @@ export class LabReportService {
         (p) => p.mode === 'overwrite-analyzer' && p.stored,
       );
       if (overwritten.length > 0) {
-        const adapterIds = [
+        // A range the technician changed is named in the entry (old and new), so the history says WHICH ranges.
+        const trimmed = (v: string | null | undefined): string =>
+          (v ?? '').trim();
+        const rangeChanged = (
+          value: { referenceRangeId?: string },
+          stored: { referenceRangeId?: string | null },
+        ): boolean =>
+          value.referenceRangeId !== undefined &&
+          trimmed(value.referenceRangeId) !== trimmed(stored.referenceRangeId);
+        const rangeIds = [
           ...new Set(
-            overwritten
+            overwritten.flatMap((p) =>
+              p.stored && rangeChanged(p.value, p.stored)
+                ? [
+                    trimmed(p.stored.referenceRangeId),
+                    trimmed(p.value.referenceRangeId),
+                  ].filter(Boolean)
+                : [],
+            ),
+          ),
+        ];
+        // Deleted ranges are included: the old range of an entry may have been removed since.
+        const rangeRows = rangeIds.length
+          ? await tx.labTestReferenceRange.findMany({
+              where: { id: { in: rangeIds }, tenantId },
+              select: {
+                id: true,
+                method: true,
+                unit: true,
+                displayOfReferenceRange: true,
+                lowerLimit: true,
+                upperLimit: true,
+                labAdapterId: true,
+              },
+            })
+          : [];
+        const rangeById = new Map(rangeRows.map((r) => [r.id, r]));
+        const adapterIds = [
+          ...new Set([
+            ...overwritten
               .map((p) => p.stored?.enteredBy)
               .filter((a): a is string => !!a),
-          ),
+            ...rangeRows
+              .map((r) => r.labAdapterId)
+              .filter((a): a is string => !!a),
+          ]),
         ];
         const adapters = adapterIds.length
           ? await tx.labAdapter.findMany({
@@ -3646,6 +3751,19 @@ export class LabReportService {
             })
           : [];
         const adapterNameById = new Map(adapters.map((a) => [a.id, a.name]));
+        const rangeLabel = (rangeId: string | null | undefined): string => {
+          const rid = trimmed(rangeId);
+          if (!rid) return '(no range)';
+          const range = rangeById.get(rid);
+          return range
+            ? describeRangeForAudit(
+                range,
+                range.labAdapterId
+                  ? adapterNameById.get(range.labAdapterId)
+                  : undefined,
+              )
+            : '(a range that was removed)';
+        };
         for (const { value, stored } of overwritten) {
           if (!stored) continue;
           await this.recordHistory(
@@ -3665,6 +3783,12 @@ export class LabReportService {
               value,
               stored.enteredAt
                 ? formatMomentForAudit(stored.enteredAt, timezone)
+                : undefined,
+              rangeChanged(value, stored)
+                ? {
+                    before: rangeLabel(stored.referenceRangeId),
+                    after: rangeLabel(value.referenceRangeId),
+                  }
                 : undefined,
             ),
           );
@@ -4742,8 +4866,9 @@ export class LabReportService {
     const results = hideResults
       ? [pendingResultRow(printedTestName)]
       : realResults;
-    // Which Notes sections the technician left out of this report's print (only
-    // while the matching Lab Test / Lab Panel switch is on; otherwise none).
+    // Which Notes sections are left out of this report's print: the technician's
+    // saved choice, or, until one exists, the default from the matching Lab Test /
+    // Lab Panel setting (ON = none left out, OFF = all left out).
     const notesPrint = await this.resolveNotesPrint(
       tenantId,
       report,
@@ -6534,6 +6659,10 @@ export class LabReportService {
           };
         })();
 
+    // An approved report must print the same forever, even if the branch's
+    // Notes-print setting is changed later: settle the default selection now.
+    const notePrintChoice = await this.freezeNotePrintChoice(tenantId, report);
+
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
@@ -6545,6 +6674,7 @@ export class LabReportService {
           reportingDeferredUntil: null,
           ...tatData,
           ...signatoryColumns,
+          ...notePrintChoice,
         },
       });
       if (dto.notes) {
@@ -6570,6 +6700,42 @@ export class LabReportService {
       );
       return updated;
     });
+  }
+
+  /**
+   * What to store on a report at approval so its Notes print can never change afterwards. While nobody chose
+   * (`hasChosenNotePrint` false) the branch setting decided the default live; the approval writes that default
+   * down as the report's own choice. Nothing to write when a choice exists already, or for a free-text line
+   * (no Notes).
+   */
+  private async freezeNotePrintChoice(
+    tenantId: string,
+    report: {
+      orderItemId: string;
+      branchId: string | null;
+      excludedNoteSections: string[];
+      hasChosenNotePrint: boolean;
+    },
+  ): Promise<{
+    excludedNoteSections: NoteSectionKey[];
+    hasChosenNotePrint: true;
+  } | null> {
+    if (report.hasChosenNotePrint) return null;
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: report.orderItemId, tenantId },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+    });
+    const resolved = await this.resolveNotesPrint(tenantId, {
+      branchId: report.branchId,
+      excludedNoteSections: report.excludedNoteSections,
+      hasChosenNotePrint: false,
+      orderItem: orderItem ?? { branchLabPanelId: null, branchLabTestId: null },
+    });
+    if (!resolved.enabled) return null;
+    return {
+      excludedNoteSections: normaliseNoteSections(resolved.excludedSections),
+      hasChosenNotePrint: true,
+    };
   }
 
   async publish(
@@ -6757,6 +6923,12 @@ export class LabReportService {
    * `assertTransition` gate applies here. Creating the `ReRunRequest` worklist
    * row is the caller's (worklist service's) responsibility; this method only
    * performs the report-side reset.
+   *
+   * A re-run starts the notes over too, like a fresh report: the technician's
+   * parameter Notes are soft-deleted and the five Notes-section texts are cleared,
+   * so the configured (Master Data) notes show again; the Print choice goes back
+   * to the branch's default (every section ticked or none, per the setting). The
+   * text that was cleared is NOT kept.
    */
   async resetForRerun(
     id: string,
@@ -6775,13 +6947,28 @@ export class LabReportService {
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      const now = new Date();
       await tx.labReportResultValue.updateMany({
         where: { labReportId: id, deletedAt: null },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: now },
+      });
+      // The technician's own parameter Notes: the configured Note shows again.
+      await tx.labReportParameterNote.updateMany({
+        where: { labReportId: id, deletedAt: null },
+        data: { deletedAt: now },
       });
       const updated = await tx.labReport.update({
         where: { id },
         data: {
+          // The five Notes sections fall back to the configured ones, and the
+          // Print choice starts over: the branch's setting decides the default.
+          usefulFor: null,
+          interpretationOfResults: null,
+          limitations: null,
+          remarks: null,
+          references: null,
+          excludedNoteSections: [],
+          hasChosenNotePrint: false,
           status: LabReportStatus.PENDING,
           savedAt: null,
           savedBy: null,

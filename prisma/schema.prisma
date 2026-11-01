@@ -7307,14 +7307,20 @@ model LabReport {
 
   /// The Notes sections the technician LEFT OUT of this report's printed
   /// version (keys: useful_for, interpretation, limitations, remarks,
-  /// references). Empty (the default for every report) means all five print,
-  /// exactly as before. Only honoured while the matching Technician setting
-  /// (`TechnicianSetting.isLabTestNotesSelectable` for a test report,
-  /// `isLabPanelNotesSelectable` for a report on a panel order line) is on;
-  /// when it is off every section prints. It never changes the content shown on
-  /// screen, only what the printed/shared PDF contains. Cleared when the report
-  /// is returned for a repeat (like the Notes overrides above); kept on re-run.
+  /// references). Only meaningful once `hasChosenNotePrint` is true: until then
+  /// the branch's Technician setting decides the default (see below) and this
+  /// list is ignored. It never changes the content shown on screen, only what
+  /// the printed/shared PDF contains. Reset (with `hasChosenNotePrint`) when the
+  /// report is returned for a repeat and when it is re-run.
   excludedNoteSections String[] @default([]) @map("excluded_note_sections")
+
+  /// Whether the technician (or the approval, which freezes the default) has
+  /// settled which Notes sections print. False = no choice yet: the branch's
+  /// Technician setting (`TechnicianSetting.isLabTestNotesSelectable` for a test
+  /// report, `isLabPanelNotesSelectable` for a report on a panel order line) sets
+  /// the DEFAULT, ON = every section prints, OFF = none prints, and the
+  /// technician can change it. True = `excludedNoteSections` is the choice.
+  hasChosenNotePrint Boolean @default(false) @map("has_chosen_note_print")
 
   status LabReportStatus @default(PENDING)
 

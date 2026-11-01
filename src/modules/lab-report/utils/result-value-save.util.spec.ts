@@ -2,6 +2,7 @@ import { ResultValueSource } from '@prisma/client';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
+  describeRangeForAudit,
   formatMomentForAudit,
   type StoredResultValue,
 } from './result-value-save.util';
@@ -256,5 +257,127 @@ describe('formatMomentForAudit', () => {
     expect(formatMomentForAudit(at, 'Not/AZone')).toBe(
       '2026-10-12T10:00:00.000Z',
     );
+  });
+});
+
+describe('describeRangeForAudit', () => {
+  it('names the analyzer, method, unit and display text', () => {
+    expect(
+      describeRangeForAudit(
+        {
+          method: 'Refractometry',
+          unit: 'g/mL',
+          displayOfReferenceRange: '1.010 - 1.030 (Analyzer default)',
+        },
+        'Hematology Bridge 1',
+      ),
+    ).toBe(
+      'Hematology Bridge 1 · Refractometry · g/mL · 1.010 - 1.030 (Analyzer default)',
+    );
+  });
+  it('leaves out what is empty (a range with no analyzer, no method)', () => {
+    expect(
+      describeRangeForAudit({
+        unit: 'g/mL',
+        displayOfReferenceRange: '1.015 - 1.035 (Adult)',
+      }),
+    ).toBe('g/mL · 1.015 - 1.035 (Adult)');
+    expect(
+      describeRangeForAudit({
+        method: '  ',
+        unit: null,
+        displayOfReferenceRange: '12 - 17',
+      }),
+    ).toBe('12 - 17');
+  });
+  it('falls back to the limits when there is no display text', () => {
+    expect(
+      describeRangeForAudit({
+        unit: 'g/L',
+        lowerLimit: '120',
+        upperLimit: '170',
+      }),
+    ).toBe('g/L · 120 - 170');
+    expect(
+      describeRangeForAudit({ unit: 'g/L', lowerLimit: null, upperLimit: 170 }),
+    ).toBe('g/L · - 170');
+  });
+  it('says so when there is no range at all', () => {
+    expect(describeRangeForAudit(undefined)).toBe('(no range)');
+    expect(describeRangeForAudit({})).toBe('(no range)');
+  });
+});
+
+describe('describeAnalyzerOverwrite — when the RANGE was changed', () => {
+  const before = 'Cobas · Refractometry · g/mL · 1.010 - 1.030 (Default)';
+  const after = 'Refractometry · g/mL · 1.015 - 1.035 (Adult)';
+
+  it('number unchanged, same unit: names both ranges and says the result was kept', () => {
+    expect(
+      describeAnalyzerOverwrite(
+        'Specific Gravity',
+        'Cobas',
+        { observed1: '1.025', observed2: null, unit: 'g/mL' },
+        { observed1: '1.025', unit: 'g/mL' },
+        '01 Nov 2026, 05:18 pm',
+        { before, after },
+      ),
+    ).toBe(
+      `Range changed — Specific Gravity: ${before} → ${after}; result 1.025 g/mL kept (analyzer: Cobas, sent 01 Nov 2026, 05:18 pm)`,
+    );
+  });
+
+  it('number unchanged, unit changed: says the unit moved and that the number was kept, not converted', () => {
+    expect(
+      describeAnalyzerOverwrite(
+        'Specific Gravity',
+        'Cobas',
+        { observed1: '1.025', observed2: null, unit: 'g/mL' },
+        { observed1: '1.025', unit: 'g/dL' },
+        undefined,
+        { before, after: 'Cobas · g/dL · 1.000 - 1.200' },
+      ),
+    ).toBe(
+      `Range changed — Specific Gravity: ${before} → Cobas · g/dL · 1.000 - 1.200; result 1.025 kept (unit g/mL → g/dL) (analyzer: Cobas)`,
+    );
+  });
+
+  it('keeps Observed 2 in the kept result', () => {
+    expect(
+      describeAnalyzerOverwrite(
+        'WBC',
+        'Sysmex',
+        { observed1: '7.2', observed2: '7.4', unit: '10^3/uL' },
+        { observed1: '7.2', observed2: '7.4' },
+        undefined,
+        { before: '(no range)', after: 'Sysmex · 4.0 - 11.0' },
+      ),
+    ).toContain('result 7.2 / 7.4 10^3/uL kept');
+  });
+
+  it('number changed as well: one entry that shows both edits', () => {
+    expect(
+      describeAnalyzerOverwrite(
+        'Hemoglobin',
+        'Cobas',
+        { observed1: '130', observed2: null, unit: 'g/L' },
+        { observed1: '13.5', unit: 'g/dL' },
+        undefined,
+        { before: '(no range)', after: 'g/dL · 12 - 17' },
+      ),
+    ).toBe(
+      'Value and range edited — Hemoglobin: 130 g/L → 13.5 g/dL; range (no range) → g/dL · 12 - 17 (analyzer: Cobas)',
+    );
+  });
+
+  it('without the ranges (range not changed) the older wording is unchanged', () => {
+    expect(
+      describeAnalyzerOverwrite(
+        'Hemoglobin',
+        'Cobas',
+        { observed1: '130', observed2: null, unit: 'g/L' },
+        { observed1: '13.5', unit: 'g/dL' },
+      ),
+    ).toBe('Value edited — Hemoglobin: 130 g/L → 13.5 g/dL (analyzer: Cobas)');
   });
 });
