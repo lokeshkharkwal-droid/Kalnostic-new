@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { BranchLabTest, DayOfWeek, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ListPricingConfig,
+  SourcePriceColumns,
+  resolveImportListPrice,
+  resolveSyncListPrice,
+} from '../../common/utils/list-price.util';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
@@ -57,6 +63,11 @@ interface ImportTarget {
   sourceMasterDataId: string;
   /** The pricing list the copy belongs to (each list owns its rows). */
   listId: string;
+  /**
+   * The target list's pricing config — drives the copied row's `listPrice`
+   * (default→MSRP, PERCENTAGE→formula, CUSTOMIZED→source column copied as-is).
+   */
+  list: ListPricingConfig;
   actorId: string | null;
 }
 
@@ -158,7 +169,7 @@ export class BranchLabTestService {
       masterData.id,
       tenantId,
       branchId,
-      targetList.id,
+      targetList,
       actorId,
       dto.labTestIds,
     );
@@ -239,7 +250,7 @@ export class BranchLabTestService {
         masterData.id,
         tenantId,
         branchId,
-        targetList.id,
+        targetList,
         actorId,
         batchIds,
       );
@@ -285,7 +296,7 @@ export class BranchLabTestService {
     masterDataId: string,
     tenantId: string,
     branchId: string,
-    targetListId: string,
+    targetList: ListPricingConfig & { id: string },
     actorId: string | null,
     candidateIds: string[],
   ): Promise<{
@@ -310,7 +321,7 @@ export class BranchLabTestService {
       where: {
         tenantId,
         branchId,
-        listId: targetListId,
+        listId: targetList.id,
         deletedAt: null,
         sourceLabTestId: { in: validIds },
       },
@@ -336,7 +347,7 @@ export class BranchLabTestService {
       if (existingId) {
         toUpdate.push({
           id: existingId,
-          data: this.buildSyncData(source, actorId),
+          data: this.buildSyncData(source, actorId, targetList),
         });
       } else {
         toCreate.push(
@@ -344,7 +355,8 @@ export class BranchLabTestService {
             tenantId,
             branchId,
             sourceMasterDataId: masterDataId,
-            listId: targetListId,
+            listId: targetList.id,
+            list: targetList,
             actorId,
           }),
         );
@@ -538,7 +550,7 @@ export class BranchLabTestService {
           for (const { id, source } of composed) {
             await tx.branchLabTest.update({
               where: { id },
-              data: this.buildSyncData(source, actorId),
+              data: this.buildSyncData(source, actorId, targetList),
             });
           }
         });
@@ -1039,8 +1051,13 @@ export class BranchLabTestService {
       sourceLabTestId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
       listId: target.listId,
-      // Walk-in default list: the sellable list price starts at MSRP.
-      listPrice: (scalars.priceMsrp as number) ?? 0,
+      // List price honours the target list's pricing config: MSRP for the
+      // default Walk-in list, the source column × % for a PERCENTAGE list, or
+      // the source column copied as-is for a CUSTOMIZED list.
+      listPrice: resolveImportListPrice(
+        scalars as unknown as SourcePriceColumns,
+        target.list,
+      ),
       configSnapshot,
       createdBy: target.actorId,
       updatedBy: target.actorId,
@@ -1071,18 +1088,32 @@ export class BranchLabTestService {
     } as Prisma.BranchLabTestUncheckedCreateInput;
   }
 
-  /** Build the overwrite (re-snapshot) update payload from a composed source test. */
+  /**
+   * Build the overwrite (re-snapshot) update payload from a composed source test.
+   * All reference scalars + the clinical snapshot are always refreshed from Master
+   * Data; `listPrice` is handled per the target list's pricing config:
+   * - default (Walk-in) list → recomputed to MSRP (overwrite contract);
+   * - PERCENTAGE list → recomputed from the fresh source column × stored percentage;
+   * - CUSTOMIZED (non-default) list → **omitted entirely** so the manually-set price
+   *   survives untouched (a CUSTOMIZED list owns its prices independently of Master
+   *   Data — sync must never reset them).
+   */
   private buildSyncData(
     source: LabTestWithChildren,
     actorId: string | null,
+    list: ListPricingConfig,
   ): Prisma.BranchLabTestUncheckedUpdateInput {
     const { scalars, configSnapshot } = this.extractScalars(source);
+    const listPrice = resolveSyncListPrice(
+      scalars as unknown as SourcePriceColumns,
+      list,
+    );
     return {
       ...scalars,
-      // Walk-in list price tracks MSRP on re-snapshot (agreed overwrite contract).
-      listPrice: (scalars.priceMsrp as number) ?? 0,
       configSnapshot,
       updatedBy: actorId,
+      // null = CUSTOMIZED list: leave `listPrice` out of the update to preserve it.
+      ...(listPrice !== null ? { listPrice } : {}),
     };
   }
 

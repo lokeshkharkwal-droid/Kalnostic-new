@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { BranchLabPanel, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ListPricingConfig,
+  SourcePriceColumns,
+  resolveImportListPrice,
+  resolveSyncListPrice,
+} from '../../common/utils/list-price.util';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
@@ -143,8 +149,8 @@ export class BranchLabPanelService {
       masterData.id,
       tenantId,
       branchId,
-      targetPanelList.id,
-      walkInTest.id,
+      targetPanelList,
+      walkInTest,
       actorId,
       dto.labPanelIds,
       branchTestBySource,
@@ -236,8 +242,8 @@ export class BranchLabPanelService {
         masterData.id,
         tenantId,
         branchId,
-        targetPanelList.id,
-        walkInTest.id,
+        targetPanelList,
+        walkInTest,
         actorId,
         batchIds,
         branchTestBySource,
@@ -301,8 +307,8 @@ export class BranchLabPanelService {
     masterDataId: string,
     tenantId: string,
     branchId: string,
-    targetPanelListId: string,
-    walkInTestListId: string,
+    targetPanelList: ListPricingConfig & { id: string },
+    walkInTest: ListPricingConfig & { id: string },
     actorId: string | null,
     candidateIds: string[],
     branchTestBySource: Map<string, string>,
@@ -336,7 +342,7 @@ export class BranchLabPanelService {
       where: {
         tenantId,
         branchId,
-        listId: targetPanelListId,
+        listId: targetPanelList.id,
         deletedAt: null,
         sourceLabPanelId: { in: validIds },
       },
@@ -375,13 +381,13 @@ export class BranchLabPanelService {
         panel,
         branchTestBySource,
         newTests,
-        walkInTestListId,
+        walkInTest,
       );
       const existingId = existingBySource.get(id);
       if (existingId) {
         panelsToUpdate.push({
           id: existingId,
-          data: this.buildPanelSyncData(panel, actorId),
+          data: this.buildPanelSyncData(panel, actorId, targetPanelList),
           members,
         });
       } else {
@@ -390,7 +396,8 @@ export class BranchLabPanelService {
             tenantId,
             branchId,
             sourceMasterDataId: masterDataId,
-            listId: targetPanelListId,
+            listId: targetPanelList.id,
+            list: targetPanelList,
             actorId,
           }),
           members,
@@ -631,7 +638,7 @@ export class BranchLabPanelService {
             panel,
             branchTestBySource,
             newTests,
-            walkInTest.id,
+            walkInTest,
           );
           items.push({ copyId: c.id, panel, members });
         }
@@ -640,7 +647,7 @@ export class BranchLabPanelService {
           for (const { copyId, panel, members } of items) {
             await tx.branchLabPanel.update({
               where: { id: copyId },
-              data: this.buildPanelSyncData(panel, actorId),
+              data: this.buildPanelSyncData(panel, actorId, targetPanelList),
             });
             // Rebuild membership: retire existing active joins, then re-create.
             await tx.branchLabPanelTest.updateMany({
@@ -1216,7 +1223,7 @@ export class BranchLabPanelService {
     panel: LabPanelWithTests,
     branchTestBySource: Map<string, string>,
     newTests: Map<string, Prisma.BranchLabTestUncheckedCreateInput>,
-    testListId: string,
+    testList: ListPricingConfig & { id: string },
   ): Promise<MemberPlan[]> {
     const members: MemberPlan[] = [];
     for (const t of panel.tests) {
@@ -1240,7 +1247,8 @@ export class BranchLabPanelService {
             tenantId,
             branchId,
             sourceMasterDataId: masterDataId,
-            listId: testListId,
+            listId: testList.id,
+            list: testList,
             actorId,
           }),
         );
@@ -1304,6 +1312,8 @@ export class BranchLabPanelService {
       branchId: string;
       sourceMasterDataId: string;
       listId: string;
+      /** The target list's pricing config — drives the copied panel's `listPrice`. */
+      list: ListPricingConfig;
       actorId: string | null;
     },
   ): Prisma.BranchLabPanelUncheckedCreateInput {
@@ -1315,8 +1325,13 @@ export class BranchLabPanelService {
       sourceLabPanelId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
       listId: target.listId,
-      // Walk-in default list: the sellable list price starts at MSRP.
-      listPrice: (scalars.priceMsrp as number) ?? 0,
+      // List price honours the target list's pricing config: MSRP for the
+      // default Walk-in list, the source column × % for a PERCENTAGE list, or
+      // the source column copied as-is for a CUSTOMIZED list.
+      listPrice: resolveImportListPrice(
+        scalars as unknown as SourcePriceColumns,
+        target.list,
+      ),
       createdBy: target.actorId,
       updatedBy: target.actorId,
     } as Prisma.BranchLabPanelUncheckedCreateInput;
@@ -1360,17 +1375,29 @@ export class BranchLabPanelService {
     } as Prisma.BranchLabPanelUncheckedCreateInput;
   }
 
-  /** Build the overwrite (re-snapshot) update payload from a composed source panel. */
+  /**
+   * Build the overwrite (re-snapshot) update payload from a composed source panel.
+   * Reference scalars are always refreshed from Master Data; `listPrice` follows the
+   * target list's pricing config: recomputed to MSRP for the default Walk-in list,
+   * recomputed from the fresh source column × stored percentage for a PERCENTAGE
+   * list, and **omitted** for a CUSTOMIZED (non-default) list so its manually-set
+   * price is preserved untouched.
+   */
   private buildPanelSyncData(
     source: LabPanelWithTests,
     actorId: string | null,
+    list: ListPricingConfig,
   ): Prisma.BranchLabPanelUncheckedUpdateInput {
     const scalars = this.extractScalars(source);
+    const listPrice = resolveSyncListPrice(
+      scalars as unknown as SourcePriceColumns,
+      list,
+    );
     return {
       ...scalars,
-      // Walk-in list price tracks MSRP on re-snapshot (agreed overwrite contract).
-      listPrice: (scalars.priceMsrp as number) ?? 0,
       updatedBy: actorId,
+      // null = CUSTOMIZED list: leave `listPrice` out of the update to preserve it.
+      ...(listPrice !== null ? { listPrice } : {}),
     };
   }
 
