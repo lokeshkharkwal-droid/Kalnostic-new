@@ -28,13 +28,13 @@ tests {
 docs {
   The active branch's report-printing settings:
 
-  - `isLabTestNotesSelectable` (default `true`) - the technician may choose, per
-    report, which Notes sections print, for a **single lab test**.
+  - `isLabTestNotesSelectable` (default `true`) - whether the Notes sections start
+    SELECTED to print for a **single lab test** (ON = all selected, OFF = none selected).
   - `isLabPanelNotesSelectable` (default `true`) - the same, for a test that
     **belongs to a lab panel** (ordered as part of a panel).
 
-  OFF means every Notes section prints, as before, and any choice already saved on
-  a report is ignored. A branch that has never saved gets both `true`; this call
+  The Print checkboxes always show; the technician can change the selection per report.
+  A choice saved on a report always wins over this default. A branch that has never saved gets both `true`; this call
   never creates a row.
 
   Needs `branch_admin:branch_settings__view_branch_settings` (a Branch Admin holds

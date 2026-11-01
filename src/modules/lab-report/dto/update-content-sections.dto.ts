@@ -16,26 +16,26 @@ import { RichTextNote } from '../../../common/decorators/rich-text-note.decorato
 export class UpdateContentSectionsDto {
   @IsOptional()
   @IsString()
-  @RichTextNote('Useful For')
+  @RichTextNote('Useful For', { strict: true })
   usefulFor?: string;
 
   @IsOptional()
   @IsString()
-  @RichTextNote('Interpretation')
+  @RichTextNote('Interpretation', { strict: true })
   interpretation?: string;
 
   @IsOptional()
   @IsString()
-  @RichTextNote('Limitations')
+  @RichTextNote('Limitations', { strict: true })
   limitations?: string;
 
   @IsOptional()
   @IsString()
-  @RichTextNote('Remarks')
+  @RichTextNote('Remarks', { strict: true })
   remarks?: string;
 
   @IsOptional()
   @IsString()
-  @RichTextNote('References')
+  @RichTextNote('References', { strict: true })
   references?: string;
 }

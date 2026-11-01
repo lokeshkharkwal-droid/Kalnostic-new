@@ -9,6 +9,6 @@ import { RichTextNote } from '../../../common/decorators/rich-text-note.decorato
  */
 export class UpdateParameterNoteDto {
   @IsString()
-  @RichTextNote('Parameter Note')
+  @RichTextNote('Parameter Note', { strict: true })
   content: string;
 }

@@ -41,16 +41,65 @@ export type ResultValueSaveMode =
 const text = (s: string | null | undefined): string => (s ?? '').trim();
 
 /**
+ * A reference range written for people in the Audit Trail: its analyzer, method, unit and display text,
+ * e.g. `Cobas · Refractometry · g/mL · 1.010 - 1.030 (Analyzer default)`. Parts that are empty are left out;
+ * a range with nothing to show reads `(no range)`.
+ *
+ * @param range the range's method, unit, display text and limits (undefined when there is none)
+ * @param analyzerName the analyzer the range belongs to, when it has one
+ */
+export function describeRangeForAudit(
+  range:
+    | {
+        method?: string | null;
+        unit?: string | null;
+        displayOfReferenceRange?: string | null;
+        lowerLimit?: unknown;
+        upperLimit?: unknown;
+      }
+    | undefined,
+  analyzerName?: string,
+): string {
+  if (!range) return '(no range)';
+  // A limit is a string, a number, or a Prisma Decimal (its own `toString` gives the plain number).
+  const bound = (v: unknown): string => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'string' || typeof v === 'number') return String(v).trim();
+    return (v as { toString(): string }).toString().trim();
+  };
+  const limits = [bound(range.lowerLimit), bound(range.upperLimit)].some(
+    Boolean,
+  )
+    ? `${bound(range.lowerLimit)} - ${bound(range.upperLimit)}`
+    : '';
+  const parts = [
+    analyzerName,
+    range.method,
+    range.unit,
+    text(range.displayOfReferenceRange) || limits,
+  ]
+    .map((p) => text(p))
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : '(no range)';
+}
+
+/**
  * The Audit Trail text for one analyzer value a technician edited, e.g.
  * `Value edited — Hemoglobin: 130 g/L → 13.5 g/dL (analyzer: Cobas)`. Who edited it and when
  * come from the history entry itself. Says so when the number itself is unchanged (only the
  * range or unit was edited).
+ *
+ * When the RANGE was changed (`ranges` given) the entry names both ranges:
+ *  - number unchanged: `Range changed — Specific Gravity: <old range> → <new range>; result 1.025 g/mL kept (analyzer: …)`,
+ *    with `(unit g/mL → g/dL)` after "kept" when the unit changed too (the number is never converted);
+ *  - number changed as well: `Value and range edited — …: <old value> → <new value>; range <old> → <new> (analyzer: …)`.
  *
  * @param parameterName the parameter's display name
  * @param analyzerName the analyzer the value belongs to, when known
  * @param stored the value as it was stored before this edit
  * @param incoming what the technician is saving (a field left out keeps its stored value)
  * @param analyzerSentAt when the analyzer sent the value, already formatted for people (left out when unknown)
+ * @param ranges the range the value had and the one it has now, written for people, when the range changed
  */
 export function describeAnalyzerOverwrite(
   parameterName: string,
@@ -60,6 +109,7 @@ export function describeAnalyzerOverwrite(
   },
   incoming: IncomingResultValue & { unit?: string },
   analyzerSentAt?: string,
+  ranges?: { before: string; after: string },
 ): string {
   const show = (
     o1: string | null | undefined,
@@ -74,6 +124,27 @@ export function describeAnalyzerOverwrite(
   const unchanged =
     text(newO1) === text(stored.observed1) &&
     text(newO2) === text(stored.observed2);
+  if (ranges) {
+    const who =
+      `(analyzer: ${analyzerName ?? 'unknown'}` +
+      `${analyzerSentAt ? `, sent ${analyzerSentAt}` : ''})`;
+    if (!unchanged) {
+      return (
+        `Value and range edited — ${parameterName}: ` +
+        `${show(stored.observed1, stored.observed2, stored.unit)} → ` +
+        `${show(newO1, newO2, incoming.unit ?? stored.unit)}; ` +
+        `range ${ranges.before} → ${ranges.after} ${who}`
+      );
+    }
+    const oldUnit = text(stored.unit);
+    const newUnit = text(incoming.unit ?? stored.unit);
+    const unitMoved = !!oldUnit && !!newUnit && oldUnit !== newUnit;
+    return (
+      `Range changed — ${parameterName}: ${ranges.before} → ${ranges.after}; ` +
+      `result ${show(stored.observed1, stored.observed2, unitMoved ? null : stored.unit)} kept` +
+      `${unitMoved ? ` (unit ${oldUnit} → ${newUnit})` : ''} ${who}`
+    );
+  }
   return (
     `Value edited — ${parameterName}: ` +
     `${show(stored.observed1, stored.observed2, stored.unit)} → ` +

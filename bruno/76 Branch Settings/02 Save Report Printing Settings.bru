@@ -44,10 +44,12 @@ docs {
   - `isLabTestNotesSelectable` (boolean) - for a single lab test.
   - `isLabPanelNotesSelectable` (boolean) - for a test that belongs to a lab panel.
 
-  Takes effect on the next screen load and the next print of any report held by this
-  branch: the technician's checkboxes beside each Notes section appear or disappear
-  (`GET /lab-reports/:id` -> `notesPrint.enabled`), and a switch that is OFF makes
-  every Notes section print (see `PATCH /lab-reports/:id/note-print-sections`).
+  The checkboxes beside each Notes section are always shown. These switches only set the
+  DEFAULT selection for a report that has no choice yet (`GET /lab-reports/:id` ->
+  `notesPrint`): ON = all Notes selected, OFF = none selected. The technician can change it
+  per report (see `PATCH /lab-reports/:id/note-print-sections`). Takes effect on the next
+  screen load and print of a report with no choice yet; an approved report keeps the
+  selection it was approved with.
 
   Needs `branch_admin:branch_settings__update_branch_settings` (403 without it).
   Unknown fields, including `branchId`, are rejected with 400: the branch is always
