@@ -166,6 +166,7 @@ import {
 } from './utils/reference-range.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
 import { findReceiverReturns } from '../accession/utils/returned-by-receiver.util';
+import { escapeLike } from '../accession/utils/like-escape.util';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
@@ -1089,13 +1090,18 @@ export class LabReportService {
     if (Object.keys(order).length > 0) orderItem.order = order;
 
     // Search bar (LABORATORY.docx §1.1 element 4): Patient Name, Order ID, Test
-    // Name, Ref Panel. Spans both OrderItem-level fields (Test Name, via the
-    // branch lab test/panel snapshot) and Order-level fields (Order ID, Patient
+    // Name, Ref Panel, and the Sample Barcode (the Barcode column the row shows).
+    // Spans both OrderItem-level fields (Test Name, via the
+    // branch lab test/panel snapshot; Barcode, via the order line's samples) and Order-level fields (Order ID, Patient
     // Name, Ref Panel) — combined as a top-level OR so a hit on any one field
     // matches, independent of the other orderItem/order filters above (which
     // still apply as an AND alongside this, via Prisma's implicit top-level AND).
-    if (filters.search) {
-      const search = filters.search;
+    // The text is trimmed first (a scanner or a stray space around a barcode / order id must not make it match
+    // nothing), a blank search is no search, and `%`, `_` and `\` are matched as typed (Prisma hands `contains`
+    // to LIKE as it is, so an unescaped `%` would match every row).
+    const typedSearch = filters.search?.trim();
+    if (typedSearch) {
+      const search = escapeLike(typedSearch);
       // Bug fix: a full-name search (e.g. "Hiroshi Tanaka") never matched
       // anything, because firstName/lastName were only ever checked against
       // the whole search string independently — neither field alone
@@ -1103,7 +1109,10 @@ export class LabReportService {
       // every word to be found somewhere across first/middle/last name (in
       // any order) fixes full-name search without changing single-word
       // search behavior at all (a 1-word split is just the original check).
-      const searchWords = search.trim().split(/\s+/).filter(Boolean);
+      const searchWords = typedSearch
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(escapeLike);
       const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
         AND: searchWords.map((word) => ({
           OR: [
@@ -1122,6 +1131,18 @@ export class LabReportService {
         {
           branchLabPanel: {
             is: { panelName: { contains: search, mode: 'insensitive' } },
+          },
+        },
+        // The Barcode column: the barcode of any live sample linked to this order
+        // line. One barcode is shared by every sample of a grouping bucket, so a
+        // scanned tube lists every test on it. Same case-insensitive "contains" as
+        // the Accession search; the same link the Sample Status filter above uses.
+        {
+          orderSampleTests: {
+            some: {
+              deletedAt: null,
+              sample: { barcode: { contains: search, mode: 'insensitive' } },
+            },
           },
         },
         {
