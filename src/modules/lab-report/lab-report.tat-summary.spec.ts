@@ -20,7 +20,13 @@ describe('LabReportService.getTatSummary', () => {
       typeof LabReportService
     >),
   );
+  // the panel-member lookup the worklist filters need: no panel member on any report here
+  const prisma = {
+    labReport: { findMany: jest.fn().mockResolvedValue([]) },
+    branchLabTest: { findMany: jest.fn().mockResolvedValue([]) },
+  };
   Object.assign(service, {
+    prisma,
     tatService: { summarize },
     userDepartmentScope: { resolveDepartmentIds },
   });
@@ -42,16 +48,29 @@ describe('LabReportService.getTatSummary', () => {
       dateTo: '2026-10-09',
       departmentId: 'd9',
     })) as {
-      orderItem: {
-        order: { orderDate: unknown };
-        branchLabTest: { departmentId: string };
-      };
+      orderItem: { order: { orderDate: unknown } };
+      AND: unknown[];
     };
     expect(where.orderItem.order.orderDate).toEqual({
       gte: new Date('2026-10-06T00:00:00.000Z'),
       lte: new Date('2026-10-09T00:00:00.000Z'),
     });
-    expect(where.orderItem.branchLabTest.departmentId).toBe('d9');
+    // the department: a single test / unsplit panel line by the order line's department, a split panel's test by ITS
+    // OWN department (no member of department d9 here)
+    expect(where.AND).toContainEqual({
+      OR: [
+        {
+          memberBranchLabTestId: null,
+          orderItem: {
+            OR: [
+              { branchLabTest: { is: { departmentId: 'd9' } } },
+              { branchLabPanel: { is: { departmentId: 'd9' } } },
+            ],
+          },
+        },
+        { memberBranchLabTestId: { in: [] } },
+      ],
+    });
   });
 
   it('keeps the tenant, branch scope and department scope of the tab counts', async () => {

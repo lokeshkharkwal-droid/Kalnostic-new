@@ -72,9 +72,13 @@ describe('worklist branch scope → query', () => {
         performingEntry: { is: { departmentId: null } },
       }),
     ]);
-    // sent by A and held elsewhere: always the order line's entry
+    // sent by A and held elsewhere: the order line's entry (a single test / unsplit panel) or, for one test of a
+    // split panel, that test's OWN department - never the performing entry
     expect(sent.branchId).toEqual({ not: 'A' });
-    expect(sent.orderItem).toBeDefined();
+    expect(sent.OR).toEqual([
+      { memberBranchLabTestId: null, orderItem: expect.anything() as unknown },
+      { memberBranchLabTestId: { not: null, notIn: [] } },
+    ]);
     expect(sent.performingEntry).toBeUndefined();
   });
 

@@ -168,6 +168,10 @@ import { pickDisplayBranchId } from './utils/display-branch.util';
 import { findReceiverReturns } from '../accession/utils/returned-by-receiver.util';
 import { escapeLike } from '../accession/utils/like-escape.util';
 import {
+  NO_MEMBER_MATCHES,
+  type MemberEntryMatches,
+} from './utils/member-test-match.util';
+import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
   describeRangeForAudit,
@@ -1009,11 +1013,98 @@ export class LabReportService {
     where.AND = [{ OR: usable.map(ruleWhere) }];
   }
 
+  /**
+   * The panel-member test entries a worklist request depends on (see `MemberEntryMatches`). A panel member's report
+   * has no test on its order line, so it is judged through `memberBranchLabTestId` - by ITS OWN test entry (the same
+   * rule Accession applies to a panel's samples):
+   *  - hidden: the member entries whose own department the caller is not assigned to (always needed: it is part of
+   *    who may see a row);
+   *  - department: the member entries whose own department is the Department filter's;
+   *  - search: the member entries whose name contains the search text (the name the row shows, `attachMemberTestNames`);
+   *  - testFilter: the entries of the Lab Test filter's test (the entry or any price-list copy of it), narrowed to the
+   *    Department filter's department when one is set.
+   * First one lookup of the member entries that appear on reports in the caller's branches, then one small query per
+   * condition that applies (run together). Call once per request and pass the result to every `buildListWhere` of it.
+   *
+   * @param tenantId the lab's tenant
+   * @param scope the branches (and statuses) the request covers
+   * @param filters the worklist filters of the request
+   * @param scopeIds the caller's department ids
+   */
+  private async resolveMemberEntryMatches(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    filters: ListLabReportsDto,
+    scopeIds: string[],
+  ): Promise<MemberEntryMatches> {
+    const typed = filters.search?.trim();
+    const reportedWhere: Prisma.LabReportWhereInput = {
+      tenantId,
+      deletedAt: null,
+      memberBranchLabTestId: { not: null },
+    };
+    this.applyBranchScope(reportedWhere, scope);
+    const reported = await this.prisma.labReport.findMany({
+      where: reportedWhere,
+      distinct: ['memberBranchLabTestId'],
+      select: { memberBranchLabTestId: true },
+    });
+    const memberIds = reported
+      .map((r) => r.memberBranchLabTestId)
+      .filter((id): id is string => id !== null);
+    const idsOf = async (
+      where: Prisma.BranchLabTestWhereInput,
+    ): Promise<string[]> =>
+      (
+        await this.prisma.branchLabTest.findMany({
+          where: { deletedAt: null, ...where },
+          select: { id: true },
+        })
+      ).map((e) => e.id);
+    const reportedIn: Prisma.BranchLabTestWhereInput = {
+      id: { in: memberIds },
+    };
+    const [hidden, department, search, testFilter] = await Promise.all([
+      memberIds.length > 0
+        ? idsOf({
+            ...reportedIn,
+            departmentId:
+              scopeIds.length > 0
+                ? { not: null, notIn: scopeIds }
+                : { not: null },
+          })
+        : [],
+      memberIds.length > 0 && filters.departmentId
+        ? idsOf({ ...reportedIn, departmentId: filters.departmentId })
+        : [],
+      memberIds.length > 0 && typed
+        ? idsOf({
+            ...reportedIn,
+            testName: { contains: escapeLike(typed), mode: 'insensitive' },
+          })
+        : [],
+      filters.branchLabTestId
+        ? idsOf({
+            tenantId,
+            OR: [
+              { id: filters.branchLabTestId },
+              { sourceLabTestId: filters.branchLabTestId },
+            ],
+            ...(filters.departmentId
+              ? { departmentId: filters.departmentId }
+              : {}),
+          })
+        : [],
+    ]);
+    return { search, testFilter, department, hidden };
+  }
+
   private buildListWhere(
     tenantId: string,
     scope: WorklistBranchScope,
     filters: ListLabReportsDto,
     scopeIds: string[],
+    members: MemberEntryMatches = NO_MEMBER_MATCHES,
   ): Prisma.LabReportWhereInput {
     const where: Prisma.LabReportWhereInput = {
       tenantId,
@@ -1039,17 +1130,48 @@ export class LabReportService {
     // pricing list as its own row, and the Reporting dropdown (getOptions)
     // sends the shared source id so one filter selection matches the test/
     // panel regardless of which list's copy a given order actually used.
-    const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {};
-    if (filters.departmentId)
-      branchLabTestWhere.departmentId = filters.departmentId;
+    // A panel member's report has no test on its order line (the line is the panel), so a Lab Test filter
+    // also matches it through its member entry; `memberAnd` collects those report-level alternatives.
+    const memberAnd: Prisma.LabReportWhereInput[] = [];
+    // The Department filter judges a panel's tests by their OWN department (the department of each member's test
+    // entry), the same rule Accession applies to a panel's samples: a single test by its own department, a panel
+    // member through `members.department`, and a panel line that was never split into members (no member reports)
+    // by the panel's department, as before.
+    const departmentId = filters.departmentId;
     if (filters.branchLabTestId) {
-      branchLabTestWhere.OR = [
-        { id: filters.branchLabTestId },
-        { sourceLabTestId: filters.branchLabTestId },
-      ];
-    }
-    if (Object.keys(branchLabTestWhere).length > 0) {
-      orderItem.branchLabTest = branchLabTestWhere;
+      const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {
+        ...(departmentId ? { departmentId } : {}),
+        OR: [
+          { id: filters.branchLabTestId },
+          { sourceLabTestId: filters.branchLabTestId },
+        ],
+      };
+      if (members.testFilter.length > 0) {
+        // `members.testFilter` is already narrowed to the Department filter's department, member by member.
+        memberAnd.push({
+          OR: [
+            { orderItem: { branchLabTest: branchLabTestWhere } },
+            { memberBranchLabTestId: { in: members.testFilter } },
+          ],
+        });
+      } else {
+        orderItem.branchLabTest = branchLabTestWhere;
+      }
+    } else if (departmentId) {
+      memberAnd.push({
+        OR: [
+          {
+            memberBranchLabTestId: null,
+            orderItem: {
+              OR: [
+                { branchLabTest: { is: { departmentId } } },
+                { branchLabPanel: { is: { departmentId } } },
+              ],
+            },
+          },
+          { memberBranchLabTestId: { in: members.department } },
+        ],
+      });
     }
     if (filters.branchLabPanelId) {
       orderItem.branchLabPanel = {
@@ -1122,7 +1244,7 @@ export class LabReportService {
           ],
         })),
       };
-      orderItem.OR = [
+      const searchOrderItemOr: Prisma.OrderItemWhereInput[] = [
         {
           branchLabTest: {
             is: { testName: { contains: search, mode: 'insensitive' } },
@@ -1161,6 +1283,26 @@ export class LabReportService {
           },
         },
       ];
+      if (members.search.length > 0) {
+        // A panel member's report has no test on its order line, so its name is matched through its own member
+        // entry; the order-line fields (patient, order id, barcode ...) apply to it as to every report.
+        memberAnd.push({
+          OR: [
+            { orderItem: { OR: searchOrderItemOr } },
+            { memberBranchLabTestId: { in: members.search } },
+          ],
+        });
+      } else {
+        orderItem.OR = searchOrderItemOr;
+      }
+    }
+    if (memberAnd.length > 0) {
+      const existing = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+      where.AND = [...existing, ...memberAnd];
     }
     where.orderItem = orderItem;
     // Department visibility scope (mandatory, not a user filter): a report is
@@ -1168,7 +1310,7 @@ export class LabReportService {
     // one of the caller's mapped departments - the department of the setup the
     // branch that is LOOKING uses (see `applyDepartmentScope`). Applied before
     // pagination/counts.
-    this.applyDepartmentScope(where, scope, scopeIds);
+    this.applyDepartmentScope(where, scope, scopeIds, members.hidden);
 
     // B2B Referral Panel isolation: constrain reports to the panel's orders
     // (nested via orderItem.order). Runs last so it merges with any filters above.
@@ -1194,11 +1336,21 @@ export class LabReportService {
     where: Prisma.LabReportWhereInput,
     scope: WorklistBranchScope,
     scopeIds: string[],
+    hiddenMemberIds: string[] = [],
   ): void {
     const rules = usableRules(scope);
     if (rules.length === 0) return; // the branch scope already matches nothing
+    // A single test, or a panel line that was never split into members: the order line's department. One test of a
+    // split panel: ITS OWN department (its member entry), whatever the panel's - so a panel with no department no
+    // longer shows every member to everyone (Accession judges a panel's samples the same way).
     const lineOk: Prisma.LabReportWhereInput = {
-      orderItem: { is: this.departmentScopeForOrderItem(scopeIds) },
+      OR: [
+        {
+          memberBranchLabTestId: null,
+          orderItem: { is: this.departmentScopeForOrderItem(scopeIds) },
+        },
+        { memberBranchLabTestId: { not: null, notIn: hiddenMemberIds } },
+      ],
     };
     const entryOk: Prisma.BranchLabTestWhereInput =
       scopeIds.length > 0
@@ -1272,7 +1424,19 @@ export class LabReportService {
       tenantId,
       personId,
     );
-    const where = this.buildListWhere(tenantId, scope, filters, scopeIds);
+    const members = await this.resolveMemberEntryMatches(
+      tenantId,
+      scope,
+      filters,
+      scopeIds,
+    );
+    const where = this.buildListWhere(
+      tenantId,
+      scope,
+      filters,
+      scopeIds,
+      members,
+    );
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
@@ -1290,6 +1454,7 @@ export class LabReportService {
 
     let worklistRows = rows.map(toWorklistRow);
     worklistRows = await this.attachBranchNames(tenantId, worklistRows);
+    worklistRows = await this.attachMemberDepartments(worklistRows, rows);
     worklistRows = await this.attachDepartmentNames(tenantId, worklistRows);
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
@@ -1514,6 +1679,44 @@ export class LabReportService {
           ? { id: row.departmentId, name: nameById.get(row.departmentId)! }
           : null,
     }));
+  }
+
+  /**
+   * The Department column of a panel member's row: the department of the member's OWN test entry (what the
+   * Department filter and the visibility rule judge it by), not the panel's. A row whose report was sent to another
+   * branch keeps the receiving branch's entry department (`toWorklistRow`), a single test and a panel line that was
+   * never split keep the order line's. A member entry that was deleted, or has no department, gives no department.
+   * Run BEFORE `attachDepartmentNames`, which turns the id into the name. One batched lookup.
+   *
+   * @param rows the worklist rows
+   * @param sources the reports the rows were built from (same ids), to tell which rows were sent to another branch
+   */
+  private async attachMemberDepartments(
+    rows: LabReportWorklistRow[],
+    sources: ReadonlyArray<{
+      id: string;
+      memberBranchLabTestId: string | null;
+      performingEntry: unknown;
+    }>,
+  ): Promise<LabReportWorklistRow[]> {
+    const memberOf = new Map<string, string>();
+    for (const s of sources) {
+      if (s.memberBranchLabTestId && !s.performingEntry) {
+        memberOf.set(s.id, s.memberBranchLabTestId);
+      }
+    }
+    if (memberOf.size === 0) return rows;
+    const entries = await this.prisma.branchLabTest.findMany({
+      where: { id: { in: [...new Set(memberOf.values())] }, deletedAt: null },
+      select: { id: true, departmentId: true },
+    });
+    const departmentOf = new Map(entries.map((e) => [e.id, e.departmentId]));
+    return rows.map((row) => {
+      const entryId = memberOf.get(row.id);
+      return entryId === undefined
+        ? row
+        : { ...row, departmentId: departmentOf.get(entryId) ?? null };
+    });
   }
 
   /**
@@ -2141,11 +2344,19 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    // The panel members the search / Lab Test filter point at, resolved once for every count below.
+    const members = await this.resolveMemberEntryMatches(
+      tenantId,
+      scope,
+      filters,
+      scopeIds,
+    );
     const baseWhere = this.buildListWhere(
       tenantId,
       scope,
       { ...filters, status: undefined },
       scopeIds,
+      members,
     );
 
     const statuses = Object.values(LabReportStatus);
@@ -2175,6 +2386,7 @@ export class LabReportService {
         outsource: undefined,
       },
       scopeIds,
+      members,
     );
     const [inHouse, outsource] = await Promise.all([
       this.prisma.labReport.count({
@@ -2217,11 +2429,18 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    const members = await this.resolveMemberEntryMatches(
+      tenantId,
+      scope,
+      filters,
+      scopeIds,
+    );
     const where = this.buildListWhere(
       tenantId,
       scope,
       { ...filters, status: LabReportStatus.APPROVED },
       scopeIds,
+      members,
     );
     const existingAnd = where.AND
       ? Array.isArray(where.AND)
@@ -2365,11 +2584,65 @@ export class LabReportService {
   }
 
   /**
+   * Which panels a user is offered in the Lab Panel dropdown. A lab panel is split into its tests in the worklist and
+   * each test is judged by its OWN department, so a panel is offered when the user can see at least one test inside
+   * it: a test is visible when its own department is unassigned or one of the user's (the same rule the worklist
+   * applies). The panel's own department does not decide it. A panel with no (live) tests keeps the old rule: its own
+   * department unassigned or one of the user's. Two small batched lookups (the panels' tests, then those tests).
+   *
+   * @param tenantId the lab's tenant
+   * @param panels the candidate panels (id and own department)
+   * @param scopeIds the user's department ids
+   * @returns the panels to offer, in the same order
+   */
+  private async panelsOfferedByDepartment<
+    T extends { id: string; departmentId: string | null },
+  >(tenantId: string, panels: T[], scopeIds: string[]): Promise<T[]> {
+    if (panels.length === 0) return panels;
+    const links = await this.prisma.branchLabPanelTest.findMany({
+      where: {
+        tenantId,
+        branchLabPanelId: { in: panels.map((p) => p.id) },
+        deletedAt: null,
+      },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+    });
+    const entries =
+      links.length > 0
+        ? await this.prisma.branchLabTest.findMany({
+            where: {
+              id: { in: [...new Set(links.map((l) => l.branchLabTestId))] },
+              deletedAt: null,
+            },
+            select: { id: true, departmentId: true },
+          })
+        : [];
+    const departmentOf = new Map(entries.map((e) => [e.id, e.departmentId]));
+    const visible = (department: string | null | undefined): boolean =>
+      !department || scopeIds.includes(department);
+    const testsOf = new Map<string, string[]>();
+    for (const l of links) {
+      if (!departmentOf.has(l.branchLabTestId)) continue;
+      testsOf.set(l.branchLabPanelId, [
+        ...(testsOf.get(l.branchLabPanelId) ?? []),
+        l.branchLabTestId,
+      ]);
+    }
+    return panels.filter((p) => {
+      const tests = testsOf.get(p.id) ?? [];
+      return tests.length > 0
+        ? tests.some((t) => visible(departmentOf.get(t)))
+        : visible(p.departmentId);
+    });
+  }
+
+  /**
    * Paginated, searchable **Lab Panel** options for the Reporting Worklist's
    * filter row (`GET /lab-reports/lab-panel-options`) — mirrors
    * {@link getLabTestOptions} exactly (same list-per-pricing-list dedup
    * reasoning, same `sourceLabPanelId ?? id` dedup/return key), for
-   * `BranchLabPanel` instead of `BranchLabTest`.
+   * `BranchLabPanel` instead of `BranchLabTest`. A panel is offered when the
+   * user can see at least one test inside it (see `panelsOfferedByDepartment`).
    */
   async getLabPanelOptions(
     tenantId: string,
@@ -2385,24 +2658,30 @@ export class LabReportService {
       tenantId,
       personId,
     );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
     const term = query.search?.trim();
 
-    const rows = await this.prisma.branchLabPanel.findMany({
+    const allRows = await this.prisma.branchLabPanel.findMany({
       where: {
         tenantId,
         branchId: activeBranchId,
         isActive: true,
         deletedAt: null,
-        ...deptScope,
         ...(term ? { panelName: { contains: term, mode: 'insensitive' } } : {}),
       },
-      select: { id: true, panelName: true, sourceLabPanelId: true },
+      select: {
+        id: true,
+        panelName: true,
+        sourceLabPanelId: true,
+        departmentId: true,
+      },
       orderBy: { panelName: 'asc' },
     });
+    // A panel is offered by the tests inside it, not by its own department (see `panelsOfferedByDepartment`).
+    const rows = await this.panelsOfferedByDepartment(
+      tenantId,
+      allRows,
+      scopeIds,
+    );
 
     const seen = new Set<string>();
     const deduped: typeof rows = [];
@@ -2680,6 +2959,9 @@ export class LabReportService {
     )[0]!;
     worklistRow = (await this.attachBranchNames(tenantId, [worklistRow]))[0]!;
     worklistRow = (
+      await this.attachMemberDepartments([worklistRow], [report])
+    )[0]!;
+    worklistRow = (
       await this.attachDepartmentNames(tenantId, [worklistRow])
     )[0]!;
     worklistRow = (await this.attachMemberTestNames([worklistRow]))[0]!;
@@ -2702,6 +2984,40 @@ export class LabReportService {
       parameterNotes: report.parameterNotes,
       resultParams: report.resultParams,
     };
+  }
+
+  /**
+   * `GET /lab-reports/:id` for a signed-in user: the report as {@link findByIdForApi} returns it, but only when the
+   * user may see it by department - the same rule the worklist applies (a row is visible when its department is
+   * unassigned or one of the user's departments; the department is the one the row shows, so a panel's test is
+   * judged by its own department). A report the user may not see behaves as not found, like one that does not exist.
+   * Only this read route checks it: {@link findByIdForApi} also answers every save / submit, which must not fail
+   * after the write.
+   *
+   * @param id the report id
+   * @param tenantId the lab's tenant
+   * @param branchId the caller's active branch
+   * @param personId the calling user, whose departments decide
+   * @throws LabReportNotFoundException when the report is missing, belongs to another branch, or is outside the user's departments
+   */
+  async findByIdForViewer(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+  ): Promise<LabReportDetailApiResponse> {
+    const detail = await this.findByIdForApi(id, tenantId, branchId);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    if (
+      detail.departmentId !== null &&
+      !scopeIds.includes(detail.departmentId)
+    ) {
+      throw new LabReportNotFoundException(id);
+    }
+    return detail;
   }
 
   /**

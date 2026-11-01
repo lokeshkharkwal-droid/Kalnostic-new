@@ -351,9 +351,15 @@ export class LabReportController {
   findOne(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
   ) {
-    return this.labReportService.findByIdForApi(id, tenantId, profile.branchId);
+    return this.labReportService.findByIdForViewer(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+    );
   }
 
   /**

@@ -57,8 +57,22 @@ docs {
   the selected order (the status tabs only ever load one status at a time). Pair
   with a high `limit` to get the whole order in one page.
 
+  `branchLabTestId` (the Lab Test filter) is a test entry's id or its shared
+  master id. It lists the reports of that test, and also the reports of that
+  test as a MEMBER of a lab panel (a panel line has one report per member; the
+  member is matched through its own entry, not the panel's order line).
+
+  `departmentId` matches the department the row shows in its Department
+  column. A single test is matched by its own department. A test inside a lab
+  panel is matched by ITS OWN department (the department of its test entry),
+  not the panel's, the same rule Accession applies to a panel's samples. A
+  panel line that was never split into member tests is matched by the panel's
+  department. With `branchLabTestId` too, the test must also be in that
+  department. The status counts follow every one of these filters.
+
   `search` matches Patient Name (first/last), Order ID (order code), Test
-  Name (the order item's branch lab test name), Ref Panel (the order's
+  Name (the order item's branch lab test name, or — for a test inside a lab
+  panel — the member test's own name, the one the row shows), Ref Panel (the order's
   referral panel name), or the sample Barcode (any live sample linked to the
   order line — the value the row's Barcode column shows; one barcode can be
   shared by several samples, so a scanned tube lists every test on it) — a hit
@@ -115,4 +129,17 @@ docs {
   its own entry once the report was sent to it (`performingBranchLabTestId`), otherwise the order line's; for a report
   the branch only SENT (the sender view) it is the order line's entry. The row's `departmentId` is the department of
   the holding branch's entry.
+
+  **A test inside a lab panel is judged by its own department.** A panel is split into one report per test; each
+  such report is visible when ITS OWN test entry's department is unassigned or one of the caller's departments. The
+  panel's own department is ignored for them, so a panel with no department no longer shows every test to everyone.
+  The row's `departmentId` (the Department column) is that test's own department. A panel line that was never split
+  into member tests, and a single test, keep the order line's department. A report sent to another branch keeps the
+  receiving branch's entry. The Patient Entry popup loads an order's tests through this same list (`orderId`), so it
+  shows the same tests as the worklist.
+
+  **Lab Panel dropdown** (`GET /lab-reports/lab-panel-options`): a panel is offered when the caller can see at least
+  one test inside it (a test is visible when its own department is unassigned or one of the caller's). The panel's own
+  department does not decide it. A panel with no tests keeps the old rule: its own department unassigned or one of the
+  caller's. Choosing a panel lists the tests of that panel the caller may see.
 }
