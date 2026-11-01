@@ -26,7 +26,7 @@ import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
-  patientReportAgeDisplay,
+  patientPrintAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
@@ -4730,9 +4730,11 @@ export class LabReportService {
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
-        // Single unit from DOB as of today: 0-29 days → Days, under 1 year →
-        // Months, else Years; stored age/ageType fallback when DOB is absent.
-        patient_age: patientReportAgeDisplay(
+        // Single leading-unit age from DOB via the shared `patientPrintAgeDisplay`
+        // rule: Years at ≥12 months, Months at 1–11 months, Days under a month;
+        // stored age/ageType fallback when DOB is absent. Same rule as the
+        // bill/TRF/sample-label tag.
+        patient_age: patientPrintAgeDisplay(
           patient.dateOfBirth ?? null,
           patient.age,
           patient.ageType,
@@ -5143,8 +5145,8 @@ export class LabReportService {
           patient.lastName,
         ]),
       },
-      // Same single-unit report age as `{patient_age}` (see buildPrintContext).
-      client_age: patientReportAgeDisplay(
+      // Same shared single-unit age as `{patient_age}` (see buildPrintContext).
+      client_age: patientPrintAgeDisplay(
         patient.dateOfBirth ?? null,
         patient.age,
         patient.ageType,

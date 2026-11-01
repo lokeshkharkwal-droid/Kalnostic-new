@@ -59,7 +59,7 @@ import {
   amountInWords,
   genderLabel,
   salutationLabel,
-  patientFullAgeDisplay,
+  patientPrintAgeDisplay,
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
@@ -2274,11 +2274,12 @@ export class OrderService {
       // documents. Kept as a distinct key so authors of pre-existing templates
       // that used `{client_salutation}` don't have to re-author them.
       client_salutation: salutationLabel(p.salutation),
-      // Full age (Years, Months, Days) from DOB when known; single-unit
-      // (age/ageType) fallback otherwise. Shared by every order-document type
-      // (bill, TRF, quotation, order slip, …) so `{patient_age}` reads the same
-      // everywhere.
-      patient_age: patientFullAgeDisplay(
+      // Single leading-unit age from DOB — Years at ≥12 months, Months at
+      // 1–11 months, Days under a month; stored age/ageType fallback otherwise.
+      // The one shared `patientPrintAgeDisplay` rule every print template uses,
+      // so `{patient_age}` reads the same on the bill, TRF, quotation, order
+      // slip, sample label and lab report.
+      patient_age: patientPrintAgeDisplay(
         p.dateOfBirth ?? null,
         p.age,
         p.ageType,

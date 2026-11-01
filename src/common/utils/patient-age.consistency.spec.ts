@@ -1,10 +1,6 @@
 import { AgeType, AgeUnit } from '@prisma/client';
 import { dobFromAge, exactBirthDate } from './age-dob.util';
-import {
-  patientFullAgeDisplay,
-  patientReportAgeDisplay,
-  patientSingleUnitAgeDisplay,
-} from './patient-label.util';
+import { patientPrintAgeDisplay } from './patient-label.util';
 import {
   isExactAgeMatch,
   rangeAgeMatch,
@@ -12,13 +8,11 @@ import {
 
 /**
  * A saved patient's age is edited (35 -> 45). Everything that prints or uses the age reads the DATE OF BIRTH first and the stored
- * age only when there is no date of birth:
- *   - the sample barcode label (`patientSingleUnitAgeDisplay`),
- *   - the bill / order slip / TRF (`patientFullAgeDisplay`),
- *   - the lab report (`patientReportAgeDisplay`),
- *   - the technician's reference range (`exactBirthDate` + the age bands).
- * So the age and the date of birth the form saves must AGREE. The first test shows what a stale date of birth does (the reported
- * bug); the rest show that a re-made date of birth makes every one of them read 45.
+ * age only when there is no date of birth. Every print template — the sample barcode label, the bill / order slip / TRF, and the
+ * lab report — now shares ONE age rule (`patientPrintAgeDisplay`: Years at ≥12 months, Months at 1–11 months, Days under a month),
+ * and the technician's reference range reads the same date of birth (`exactBirthDate` + the age bands). So the age and the date of
+ * birth the form saves must AGREE. The first test shows what a stale date of birth does (the reported bug); the rest show that a
+ * re-made date of birth makes every one of them read 45.
  */
 describe('patient age is consistent everywhere once the date of birth follows the edited age', () => {
   const TODAY = new Date(Date.UTC(2026, 9, 14, 12, 0, 0)); // 14 Oct 2026
@@ -27,64 +21,40 @@ describe('patient age is consistent everywhere once the date of birth follows th
     new Date(Date.UTC(y, m - 1, d));
   const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
-  const prints = (
+  // Every print template resolves `{patient_age}` through the one shared rule,
+  // so the bill, TRF, sample label and lab report all read identically.
+  const printAge = (
     dob: Date | null,
     age: number | null,
     ageType: AgeType | null,
-  ) => ({
-    barcodeLabel: patientSingleUnitAgeDisplay(dob, age, ageType, TODAY),
-    billAndTrf: patientFullAgeDisplay(dob, age, ageType, TODAY),
-    report: patientReportAgeDisplay(dob, age, ageType, TODAY),
-  });
+  ) => patientPrintAgeDisplay(dob, age, ageType, TODAY);
 
   it('THE REPORTED BUG: age 45 stored next to the OLD date of birth (35 years ago) prints 35 everywhere', () => {
-    expect(prints(utcDate(1991, 10, 14), 45, AgeType.YEARS)).toEqual({
-      barcodeLabel: '35 Years',
-      billAndTrf: '35 Years, 0 Months, 0 Days',
-      report: '35 Years',
-    });
+    expect(printAge(utcDate(1991, 10, 14), 45, AgeType.YEARS)).toBe('35 Years');
   });
 
   it('age 45 with the date of birth re-made from it prints 45 everywhere', () => {
     const dob = dobFromAge(45, AgeType.YEARS, ON_DAY)!;
     expect(ymd(dob)).toBe('1981-10-14');
-    expect(prints(dob, 45, AgeType.YEARS)).toEqual({
-      barcodeLabel: '45 Years',
-      billAndTrf: '45 Years, 0 Months, 0 Days',
-      report: '45 Years',
-    });
+    expect(printAge(dob, 45, AgeType.YEARS)).toBe('45 Years');
   });
 
-  it('every age from 2 to 150 years reads back unchanged on all three prints', () => {
+  it('every age from 2 to 150 years reads back unchanged as a single Years value', () => {
     for (let age = 2; age <= 150; age++) {
       const dob = dobFromAge(age, AgeType.YEARS, ON_DAY)!;
-      expect(prints(dob, age, AgeType.YEARS)).toEqual({
-        barcodeLabel: `${age} Years`,
-        billAndTrf: `${age} Years, 0 Months, 0 Days`,
-        report: `${age} Years`,
-      });
+      expect(printAge(dob, age, AgeType.YEARS)).toBe(`${age} Years`);
     }
   });
 
   it('months and days read back in their own unit', () => {
     const threeMonths = dobFromAge(3, AgeType.MONTHS, ON_DAY)!;
-    expect(prints(threeMonths, 3, AgeType.MONTHS)).toMatchObject({
-      barcodeLabel: '3 Months',
-      report: '3 Months',
-    });
+    expect(printAge(threeMonths, 3, AgeType.MONTHS)).toBe('3 Months');
     const twentyDays = dobFromAge(20, AgeType.DAYS, ON_DAY)!;
-    expect(prints(twentyDays, 20, AgeType.DAYS)).toMatchObject({
-      barcodeLabel: '20 Days',
-      report: '20 Days',
-    });
+    expect(printAge(twentyDays, 20, AgeType.DAYS)).toBe('20 Days');
   });
 
   it('a patient with no date of birth still prints the stored age (nothing to disagree with)', () => {
-    expect(prints(null, 45, AgeType.YEARS)).toEqual({
-      barcodeLabel: '45 Years',
-      billAndTrf: '45 Years',
-      report: '45 Years',
-    });
+    expect(printAge(null, 45, AgeType.YEARS)).toBe('45 Years');
   });
 
   describe('the technician side uses the same date of birth', () => {
@@ -150,14 +120,9 @@ describe('patient age is consistent everywhere once the date of birth follows th
 
   it('the day before a birthday reads one year less, the birthday itself the full age', () => {
     const dob = utcDate(1981, 10, 15); // birthday tomorrow
-    expect(patientReportAgeDisplay(dob, 45, AgeType.YEARS, TODAY)).toBe(
-      '44 Years',
-    );
-    expect(patientFullAgeDisplay(dob, 45, AgeType.YEARS, TODAY)).toBe(
-      '44 Years, 11 Months, 29 Days',
-    );
-    expect(
-      patientReportAgeDisplay(utcDate(1981, 10, 14), 45, AgeType.YEARS, TODAY),
-    ).toBe('45 Years');
+    // 44 years 11 months 29 days → the single leading unit is still 44 Years.
+    expect(printAge(dob, 45, AgeType.YEARS)).toBe('44 Years');
+    // On the 45th birthday it reads the full 45.
+    expect(printAge(utcDate(1981, 10, 14), 45, AgeType.YEARS)).toBe('45 Years');
   });
 });

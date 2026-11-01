@@ -6,9 +6,9 @@ import {
 } from './sample-name.util';
 
 describe('resolveSampleName', () => {
-  it('knows the 64 standard names the frontend dropdown offers', () => {
-    expect(STANDARD_SAMPLE_NAMES).toHaveLength(64);
-    expect(new Set(STANDARD_SAMPLE_NAMES).size).toBe(64);
+  it('knows the 126 standard names the frontend dropdown offers', () => {
+    expect(STANDARD_SAMPLE_NAMES).toHaveLength(126);
+    expect(new Set(STANDARD_SAMPLE_NAMES).size).toBe(126);
   });
 
   it('leaves a name that is exactly a standard name alone', () => {

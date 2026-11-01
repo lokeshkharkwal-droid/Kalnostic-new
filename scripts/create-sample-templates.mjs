@@ -2,7 +2,9 @@
 /**
  * Create/refresh "SAMPLE" PDF print templates in a tenant via the running API,
  * one per wired print type, each exercising the NEW/updated template tags:
- *   • {patient_age}  → full "Years, Months, Days"
+ *   • {patient_age}  → single leading unit: Years when ≥12 months, Months when
+ *                      1–11 months, Days when under 1 month (one shared rule on
+ *                      every template; computed from the patient's DOB at print)
  *   • {collected_at} → date + time (labels)
  *   • {department_name} (labels)
  *   • report sample_collected_date / sample_received_date (already date+time)
@@ -40,9 +42,9 @@ const NAME = (label) => `SAMPLE ✦ ${label} (new tags)`;
 const PATIENT_LINE =
   '<div>Patient: <b>{patient_name}</b> ({patient_gender}) &middot; UHID {patient_um_id}</div>';
 
-/** Highlight box that makes the new tags obvious in the rendered PDF. */
+/** Highlight box that makes the age tag obvious in the rendered PDF. */
 const AGE_BOX =
-  '<div class="new"><b>NEW &mdash; Full Age (Years, Months, Days):</b> {patient_age}</div>';
+  '<div class="new"><b>Patient Age (Years &ge;12mo &middot; Months 1&ndash;11mo &middot; Days &lt;1mo):</b> {patient_age}</div>';
 
 /** Highlight box for the new combined Order Date &amp; Time tag. */
 const ODT_BOX =
@@ -134,7 +136,7 @@ ${AGE_BOX}
     label: 'Lab Test Report',
     body: `<h2>{branch_name} &mdash; Laboratory Report</h2>
 <div class="muted">Order {order_code} &middot; {order_date_time} &middot; Ext {external_order_id}</div>
-<div class="new"><b>NEW &mdash; Full Age:</b> {patient_age}<br/>
+<div class="new"><b>Patient Age (single unit):</b> {patient_age}<br/>
 <b>Collection date + time:</b> Collected {sample_collected_date} &middot; Received {sample_received_date}</div>
 ${PATIENT_LINE}
 <div>Test: <b>{test_name}</b> &middot; Status {report_status} &middot; Sample {sample_type} ({sample_source_label})</div>
@@ -152,7 +154,7 @@ ${PATIENT_LINE}
     label: 'Lab Panel Report',
     body: `<h2>{branch_name} &mdash; Panel Report</h2>
 <div class="muted">Order {order_code} &middot; {order_date_time}</div>
-<div class="new"><b>NEW &mdash; Full Age:</b> {patient_age}<br/>
+<div class="new"><b>Patient Age (single unit):</b> {patient_age}<br/>
 <b>Collection date + time:</b> Collected {sample_collected_date} &middot; Received {sample_received_date}</div>
 ${PATIENT_LINE}
 <div>Panel: <b>{test_name}</b> &middot; Status {report_status}</div>
@@ -171,7 +173,7 @@ ${PATIENT_LINE}
     body: `<div class="report-page-header">
 <h2>Consolidated Report</h2>
 <div>Patient: <b>{$header_fields->patient->full_name}</b> ({$header_fields->client_gender}) &middot; UHID {$header_fields->client_uhid}</div>
-<div class="new"><b>NEW &mdash; Full Age:</b> {$header_fields->client_age}</div>
+<div class="new"><b>Patient Age (single unit):</b> {$header_fields->client_age}</div>
 <div class="muted">Phone {$header_fields->client_phone} &middot; {$header_fields->order_date_time} &middot; Ref By {$header_fields->refer_by_name} &middot; Panel {$header_fields->referring_panel_name}</div>
 </div>
 {foreach $report_tests->tests as $t}
@@ -190,7 +192,7 @@ ${PATIENT_LINE}
     body: `<div class="report-page-header">
 <h2>Patient Report (All Investigations)</h2>
 <div>Patient: <b>{$header_fields->patient->full_name}</b> ({$header_fields->client_gender}) &middot; UHID {$header_fields->client_uhid}</div>
-<div class="new"><b>NEW &mdash; Full Age:</b> {$header_fields->client_age}<br/><b>Order Date &amp; Time:</b> {$header_fields->order_date_time}</div>
+<div class="new"><b>Patient Age (single unit):</b> {$header_fields->client_age}<br/><b>Order Date &amp; Time:</b> {$header_fields->order_date_time}</div>
 <div class="muted">Phone {$header_fields->client_phone} &middot; Ref By {$header_fields->refer_by_name} &middot; Panel {$header_fields->referring_panel_name}</div>
 </div>
 {foreach $report_tests->tests as $t}
@@ -206,14 +208,14 @@ ${PATIENT_LINE}
     label: 'Barcode Label',
     body: `<div class="label">
 <div class="barcode">*{barcode}*</div>
-<div class="new"><b>NEW &mdash; Full Age:</b> {patient_age}<br/><b>Department:</b> {department_name}<br/><b>Collected (date+time):</b> {collected_at}</div>
+<div class="new"><b>Patient Age (single unit):</b> {patient_age}<br/><b>Department:</b> {department_name}<br/><b>Collected (date+time):</b> {collected_at}</div>
 <div><b>{patient_name}</b> ({patient_gender}) &middot; UHID {patient_um_id}</div>
 <div>{order_code} / {accession_no}</div>
 <div class="muted">{sample_type} &middot; {container_type} &middot; {priority} &middot; Tests: {test_names}</div>
 </div>`,
     render: {
       variables: {
-        barcode: 'BC-000123', patient_age: '25 Years, 4 Months, 12 Days', department_name: 'Biochemistry, Hematology',
+        barcode: 'BC-000123', patient_age: '25 Years', department_name: 'Biochemistry, Hematology',
         collected_at: '21/09/2026 01:30 PM', patient_name: 'Ramesh Kumar', patient_gender: 'MALE',
         patient_um_id: 'UM-100', order_code: 'ORD-9', accession_no: 'ACC-9', sample_type: 'Serum',
         container_type: 'SST', priority: 'ROUTINE', test_names: 'CBC, LFT',
@@ -225,7 +227,7 @@ ${PATIENT_LINE}
     label: 'Multiple Barcode Labels',
     body: `{{#each labels}}<div class="label">
 <div class="barcode">*{barcode}*</div>
-<div class="new"><b>Full Age:</b> {patient_age} &middot; <b>Dept:</b> {department_name}<br/><b>Collected:</b> {collected_at}</div>
+<div class="new"><b>Patient Age:</b> {patient_age} &middot; <b>Dept:</b> {department_name}<br/><b>Collected:</b> {collected_at}</div>
 <div><b>{patient_name}</b> ({patient_gender}) &middot; UHID {patient_um_id}</div>
 <div>{order_code} / {accession_no}</div>
 <div class="muted">{sample_type} &middot; Tests: {test_names}</div>
@@ -233,8 +235,8 @@ ${PATIENT_LINE}
     render: {
       sections: {
         labels: [
-          { barcode: 'BC-000123', patient_age: '25 Years, 4 Months, 12 Days', department_name: 'Biochemistry', collected_at: '21/09/2026 01:30 PM', patient_name: 'Ramesh Kumar', patient_gender: 'MALE', patient_um_id: 'UM-100', order_code: 'ORD-9', accession_no: 'ACC-9', sample_type: 'Serum', test_names: 'CBC' },
-          { barcode: 'BC-000124', patient_age: '3 Years, 0 Months, 5 Days', department_name: 'Hematology', collected_at: '21/09/2026 02:05 PM', patient_name: 'Baby Sita', patient_gender: 'FEMALE', patient_um_id: 'UM-101', order_code: 'ORD-9', accession_no: 'ACC-10', sample_type: 'EDTA', test_names: 'CBC' },
+          { barcode: 'BC-000123', patient_age: '25 Years', department_name: 'Biochemistry', collected_at: '21/09/2026 01:30 PM', patient_name: 'Ramesh Kumar', patient_gender: 'MALE', patient_um_id: 'UM-100', order_code: 'ORD-9', accession_no: 'ACC-9', sample_type: 'Serum', test_names: 'CBC' },
+          { barcode: 'BC-000124', patient_age: '6 Months', department_name: 'Hematology', collected_at: '21/09/2026 02:05 PM', patient_name: 'Baby Sita', patient_gender: 'FEMALE', patient_um_id: 'UM-101', order_code: 'ORD-9', accession_no: 'ACC-10', sample_type: 'EDTA', test_names: 'CBC' },
         ],
       },
     },

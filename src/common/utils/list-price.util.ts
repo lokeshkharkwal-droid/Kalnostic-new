@@ -57,3 +57,59 @@ export function computeListPrice(
   }
   return base;
 }
+
+/**
+ * A pricing list's stored price-derivation config. Structurally compatible with
+ * the `BranchLabTestList` / `BranchLabPanelList` Prisma models, so either can be
+ * passed directly where a `ListPricingConfig` is expected.
+ */
+export interface ListPricingConfig {
+  /** The branch's default (Walk-in) list — always tracks MSRP by contract. */
+  isDefault: boolean;
+  priceType: ListPriceType;
+  copyPriceFrom: ListPriceSource | null;
+  copyPercentage: number | null;
+}
+
+/**
+ * Compute the `listPrice` for a **new** row being materialized into a list
+ * (import/create). Always returns a concrete price:
+ * - default (Walk-in) list → MSRP;
+ * - PERCENTAGE list → `round(sourceColumn × percentage ÷ 100)`;
+ * - CUSTOMIZED list → the source column copied as-is (user tunes it afterwards).
+ * @param row a row carrying the five source price columns (minor units)
+ * @param cfg the target list's pricing config
+ * @returns the list price to store (minor units)
+ */
+export function resolveImportListPrice(
+  row: SourcePriceColumns,
+  cfg: ListPricingConfig,
+): number {
+  if (cfg.isDefault) return row.priceMsrp;
+  const base = resolveSourcePrice(row, cfg.copyPriceFrom ?? 'MSRP');
+  return computeListPrice(base, cfg.priceType, cfg.copyPercentage);
+}
+
+/**
+ * Decide the `listPrice` for an **existing** row being re-snapshotted from Master
+ * Data (sync/update):
+ * - default (Walk-in) list → recompute to MSRP (overwrite contract);
+ * - PERCENTAGE list → recompute from the freshly-synced source column × stored
+ *   percentage, so the formula stays live across every sync;
+ * - CUSTOMIZED (non-default) list → return `null`, signalling the caller to
+ *   **omit `listPrice` from the update** so the manually-configured price is
+ *   preserved byte-for-byte.
+ * @param row a row carrying the five source price columns (minor units)
+ * @param cfg the target list's pricing config
+ * @returns the recomputed list price, or `null` to leave the stored price untouched
+ */
+export function resolveSyncListPrice(
+  row: SourcePriceColumns,
+  cfg: ListPricingConfig,
+): number | null {
+  if (cfg.isDefault || cfg.priceType === 'PERCENTAGE') {
+    const base = resolveSourcePrice(row, cfg.copyPriceFrom ?? 'MSRP');
+    return computeListPrice(base, cfg.priceType, cfg.copyPercentage);
+  }
+  return null;
+}

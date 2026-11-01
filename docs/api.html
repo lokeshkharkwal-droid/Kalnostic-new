@@ -512,7 +512,10 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /lab-panels/templates/:id</td><td>Business JWT</td><td>browse Site Admin template (read-only)</td></tr>
   <tr><td>POST /lab-panels/:id/clone</td><td>Business JWT</td><td>clone a Site Admin template into the tenant (clones its tests too; body: masterDataId)</td></tr>
   <tr><td>POST /branch-lab-tests/import</td><td>Business JWT</td><td>materialize selected master-data tests into the branch's default <b>Walk-in</b> Lab Test List (auto-created; re-import updates existing / adds new → {copied,updated,skipped})</td></tr>
-  <tr><td>POST /branch-lab-tests/sync</td><td>Business JWT</td><td>re-snapshot imported originals from master data (duplicates untouched; all or selected ids)</td></tr>
+  <tr><td>POST /branch-lab-tests/sync</td><td>Business JWT</td><td>reconcile the list against branch master data — update existing / <b>delete</b> tests whose source is gone (does NOT add — that's Import; duplicates untouched) → {created:0,updated,deleted,failed}</td></tr>
+  <tr><td>POST /branch-lab-tests/sync/jobs</td><td>Business JWT</td><td>start the same reconcile as a background job (202) — poll for live update/delete progress; 409 BRANCH_LIST_SYNC_ALREADY_RUNNING if one runs</td></tr>
+  <tr><td>GET /branch-lab-tests/sync/jobs/active</td><td>Business JWT</td><td>the active branch's running test-list sync job, or null (re-attach after reload)</td></tr>
+  <tr><td>GET /branch-lab-tests/sync/jobs/:jobId</td><td>Business JWT</td><td>poll one test-list sync job: progress, then {created,updated,deleted,failed} or error</td></tr>
   <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
   <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
@@ -522,7 +525,10 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>
   <tr><td>DELETE /branch-lab-tests/:id</td><td>Business JWT</td><td>soft-delete a branch lab test</td></tr>
   <tr><td>POST /branch-lab-panels/import</td><td>Business JWT</td><td>materialize selected master-data panels (+ member tests) into the branch's default <b>Walk-in</b> Lab Panel List (re-import updates existing / adds new → {copied,updated,skipped})</td></tr>
-  <tr><td>POST /branch-lab-panels/sync</td><td>Business JWT</td><td>re-snapshot imported originals from master data (rebuild members; duplicates untouched)</td></tr>
+  <tr><td>POST /branch-lab-panels/sync</td><td>Business JWT</td><td>reconcile the list against branch master data — update existing (rebuild members) / <b>delete</b> panels whose source is gone (does NOT add — that's Import; duplicates untouched) → {created:0,updated,deleted,failed}</td></tr>
+  <tr><td>POST /branch-lab-panels/sync/jobs</td><td>Business JWT</td><td>start the same reconcile as a background job (202) — poll for live update/delete progress; 409 BRANCH_LIST_SYNC_ALREADY_RUNNING if one runs</td></tr>
+  <tr><td>GET /branch-lab-panels/sync/jobs/active</td><td>Business JWT</td><td>the active branch's running panel-list sync job, or null (re-attach after reload)</td></tr>
+  <tr><td>GET /branch-lab-panels/sync/jobs/:jobId</td><td>Business JWT</td><td>poll one panel-list sync job: progress, then {created,updated,deleted,failed} or error</td></tr>
   <tr><td>POST /branch-lab-panels/:id/duplicate</td><td>Business JWT</td><td>create an independent panel variant (copies member tests; non-default)</td></tr>
   <tr><td>PATCH /branch-lab-panels/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
   <tr><td>GET /branch-lab-panels</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
@@ -1652,10 +1658,15 @@ independently). Exactly one row per group is the <code>isDefault</code> (used fo
 <div class="ep" id="blt-sync">
   <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-tests/sync</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Re-snapshot branch lab tests from their source Master Data tests. Send <code>{}</code> to sync all, or
-  <code>{ "branchLabTestIds": ["id", …] }</code> for a subset. <b>Overwrite</b>: parent fields and the
-  <code>configSnapshot</code> are replaced with current Master Data values (branch edits discarded). Copies whose
-  source is missing/soft-deleted are skipped → <code>{ synced, skipped }</code>.</p>
+  <p><b>Reconcile</b> the branch Lab Test List against its Branch Master Data (the source of truth): <b>UPDATE</b>
+  (re-snapshot — parent fields + <code>configSnapshot</code> overwritten, branch edits discarded) existing originals, and
+  <b>DELETE</b> (soft-delete, promoting a sibling to default) originals whose source no longer exists. Sync does
+  <b>not</b> ADD tests — adding a master-data test to a list is "Import from Master Data" (so <code>created</code> is
+  always 0). User duplicates are untouched. Send <code>{}</code> to reconcile the whole list, or
+  <code>{ "branchLabTestIds": ["id", …] }</code> for a subset. Writes commit in batches; a failing batch is counted and
+  skipped → <code>{ created, updated, deleted, failed }</code>. For live progress, run it as a background job via
+  <code>POST /branch-lab-tests/sync/jobs</code> and poll <code>GET /branch-lab-tests/sync/jobs/:jobId</code>
+  (<code>GET …/sync/jobs/active</code> re-attaches a running one).</p>
 </div>
 
 <div class="ep" id="blt-duplicate">
@@ -1720,10 +1731,13 @@ independently). Exactly one row per group is the <code>isDefault</code> (used fo
 <div class="ep" id="blp-sync">
   <div><span class="m post">POST</span><span class="path">/api/v1/branch-lab-panels/sync</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
-  <p>Re-snapshot branch lab panels from Master Data. Overwrites parent fields and <b>rebuilds</b> the member
-  composition from the source (materializing any missing member-test copies). <code>{}</code> = all, or
-  <code>{ "branchLabPanelIds": ["id", …] }</code> for a subset → <code>{ synced, skipped }</code>.
-  Only imported originals are synced; duplicates are untouched.</p>
+  <p><b>Reconcile</b> the branch Lab Panel List against its Branch Master Data: <b>UPDATE</b> existing originals
+  (re-snapshot + <b>rebuild</b> member composition from the source), and <b>DELETE</b> originals whose source no longer
+  exists (joins retired; sibling promoted to default). Sync does <b>not</b> ADD panels — adding is "Import from Master
+  Data" (so <code>created</code> is always 0). Duplicates untouched. <code>{}</code> = whole list, or
+  <code>{ "branchLabPanelIds": ["id", …] }</code> for a subset. Batched + partial-failure tolerant →
+  <code>{ created, updated, deleted, failed }</code>. For live progress, run as a background job via
+  <code>POST /branch-lab-panels/sync/jobs</code> and poll <code>GET /branch-lab-panels/sync/jobs/:jobId</code>.</p>
 </div>
 
 <div class="ep" id="blp-duplicate">

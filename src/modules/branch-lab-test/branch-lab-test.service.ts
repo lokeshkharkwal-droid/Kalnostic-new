@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { BranchLabTest, DayOfWeek, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ListPricingConfig,
+  SourcePriceColumns,
+  resolveImportListPrice,
+  resolveSyncListPrice,
+} from '../../common/utils/list-price.util';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabTestService } from '../lab-test/lab-test.service';
 import { BranchLabTestListService } from '../branch-lab-test-list/branch-lab-test-list.service';
 import { LabTestWithChildren } from '../lab-test/entities/lab-test.entity';
-import { LabTestNotFoundException } from '../lab-test/exceptions/lab-test.exceptions';
+import { MasterDataSyncProgressListener } from '../lab-test/master-data-sync-progress';
 import { ImportBranchLabTestsDto } from './dto/import-branch-lab-tests.dto';
 import { SyncBranchLabTestsDto } from './dto/sync-branch-lab-tests.dto';
 import { ListBranchLabTestsQueryDto } from './dto/list-branch-lab-tests-query.dto';
@@ -57,6 +63,11 @@ interface ImportTarget {
   sourceMasterDataId: string;
   /** The pricing list the copy belongs to (each list owns its rows). */
   listId: string;
+  /**
+   * The target list's pricing config — drives the copied row's `listPrice`
+   * (default→MSRP, PERCENTAGE→formula, CUSTOMIZED→source column copied as-is).
+   */
+  list: ListPricingConfig;
   actorId: string | null;
 }
 
@@ -158,7 +169,7 @@ export class BranchLabTestService {
       masterData.id,
       tenantId,
       branchId,
-      targetList.id,
+      targetList,
       actorId,
       dto.labTestIds,
     );
@@ -239,7 +250,7 @@ export class BranchLabTestService {
         masterData.id,
         tenantId,
         branchId,
-        targetList.id,
+        targetList,
         actorId,
         batchIds,
       );
@@ -285,7 +296,7 @@ export class BranchLabTestService {
     masterDataId: string,
     tenantId: string,
     branchId: string,
-    targetListId: string,
+    targetList: ListPricingConfig & { id: string },
     actorId: string | null,
     candidateIds: string[],
   ): Promise<{
@@ -310,7 +321,7 @@ export class BranchLabTestService {
       where: {
         tenantId,
         branchId,
-        listId: targetListId,
+        listId: targetList.id,
         deletedAt: null,
         sourceLabTestId: { in: validIds },
       },
@@ -336,7 +347,7 @@ export class BranchLabTestService {
       if (existingId) {
         toUpdate.push({
           id: existingId,
-          data: this.buildSyncData(source, actorId),
+          data: this.buildSyncData(source, actorId, targetList),
         });
       } else {
         toCreate.push(
@@ -344,7 +355,8 @@ export class BranchLabTestService {
             tenantId,
             branchId,
             sourceMasterDataId: masterDataId,
-            listId: targetListId,
+            listId: targetList.id,
+            list: targetList,
             actorId,
           }),
         );
@@ -379,18 +391,31 @@ export class BranchLabTestService {
   }
 
   /**
-   * Re-snapshot branch lab tests from their source Master Data tests. Reloads
-   * each copy's source (via `sourceLabTestId`) and OVERWRITES the copy's parent
-   * fields and clinical snapshot with the current Master Data values — any
-   * branch-level edits are discarded (agreed overwrite contract). Copies whose
-   * source is missing/soft-deleted are left untouched and counted as skipped.
-   * Updates run in one transaction.
+   * Reconcile a branch's **Lab Test List** against its Master Data. Master Data
+   * (the branch's 1:1 master data) is the source of truth, and two operations are
+   * applied against the target list:
+   * - **UPDATE** — an existing imported original whose source still exists is
+   *   re-snapshotted (parent fields + clinical snapshot overwritten; branch-level
+   *   edits discarded — agreed overwrite contract).
+   * - **DELETE** — an imported original whose source no longer exists in Master
+   *   Data (removed/soft-deleted, or a dangling `sourceLabTestId`) is soft-deleted,
+   *   promoting a sibling to default if needed.
+   *
+   * Sync deliberately does **not** ADD tests — adding a Master Data test to a list
+   * is "Import from Master Data" ({@link importFromMasterData}). So `created` is
+   * always 0 (the field is kept for a result shape shared with import).
+   *
+   * User duplicates (`isDuplicate=true`) are never touched. Writes commit in
+   * fixed-size batches and a batch that fails is counted (`failed`) and skipped so
+   * the rest of the sync still runs (partial-failure tolerant). `onProgress`, when
+   * given, is fed PREPARING/REMOVING/TESTS events for the background sync-job dialog.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
-   * @param actorId person id recorded as updated-by (or null)
-   * @param dto optional subset of branch-lab-test ids to sync (omit = all) and
-   *   an optional target `listId` (omit = the default Walk-in list)
-   * @returns counts of synced vs skipped copies
+   * @param actorId person id recorded as created/updated-by (or null)
+   * @param dto optional subset of existing copy ids to reconcile (omit = all
+   *   copies in the list) and an optional target `listId` (omit = Walk-in)
+   * @param onProgress optional progress listener (background sync job)
+   * @returns counts of created (always 0) / updated / deleted copies and failed-batch items
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
    * @throws BranchLabTestListNotFoundException if `dto.listId` doesn't belong to this branch
    */
@@ -399,133 +424,84 @@ export class BranchLabTestService {
     branchId: string,
     actorId: string | null,
     dto: SyncBranchLabTestsDto,
+    onProgress?: MasterDataSyncProgressListener,
   ): Promise<BranchLabTestSyncResult> {
     const masterData = await this.masterDataService.findByBranch(
       branchId,
       tenantId,
     );
     // The default (Walk-in) list is always ensured first, same as import.
-    const defaultList = await this.listService.getOrCreateDefaultList(
+    const targetList = await this.resolveTargetList(
       tenantId,
       branchId,
       actorId,
+      dto.listId,
     );
-    const targetList = dto.listId
-      ? await this.listService.findById(dto.listId, tenantId, branchId)
-      : defaultList;
-    const where: Prisma.BranchLabTestWhereInput = {
+
+    // Source of truth: the branch Master Data's currently-active lab tests.
+    const sources = await this.prisma.labTest.findMany({
+      where: { masterDataId: masterData.id, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    const sourceIds = new Set(sources.map((s) => s.id));
+
+    // Existing imported originals in the target list (duplicates are left alone).
+    const copyWhere: Prisma.BranchLabTestWhereInput = {
       tenantId,
       branchId,
       listId: targetList.id,
       deletedAt: null,
-      // Only imported originals are re-snapshotted; user duplicates keep their
-      // independent edits (agreed sync contract).
       isDuplicate: false,
-      sourceLabTestId: { not: null },
     };
     if (dto.branchLabTestIds?.length) {
-      where.id = { in: dto.branchLabTestIds };
+      copyWhere.id = { in: dto.branchLabTestIds };
     }
     const copies = await this.prisma.branchLabTest.findMany({
-      where,
+      where: copyWhere,
       select: { id: true, sourceLabTestId: true, isDefault: true },
     });
+    const toUpdate = copies.filter(
+      (c) => c.sourceLabTestId && sourceIds.has(c.sourceLabTestId),
+    );
+    const toDelete = copies.filter(
+      (c) => !c.sourceLabTestId || !sourceIds.has(c.sourceLabTestId),
+    );
 
-    const updates: {
-      id: string;
-      data: Prisma.BranchLabTestUncheckedUpdateInput;
-    }[] = [];
-    const toDelete: {
-      id: string;
-      isDefault: boolean;
-      sourceLabTestId: string | null;
-    }[] = [];
-    let skipped = 0;
-    const resolvable = copies.filter((copy) => {
-      if (!copy.sourceLabTestId) {
-        skipped += 1;
-        return false;
-      }
-      return true;
+    const total = toUpdate.length;
+    await onProgress?.({
+      type: 'tests-planned',
+      total,
+      toUpdate: toUpdate.length,
+      toCreate: 0,
     });
-    // Resolved in parallel chunks (read-only — no transaction, so no
-    // transaction-timeout risk from the concurrency itself), not one
-    // `await` per copy in a sequential loop. A branch with thousands of
-    // copies (each resolve is 5 queries — see LabTestService.findById /
-    // composeWithChildren) previously took tens of seconds here ALONE,
-    // before a single write ever ran, which is what actually timed out
-    // "Sync all" — the write-side batching added 2026-09-21 never touched
-    // this resolve step, which had no batching or parallelism at all.
-    const RESOLVE_CHUNK_SIZE = 25;
-    for (let i = 0; i < resolvable.length; i += RESOLVE_CHUNK_SIZE) {
-      const chunk = resolvable.slice(i, i + RESOLVE_CHUNK_SIZE);
-      const results = await Promise.all(
-        chunk.map(async (copy) => {
-          try {
-            const source = await this.labTestService.findById(
-              masterData.id,
-              copy.sourceLabTestId!,
-              tenantId,
-            );
-            return { copy, source };
-          } catch (e) {
-            if (e instanceof LabTestNotFoundException) {
-              // Source has been soft-deleted at Master Data — the branch's
-              // copy is stale and no longer orderable, so it is removed
-              // rather than skipped.
-              return { copy, source: null };
-            }
-            throw e;
-          }
-        }),
-      );
-      for (const { copy, source } of results) {
-        if (source) {
-          updates.push({
-            id: copy.id,
-            data: this.buildSyncData(source, actorId),
-          });
-        } else {
-          toDelete.push(copy);
-        }
-      }
-    }
 
-    // Committed in fixed-size batches (not one transaction) — the same fix
-    // `importFromMasterDataByFilter` already applies (see its doc comment):
-    // a "Sync all" spanning hundreds/thousands of copies previously ran as a
-    // single `withTenant` transaction and could exceed Prisma's 5s default
-    // timeout, rolling back every update with a generic 500 and leaving the
-    // branch's samples/config silently stale (nothing partially synced).
-    // Batching bounds each transaction's size and isolates a failure to its
-    // own batch instead of discarding the whole sync.
-    const SYNC_BATCH_SIZE = 25;
-    for (let i = 0; i < updates.length; i += SYNC_BATCH_SIZE) {
-      const batch = updates.slice(i, i + SYNC_BATCH_SIZE);
-      if (batch.length === 0) continue;
-      try {
-        await this.prisma.withTenant(tenantId, async (tx) => {
-          for (const u of batch) {
-            await tx.branchLabTest.update({
-              where: { id: u.id },
-              data: u.data,
-            });
-          }
-        });
-      } catch (e) {
-        this.rethrowConflict(e);
-        throw e;
-      }
-    }
-    for (let i = 0; i < toDelete.length; i += SYNC_BATCH_SIZE) {
-      const batch = toDelete.slice(i, i + SYNC_BATCH_SIZE);
-      if (batch.length === 0) continue;
+    // Sync never ADDS a new test — that is "Import from Master Data". It only
+    // re-snapshots existing copies (UPDATE) and removes copies whose source is
+    // gone from Master Data (DELETE). `created` stays 0 (kept for a stable result
+    // shape shared with the import flow).
+    const created = 0;
+    let updated = 0;
+    let deleted = 0;
+    let failed = 0;
+    // Batched (not one transaction): bounds each tx so a large reconcile can't
+    // exceed Prisma's timeout, and a failing batch is isolated (its items are
+    // counted and skipped) instead of discarding the whole sync.
+    const BATCH = 25;
+
+    // ── DELETE ───────────────────────────────────────────────────────────────
+    await onProgress?.({
+      type: 'phase',
+      phase: 'REMOVING',
+      count: toDelete.length,
+    });
+    for (let i = 0; i < toDelete.length; i += BATCH) {
+      const batch = toDelete.slice(i, i + BATCH);
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
           for (const d of batch) {
             await tx.branchLabTest.update({
               where: { id: d.id },
-              data: { deletedAt: new Date() },
+              data: { deletedAt: new Date(), updatedBy: actorId },
             });
             if (d.isDefault && d.sourceLabTestId) {
               const sibling = await tx.branchLabTest.findFirst({
@@ -546,12 +522,50 @@ export class BranchLabTestService {
             }
           }
         });
-      } catch (e) {
-        this.rethrowConflict(e);
-        throw e;
+        deleted += batch.length;
+      } catch {
+        failed += batch.length;
       }
     }
-    return { synced: updates.length, deleted: toDelete.length, skipped };
+
+    // ── UPDATE ─────────────────────────────────────────────────────────────────
+    await onProgress?.({ type: 'phase', phase: 'TESTS' });
+    let processed = 0;
+    for (let i = 0; i < toUpdate.length; i += BATCH) {
+      const batch = toUpdate.slice(i, i + BATCH);
+      try {
+        // Sources are composed BEFORE opening the tx: the nested service reads
+        // need the per-op RLS GUC, which a `withTenant` connection does not expose.
+        const composed = await Promise.all(
+          batch.map(async (c) => ({
+            id: c.id,
+            source: await this.labTestService.findById(
+              masterData.id,
+              c.sourceLabTestId!,
+              tenantId,
+            ),
+          })),
+        );
+        await this.prisma.withTenant(tenantId, async (tx) => {
+          for (const { id, source } of composed) {
+            await tx.branchLabTest.update({
+              where: { id },
+              data: this.buildSyncData(source, actorId, targetList),
+            });
+          }
+        });
+        updated += batch.length;
+      } catch {
+        // A source vanished mid-sync or the batch write failed — count and continue.
+        failed += batch.length;
+      }
+      processed += batch.length;
+      await onProgress?.({ type: 'tests-processed', processed });
+    }
+    // Final tick so the progress bar/batch table reach 100% even when total is 0.
+    await onProgress?.({ type: 'tests-processed', processed: total });
+
+    return { created, updated, deleted, failed };
   }
 
   /**
@@ -1037,8 +1051,13 @@ export class BranchLabTestService {
       sourceLabTestId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
       listId: target.listId,
-      // Walk-in default list: the sellable list price starts at MSRP.
-      listPrice: (scalars.priceMsrp as number) ?? 0,
+      // List price honours the target list's pricing config: MSRP for the
+      // default Walk-in list, the source column × % for a PERCENTAGE list, or
+      // the source column copied as-is for a CUSTOMIZED list.
+      listPrice: resolveImportListPrice(
+        scalars as unknown as SourcePriceColumns,
+        target.list,
+      ),
       configSnapshot,
       createdBy: target.actorId,
       updatedBy: target.actorId,
@@ -1069,18 +1088,32 @@ export class BranchLabTestService {
     } as Prisma.BranchLabTestUncheckedCreateInput;
   }
 
-  /** Build the overwrite (re-snapshot) update payload from a composed source test. */
+  /**
+   * Build the overwrite (re-snapshot) update payload from a composed source test.
+   * All reference scalars + the clinical snapshot are always refreshed from Master
+   * Data; `listPrice` is handled per the target list's pricing config:
+   * - default (Walk-in) list → recomputed to MSRP (overwrite contract);
+   * - PERCENTAGE list → recomputed from the fresh source column × stored percentage;
+   * - CUSTOMIZED (non-default) list → **omitted entirely** so the manually-set price
+   *   survives untouched (a CUSTOMIZED list owns its prices independently of Master
+   *   Data — sync must never reset them).
+   */
   private buildSyncData(
     source: LabTestWithChildren,
     actorId: string | null,
+    list: ListPricingConfig,
   ): Prisma.BranchLabTestUncheckedUpdateInput {
     const { scalars, configSnapshot } = this.extractScalars(source);
+    const listPrice = resolveSyncListPrice(
+      scalars as unknown as SourcePriceColumns,
+      list,
+    );
     return {
       ...scalars,
-      // Walk-in list price tracks MSRP on re-snapshot (agreed overwrite contract).
-      listPrice: (scalars.priceMsrp as number) ?? 0,
       configSnapshot,
       updatedBy: actorId,
+      // null = CUSTOMIZED list: leave `listPrice` out of the update to preserve it.
+      ...(listPrice !== null ? { listPrice } : {}),
     };
   }
 
