@@ -7268,6 +7268,20 @@ model LabReport {
 
   labTestId String? @map("lab_test_id")
 
+  /// Denormalized department of the test this report is for, stamped at report
+  /// creation (`createReportForAcceptedItem`): for a panel-member report the
+  /// MEMBER test's own department, for a standalone test the order line test's —
+  /// each resolved branch-entry-first, falling back to the source Master Data
+  /// test, exactly as `OrderSample.departmentId` is at accession time. The
+  /// Reporting worklist's department-visibility scope filters directly on this
+  /// column instead of joining through `orderItem.branchLabTest` /
+  /// `branchLabPanel`, which resolved a panel member to the PANEL's single
+  /// department and so hid it from the member test's own department. NULL =
+  /// unassigned (visible to every department). A transferred report keeps this as
+  /// the order line's department; the HOLDING branch's re-chosen department lives
+  /// on `performingEntry` (a genuinely different value, still joined).
+  departmentId String? @map("department_id")
+
   /// The Lab Test List entry the branch that now HOLDS this report works it with
   /// (its report template / PDF settings, TAT windows and department). NULL = the
   /// order line's own entry (`OrderItem.branchLabTest`), which is the case until
@@ -7429,6 +7443,7 @@ model LabReport {
   @@index([branchId])
   @@index([status])
   @@index([labTestId])
+  @@index([departmentId])
   @@index([memberBranchLabTestId])
   @@index([performingBranchLabTestId])
   @@index([isOutsourced])

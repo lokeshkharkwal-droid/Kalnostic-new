@@ -1,0 +1,37 @@
+meta {
+  name: Get My Department Scope
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/departments/my-scope
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  The CALLER's own department ids (membership via `UserDepartmentAssignment`),
+  resolved from the business JWT's `person_id` (global `JwtAuthGuard`).
+
+  Response: `{ "departmentIds": string[] }` — an empty array means the caller
+  belongs to no department.
+
+  Used by the front end to gate department-restricted actions — e.g. disabling the
+  Order Overview Collect / Collect & Print buttons for a test whose department the
+  caller is not in. This mirrors the same department-visibility rule the Accession
+  In-House Orders and Technician Reporting listings use, and that the server
+  re-enforces on collect (`POST /orders/:id/items/:itemId/collect`,
+  `POST /orders/:id/collect-group`, `POST /accession/order-samples/.../collect*`
+  all return 403 `SAMPLE_DEPARTMENT_FORBIDDEN` for a sample outside the caller's
+  scope): a user mapped to one or more departments may act only on samples in those
+  departments or with no department; a user mapped to no department may act only on
+  no-department samples. A sample's own department is `OrderSample.departmentId`
+  (the member/standalone test's own department).
+
+  Declared before `GET /departments/:id`, so `my-scope` is not matched as an id.
+}

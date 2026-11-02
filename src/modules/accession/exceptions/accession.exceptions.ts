@@ -33,6 +33,28 @@ export class AccessionNumberConflictException extends KaltrosException {
 }
 
 /**
+ * 403 — the caller tried to collect a sample whose department is outside their
+ * department scope. The same department-visibility rule that hides a sample from
+ * the Accession In-House / Technician Reporting listings (see
+ * `departmentScopeForSamples` / `UserDepartmentScopeService`) also forbids
+ * collecting it: a user mapped to one or more departments may act only on samples
+ * in those departments or with no department; a user mapped to no department may
+ * act only on no-department samples. A test a caller may not see in those lists
+ * must not be collectable by sample id either (defence in depth behind the FE's
+ * disabled Collect buttons).
+ */
+export class SampleDepartmentForbiddenException extends KaltrosException {
+  constructor(ids: string[]) {
+    super(
+      'SAMPLE_DEPARTMENT_FORBIDDEN',
+      'You cannot collect samples from a department outside your access',
+      { ids },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}
+
+/**
  * 422 — the requested action is not a legal transition from the sample's current
  * status (per the PDF §A.9 state machine).
  */

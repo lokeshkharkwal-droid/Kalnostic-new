@@ -558,10 +558,14 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
 
     // The department of the setup the HOLDING branch works the test with: its own
     // entry once the report was sent to it (even when that entry has no department),
-    // otherwise the order line's.
+    // otherwise the report's OWN denormalized department. That column is stamped
+    // per test at creation — the panel MEMBER test's department for a panel-member
+    // report, the standalone test's otherwise — so it is the source of truth here.
+    // The old `branchLabPanel.departmentId` fallback wrongly showed a panel
+    // member the PARENT panel's department instead of its own.
     departmentId: row.performingEntry
       ? row.performingEntry.departmentId
-      : (branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null),
+      : (row.departmentId ?? null),
     department: null,
 
     labTestId: row.labTestId,
