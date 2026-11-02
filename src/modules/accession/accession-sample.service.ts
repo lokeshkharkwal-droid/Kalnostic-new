@@ -2351,18 +2351,18 @@ export class OrderSampleService {
    * same transaction.
    */
   /**
-   * Enforce the department-visibility rule on a COLLECT action: a caller may
-   * collect a sample only when its department is unassigned (NULL → everyone) or
-   * one of their mapped departments (resolved via `UserDepartmentScopeService`); a
-   * caller mapped to no department may collect only unassigned samples. This is
-   * the write-side twin of {@link departmentScopeForSamples}, which hides the same
-   * samples from the Accession In-House / Technician Reporting listings — a sample
-   * the caller cannot see there must not be collectable by id either. It is the
-   * single enforcement point for every user-initiated collect path (the Accession
+   * Enforce the department-visibility rule on a COLLECT action: a caller mapped
+   * to one or more departments may collect a sample only when its department is
+   * unassigned (NULL → everyone) or one of theirs (resolved via
+   * `UserDepartmentScopeService`). A caller mapped to NO department is
+   * UNRESTRICTED (mirrors the read-side {@link departmentScopeForSamples}, which
+   * now shows such a caller every sample on the Accession In-House workflow) — a
+   * sample the caller can see there must stay collectable by id. It is the single
+   * enforcement point for every user-initiated collect path (the Accession
    * worklist {@link collect}, the Order Overview per-item and group collect). The
    * internal order-creation / check-in bridges never pass through here.
    * @param tenantId tenant scope (from JWT)
-   * @param personId the acting user (null → treated as mapped to no department)
+   * @param personId the acting user (null → treated as mapped to no department → unrestricted)
    * @param sampleIds the accession samples about to be collected
    * @throws SampleDepartmentForbiddenException if any sample is out of scope
    */
@@ -2375,6 +2375,10 @@ export class OrderSampleService {
     const scopeIds = personId
       ? await this.userDepartmentScope.resolveDepartmentIds(tenantId, personId)
       : [];
+    // A caller mapped to no department is unrestricted (same rule as the In-House
+    // listing): there is nothing to enforce. Only a caller WITH departments is
+    // held to them.
+    if (scopeIds.length === 0) return;
     const samples = await this.prisma.orderSample.findMany({
       where: { id: { in: sampleIds }, tenantId, deletedAt: null },
       select: { id: true, departmentId: true },
@@ -5139,8 +5143,13 @@ export class OrderSampleService {
 
   /**
    * The department-visibility condition for `OrderSample.departmentId` (a
-   * denormalized, indexed snapshot): unassigned rows (NULL) are visible to all;
-   * an empty scope (user with no department) therefore sees only unassigned rows.
+   * denormalized, indexed snapshot). A caller mapped to one or more departments
+   * sees a sample only when its department is unassigned (NULL → everyone) or one
+   * of theirs. A caller mapped to NO department is UNRESTRICTED on the Accession
+   * In-House workflow — they see every sample regardless of department, so an
+   * empty scope contributes no constraint (an empty `{}` fragment matches all).
+   * (This is the Accession In-House rule only; Technician Reporting keeps the
+   * stricter "no mapping → only unassigned" — see `LabReportService`.)
    * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
    */
   private departmentScopeForSamples(
@@ -5148,7 +5157,7 @@ export class OrderSampleService {
   ): Prisma.OrderSampleWhereInput {
     return scopeIds.length > 0
       ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-      : { departmentId: null };
+      : {};
   }
 
   /** Translate the §A.3 "Order Mode" filter into order/sample conditions. */
