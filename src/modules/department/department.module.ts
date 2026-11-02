@@ -5,6 +5,7 @@ import { DepartmentController } from './department.controller';
 import { DepartmentOptionsController } from './department-options.controller';
 import { SiteAdminDepartmentController } from './siteadmin-department.controller';
 import { DepartmentService } from './department.service';
+import { UserDepartmentScopeModule } from './user-department-scope.module';
 
 /**
  * Department feature module. Tenant-scoped, tenant-level — manages a business's
@@ -18,7 +19,7 @@ import { DepartmentService } from './department.service';
  * `GET /departments/templates` is matched there, not as `GET /departments/:id`.
  */
 @Module({
-  imports: [PrismaModule, BranchModule],
+  imports: [PrismaModule, BranchModule, UserDepartmentScopeModule],
   controllers: [
     DepartmentOptionsController,
     DepartmentController,

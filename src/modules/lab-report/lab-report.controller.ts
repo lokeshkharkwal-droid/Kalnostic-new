@@ -572,10 +572,12 @@ export class LabReportController {
    * Choose which of the five Notes sections are LEFT OUT of this report's
    * printed version (the checkbox beside each section on the report). The body's
    * `excludedSections` replaces the stored list; an empty list prints all five.
-   * It only changes the printed and shared PDF, never what the screen shows, and
-   * only counts while the matching Branch Setting (Branch Settings > Technician
-   * Settings > Report Printing: Lab Test / Lab Panel) is on. No permission key by design; the report's write locks still apply
-   * (locked, sent-out and cancelled reports are refused).
+   * It only changes the printed and shared PDF, never what the screen shows. It works
+   * whether the matching Branch Setting (Branch Settings > Technician Settings > Report
+   * Printing: Lab Test / Lab Panel) is ON or OFF: that setting only sets the default
+   * selection until a choice is saved. No permission key by design; the report's write
+   * locks still apply (locked, sent-out and cancelled reports are refused), and so does
+   * the status rule (only while Pending, Partial Pending or Saved).
    */
   @Patch(':id/note-print-sections')
   @Audit({

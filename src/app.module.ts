@@ -27,6 +27,7 @@ import { BranchLabTestModule } from './modules/branch-lab-test/branch-lab-test.m
 import { BranchLabPanelModule } from './modules/branch-lab-panel/branch-lab-panel.module';
 import { BranchLabTestListModule } from './modules/branch-lab-test-list/branch-lab-test-list.module';
 import { BranchLabPanelListModule } from './modules/branch-lab-panel-list/branch-lab-panel-list.module';
+import { BranchListSyncModule } from './modules/branch-list-sync/branch-list-sync.module';
 import { ReferralListModule } from './modules/referral-list/referral-list.module';
 import { TestGroupModule } from './modules/test-group/test-group.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
@@ -141,6 +142,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     BranchLabPanelModule,
     BranchLabTestListModule,
     BranchLabPanelListModule,
+    BranchListSyncModule,
     ReferralListModule,
     TestGroupModule,
     EquipmentModule,

@@ -54,14 +54,16 @@ describe('LabReportService.updateParameterNote', () => {
     LabReportStatus.PENDING,
     LabReportStatus.PARTIAL_PENDING,
     LabReportStatus.SAVED,
-  ])('saves the technician\'s text while the report is %s', async (status) => {
+  ])("saves the technician's text while the report is %s", async (status) => {
     const { svc, upsert } = makeEditService(status);
     await expect(save(svc, '<p>Hemolysed</p>')).resolves.toEqual({
       resultParamId: 'p1',
       content: '<p>Hemolysed</p>',
     });
     expect(upsert).toHaveBeenCalledWith({
-      where: { labReportId_resultParamId: { labReportId: 'r1', resultParamId: 'p1' } },
+      where: {
+        labReportId_resultParamId: { labReportId: 'r1', resultParamId: 'p1' },
+      },
       create: {
         tenantId: 't1',
         labReportId: 'r1',
@@ -100,7 +102,10 @@ describe('LabReportService.updateParameterNote', () => {
   it("stores an empty text as it is: 'no note on this report' must not fall back to the default", async () => {
     const { svc, upsert } = makeEditService(LabReportStatus.SAVED);
     await save(svc, '');
-    expect((upsert.mock.calls[0] as [{ create: { content: string } }])[0].create.content).toBe('');
+    expect(
+      (upsert.mock.calls[0] as [{ create: { content: string } }])[0].create
+        .content,
+    ).toBe('');
   });
 
   it("refuses a parameter that is not one of this report's own", async () => {
@@ -174,8 +179,24 @@ function printReport(
     },
     attachments: [],
     resultValues: [
-      { resultParamId: 'p1', observed1: '1.2', observed2: null, unit: 'mg/dL', methodology: null, referenceRangeId: null, referenceDisplay: null },
-      { resultParamId: 'p2', observed1: '40', observed2: null, unit: 'U/L', methodology: null, referenceRangeId: null, referenceDisplay: null },
+      {
+        resultParamId: 'p1',
+        observed1: '1.2',
+        observed2: null,
+        unit: 'mg/dL',
+        methodology: null,
+        referenceRangeId: null,
+        referenceDisplay: null,
+      },
+      {
+        resultParamId: 'p2',
+        observed1: '40',
+        observed2: null,
+        unit: 'U/L',
+        methodology: null,
+        referenceRangeId: null,
+        referenceDisplay: null,
+      },
     ],
   };
 }
@@ -190,7 +211,9 @@ function makePrintService(rep: ReturnType<typeof printReport>) {
     siblingReportIds: jest.fn().mockResolvedValue(['r1']),
     requireBranch: (b: string) => b,
     technicianSettingsService: {
-      getNotesPrintSwitches: jest.fn().mockResolvedValue({ labTest: true, labPanel: true }),
+      getNotesPrintSwitches: jest
+        .fn()
+        .mockResolvedValue({ labTest: true, labPanel: true }),
     },
     tenantService: {
       getLocale: jest.fn().mockResolvedValue({
@@ -202,12 +225,28 @@ function makePrintService(rep: ReturnType<typeof printReport>) {
     prisma: {
       orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
       orderDiagnostics: { findUnique: jest.fn().mockResolvedValue(null) },
-      labReport: { aggregate: jest.fn().mockResolvedValue({ _max: { approvedAt: null } }) },
+      labReport: {
+        aggregate: jest.fn().mockResolvedValue({ _max: { approvedAt: null } }),
+      },
       labReportNote: { findFirst: jest.fn().mockResolvedValue(null) },
       labTestResultParam: {
         findMany: jest.fn().mockResolvedValue([
-          { id: 'p1', parameterName: 'Bilirubin', groupName: null, sortOrder: 1, notes: 'Fasting <sample> needed', resultType: 'QUANTITATIVE' },
-          { id: 'p2', parameterName: 'SGOT', groupName: null, sortOrder: 2, notes: null, resultType: 'QUANTITATIVE' },
+          {
+            id: 'p1',
+            parameterName: 'Bilirubin',
+            groupName: null,
+            sortOrder: 1,
+            notes: 'Fasting <sample> needed',
+            resultType: 'QUANTITATIVE',
+          },
+          {
+            id: 'p2',
+            parameterName: 'SGOT',
+            groupName: null,
+            sortOrder: 2,
+            notes: null,
+            resultType: 'QUANTITATIVE',
+          },
         ]),
       },
       labReportOverallResult: { findMany: jest.fn().mockResolvedValue([]) },
@@ -217,15 +256,24 @@ function makePrintService(rep: ReturnType<typeof printReport>) {
 }
 
 async function rowNotes(rep: ReturnType<typeof printReport>) {
-  const ctx = await makePrintService(rep).buildPrintContext('r1', 't1', 'A', false);
-  const rows = (ctx as unknown as {
-    sections: { results: Array<{ parameter_name: string; result_note: string }> };
-  }).sections.results;
+  const ctx = await makePrintService(rep).buildPrintContext(
+    'r1',
+    't1',
+    'A',
+    false,
+  );
+  const rows = (
+    ctx as unknown as {
+      sections: {
+        results: Array<{ parameter_name: string; result_note: string }>;
+      };
+    }
+  ).sections.results;
   return Object.fromEntries(rows.map((r) => [r.parameter_name, r.result_note]));
 }
 
 describe('print context: {result_note}', () => {
-  it("a parameter the technician never edited prints the configured Note, escaped (it is plain text)", async () => {
+  it('a parameter the technician never edited prints the configured Note, escaped (it is plain text)', async () => {
     const notes = await rowNotes(printReport(LabReportStatus.APPROVED, []));
     expect(notes['Bilirubin']).toBe('Fasting &lt;sample&gt; needed');
     expect(notes['SGOT']).toBe('');
@@ -241,18 +289,83 @@ describe('print context: {result_note}', () => {
     expect(notes['SGOT']).toBe('');
   });
 
-  it("a note the technician blanked prints nothing - the configured Note does not come back", async () => {
+  it('a note the technician blanked prints nothing - the configured Note does not come back', async () => {
     const notes = await rowNotes(
-      printReport(LabReportStatus.APPROVED, [{ resultParamId: 'p1', content: '' }]),
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p1', content: '' },
+      ]),
     );
     expect(notes['Bilirubin']).toBe('');
   });
 
-  it("a note written for a parameter shows on that parameter only", async () => {
+  it('a note written for a parameter shows on that parameter only', async () => {
     const notes = await rowNotes(
-      printReport(LabReportStatus.APPROVED, [{ resultParamId: 'p2', content: '<p>Repeat</p>' }]),
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p2', content: '<p>Repeat</p>' },
+      ]),
     );
     expect(notes['SGOT']).toBe('<p>Repeat</p>');
+    expect(notes['Bilirubin']).toBe('Fasting &lt;sample&gt; needed');
+  });
+});
+
+describe('print context: {result_note} edge cases', () => {
+  it('a saved note whose parameter is no longer on the test (it was renamed, recoded or removed) is ignored, not an error', async () => {
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'gone-param', content: '<p>orphan</p>' },
+      ]),
+    );
+    expect(JSON.stringify(notes)).not.toContain('orphan');
+    expect(notes['Bilirubin']).toBe('Fasting &lt;sample&gt; needed'); // the default still shows for the parameter that exists
+  });
+
+  it('a parameter with no saved value row has no print row, so its note (even a configured one) cannot print', async () => {
+    const rep = printReport(LabReportStatus.APPROVED, [
+      { resultParamId: 'p2', content: '<p>orphan-ish</p>' },
+    ]);
+    rep.resultValues = rep.resultValues.filter((v) => v.resultParamId === 'p1');
+    const notes = await rowNotes(rep);
+    expect(Object.keys(notes)).toEqual(['Bilirubin']);
+    expect(JSON.stringify(notes)).not.toContain('orphan-ish');
+  });
+
+  it('every parameter can have its own note on the same report, each printed against its own row', async () => {
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p1', content: '<p>one</p>' },
+        { resultParamId: 'p2', content: '<p>two</p>' },
+      ]),
+    );
+    expect(notes).toEqual({ Bilirubin: '<p>one</p>', SGOT: '<p>two</p>' });
+  });
+
+  it('a note holding only whitespace markup is passed through as saved (the template hides the empty line)', async () => {
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p1', content: '<p>&nbsp;</p>' },
+      ]),
+    );
+    expect(notes['Bilirubin']).toBe('<p>&nbsp;</p>');
+  });
+
+  it('a very long note is passed through whole', async () => {
+    const long = `<p>${'x'.repeat(50_000)}</p>`;
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p1', content: long },
+      ]),
+    );
+    expect(notes['Bilirubin']).toHaveLength(long.length);
+  });
+
+  it('a note the report has for one parameter does not change what the OTHER parameter shows by default', async () => {
+    const notes = await rowNotes(
+      printReport(LabReportStatus.APPROVED, [
+        { resultParamId: 'p2', content: '' },
+      ]),
+    );
+    expect(notes['SGOT']).toBe('');
     expect(notes['Bilirubin']).toBe('Fasting &lt;sample&gt; needed');
   });
 });

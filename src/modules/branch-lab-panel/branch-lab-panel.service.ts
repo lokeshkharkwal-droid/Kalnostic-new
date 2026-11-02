@@ -1,14 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { BranchLabPanel, Prisma, TatUnit } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ListPricingConfig,
+  SourcePriceColumns,
+  resolveImportListPrice,
+  resolveSyncListPrice,
+} from '../../common/utils/list-price.util';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import { MasterDataService } from '../master-data/master-data.service';
 import { LabPanelService } from '../lab-panel/lab-panel.service';
 import { LabTestService } from '../lab-test/lab-test.service';
 import { LabPanelWithTests } from '../lab-panel/entities/lab-panel.entity';
-import { LabPanelNotFoundException } from '../lab-panel/exceptions/lab-panel.exceptions';
 import { LabTestNotFoundException } from '../lab-test/exceptions/lab-test.exceptions';
+import { MasterDataSyncProgressListener } from '../lab-test/master-data-sync-progress';
 import { BranchLabTestService } from '../branch-lab-test/branch-lab-test.service';
 import { BranchLabTestListService } from '../branch-lab-test-list/branch-lab-test-list.service';
 import { BranchLabPanelListService } from '../branch-lab-panel-list/branch-lab-panel-list.service';
@@ -143,8 +149,8 @@ export class BranchLabPanelService {
       masterData.id,
       tenantId,
       branchId,
-      targetPanelList.id,
-      walkInTest.id,
+      targetPanelList,
+      walkInTest,
       actorId,
       dto.labPanelIds,
       branchTestBySource,
@@ -236,8 +242,8 @@ export class BranchLabPanelService {
         masterData.id,
         tenantId,
         branchId,
-        targetPanelList.id,
-        walkInTest.id,
+        targetPanelList,
+        walkInTest,
         actorId,
         batchIds,
         branchTestBySource,
@@ -301,8 +307,8 @@ export class BranchLabPanelService {
     masterDataId: string,
     tenantId: string,
     branchId: string,
-    targetPanelListId: string,
-    walkInTestListId: string,
+    targetPanelList: ListPricingConfig & { id: string },
+    walkInTest: ListPricingConfig & { id: string },
     actorId: string | null,
     candidateIds: string[],
     branchTestBySource: Map<string, string>,
@@ -336,7 +342,7 @@ export class BranchLabPanelService {
       where: {
         tenantId,
         branchId,
-        listId: targetPanelListId,
+        listId: targetPanelList.id,
         deletedAt: null,
         sourceLabPanelId: { in: validIds },
       },
@@ -375,13 +381,13 @@ export class BranchLabPanelService {
         panel,
         branchTestBySource,
         newTests,
-        walkInTestListId,
+        walkInTest,
       );
       const existingId = existingBySource.get(id);
       if (existingId) {
         panelsToUpdate.push({
           id: existingId,
-          data: this.buildPanelSyncData(panel, actorId),
+          data: this.buildPanelSyncData(panel, actorId, targetPanelList),
           members,
         });
       } else {
@@ -390,7 +396,8 @@ export class BranchLabPanelService {
             tenantId,
             branchId,
             sourceMasterDataId: masterDataId,
-            listId: targetPanelListId,
+            listId: targetPanelList.id,
+            list: targetPanelList,
             actorId,
           }),
           members,
@@ -457,15 +464,28 @@ export class BranchLabPanelService {
   }
 
   /**
-   * Re-snapshot branch lab panels from their source Master Data panels. Reloads
-   * each copy's source (via `sourceLabPanelId`), OVERWRITES the copy's fields, and
-   * rebuilds its member tests from the source composition (materializing any
-   * missing member-test copies). Copies whose source is gone are skipped.
+   * Reconcile a branch's **Lab Panel List** against its Master Data. Master Data is
+   * the source of truth, and two operations are applied against the target list:
+   * - **UPDATE** — an existing imported original whose source still exists is
+   *   re-snapshotted and its member tests rebuilt from the source composition.
+   * - **DELETE** — an imported original whose source no longer exists in Master
+   *   Data is soft-deleted (joins retired, a sibling promoted to default if needed).
+   *
+   * Sync deliberately does **not** ADD panels — adding is "Import from Master Data"
+   * ({@link importFromMasterData}). So `created` is always 0 (kept for a result
+   * shape shared with import).
+   *
+   * User duplicates (`isDuplicate=true`) are never touched. Writes commit in
+   * fixed-size batches and a batch that fails is counted (`failed`) and skipped so
+   * the rest of the sync still runs (partial-failure tolerant). `onProgress`, when
+   * given, is fed PREPARING/REMOVING/PANELS events for the background sync-job dialog.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT)
-   * @param actorId person id recorded as updated-by (or null)
-   * @param dto optional subset of branch-lab-panel ids to sync (omit = all) and
-   *   an optional target `listId` (omit = the default Walk-in panel list)
+   * @param actorId person id recorded as created/updated-by (or null)
+   * @param dto optional subset of existing copy ids to reconcile (omit = all
+   *   copies in the list) and an optional target `listId` (omit = Walk-in)
+   * @param onProgress optional progress listener (background sync job)
+   * @returns counts of created (always 0) / updated / deleted panels and failed-batch items
    * @throws MasterDataNotMappedToBranchException if the branch has no master data
    * @throws BranchLabPanelListNotFoundException if `dto.listId` doesn't belong to this branch
    */
@@ -474,130 +494,77 @@ export class BranchLabPanelService {
     branchId: string,
     actorId: string | null,
     dto: SyncBranchLabPanelsDto,
+    onProgress?: MasterDataSyncProgressListener,
   ): Promise<BranchLabPanelSyncResult> {
     const masterData = await this.masterDataService.findByBranch(
       branchId,
       tenantId,
     );
-    // The default (Walk-in) panel list is always ensured first, same as import.
-    const defaultPanelList = await this.panelListService.getOrCreateDefaultList(
+    // The default (Walk-in) panel list + member-test list are ensured first.
+    const { targetPanelList, walkInTest } = await this.resolveImportTargets(
       tenantId,
       branchId,
       actorId,
+      dto.listId,
     );
-    const targetPanelList = dto.listId
-      ? await this.panelListService.findById(dto.listId, tenantId, branchId)
-      : defaultPanelList;
-    // Member tests always refresh into the (Walk-in) test list — see the same
-    // note in importFromMasterData.
-    const walkInTest = await this.testListService.getOrCreateDefaultList(
-      tenantId,
-      branchId,
-      actorId,
-    );
-    const where: Prisma.BranchLabPanelWhereInput = {
+
+    // Source of truth: the branch Master Data's currently-active lab panels.
+    const sources = await this.prisma.labPanel.findMany({
+      where: { masterDataId: masterData.id, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    const sourceIds = new Set(sources.map((s) => s.id));
+
+    // Existing imported originals in the target list (duplicates are left alone).
+    const copyWhere: Prisma.BranchLabPanelWhereInput = {
       tenantId,
       branchId,
       listId: targetPanelList.id,
       deletedAt: null,
-      // Only imported originals are re-snapshotted; user duplicates keep their edits.
       isDuplicate: false,
-      sourceLabPanelId: { not: null },
     };
     if (dto.branchLabPanelIds?.length) {
-      where.id = { in: dto.branchLabPanelIds };
+      copyWhere.id = { in: dto.branchLabPanelIds };
     }
     const copies = await this.prisma.branchLabPanel.findMany({
-      where,
+      where: copyWhere,
       select: { id: true, sourceLabPanelId: true, isDefault: true },
     });
-
-    const branchTestBySource = await this.loadBranchTestMap(
-      tenantId,
-      branchId,
-      walkInTest.id,
+    const toUpdate = copies.filter(
+      (c) => c.sourceLabPanelId && sourceIds.has(c.sourceLabPanelId),
     );
-    const newTests = new Map<
-      string,
-      Prisma.BranchLabTestUncheckedCreateInput
-    >();
-    const plans: {
-      id: string;
-      data: Prisma.BranchLabPanelUncheckedUpdateInput;
-      members: MemberPlan[];
-    }[] = [];
-    const toDelete: {
-      id: string;
-      isDefault: boolean;
-      sourceLabPanelId: string | null;
-    }[] = [];
-    let skipped = 0;
+    const toDelete = copies.filter(
+      (c) => !c.sourceLabPanelId || !sourceIds.has(c.sourceLabPanelId),
+    );
 
-    for (const copy of copies) {
-      if (!copy.sourceLabPanelId) {
-        skipped += 1;
-        continue;
-      }
-      try {
-        const panel = await this.labPanelService.findById(
-          masterData.id,
-          copy.sourceLabPanelId,
-          tenantId,
-        );
-        const members = await this.planMembers(
-          masterData.id,
-          tenantId,
-          branchId,
-          actorId,
-          panel,
-          branchTestBySource,
-          newTests,
-          walkInTest.id,
-        );
-        plans.push({
-          id: copy.id,
-          data: this.buildPanelSyncData(panel, actorId),
-          members,
-        });
-      } catch (e) {
-        if (e instanceof LabPanelNotFoundException) {
-          // Source has been soft-deleted at Master Data — the branch's copy is
-          // stale and no longer orderable, so it is removed rather than skipped.
-          toDelete.push(copy);
-          continue;
-        }
-        throw e;
-      }
-    }
+    const total = toUpdate.length;
+    await onProgress?.({
+      type: 'tests-planned',
+      total,
+      toUpdate: toUpdate.length,
+      toCreate: 0,
+    });
 
-    if (plans.length || toDelete.length) {
+    // Sync never ADDS a new panel — that is "Import from Master Data". It only
+    // re-snapshots existing copies (UPDATE, rebuilding members) and removes copies
+    // whose source is gone (DELETE). `created` stays 0 (shared result shape).
+    const created = 0;
+    let updated = 0;
+    let deleted = 0;
+    let failed = 0;
+    const BATCH = 25;
+
+    // ── DELETE ───────────────────────────────────────────────────────────────
+    await onProgress?.({
+      type: 'phase',
+      phase: 'REMOVING',
+      count: toDelete.length,
+    });
+    for (let i = 0; i < toDelete.length; i += BATCH) {
+      const batch = toDelete.slice(i, i + BATCH);
       try {
         await this.prisma.withTenant(tenantId, async (tx) => {
-          await this.persistNewTests(tx, newTests, branchTestBySource);
-          for (const plan of plans) {
-            await tx.branchLabPanel.update({
-              where: { id: plan.id },
-              data: plan.data,
-            });
-            // Rebuild membership: retire existing active joins, then re-create.
-            await tx.branchLabPanelTest.updateMany({
-              where: {
-                branchLabPanelId: plan.id,
-                tenantId,
-                deletedAt: null,
-              },
-              data: { deletedAt: new Date() },
-            });
-            await this.createJoins(
-              tx,
-              tenantId,
-              branchId,
-              plan.id,
-              plan.members,
-              branchTestBySource,
-            );
-          }
-          for (const d of toDelete) {
+          for (const d of batch) {
             const now = new Date();
             await tx.branchLabPanelTest.updateMany({
               where: { branchLabPanelId: d.id, tenantId, deletedAt: null },
@@ -605,7 +572,7 @@ export class BranchLabPanelService {
             });
             await tx.branchLabPanel.update({
               where: { id: d.id },
-              data: { deletedAt: now },
+              data: { deletedAt: now, updatedBy: actorId },
             });
             if (d.isDefault && d.sourceLabPanelId) {
               const sibling = await tx.branchLabPanel.findFirst({
@@ -626,12 +593,92 @@ export class BranchLabPanelService {
             }
           }
         });
-      } catch (e) {
-        this.rethrowConflict(e);
-        throw e;
+        deleted += batch.length;
+      } catch {
+        failed += batch.length;
       }
     }
-    return { synced: plans.length, deleted: toDelete.length, skipped };
+
+    // ── UPDATE ───────────────────────────────────────────────────────────────
+    await onProgress?.({ type: 'phase', phase: 'PANELS' });
+    // Member-test dedup map, threaded across every batch so a test materialized
+    // in an earlier batch is reused (not recreated) by a later one.
+    const branchTestBySource = await this.loadBranchTestMap(
+      tenantId,
+      branchId,
+      walkInTest.id,
+    );
+    let processed = 0;
+    for (let i = 0; i < toUpdate.length; i += BATCH) {
+      const batch = toUpdate.slice(i, i + BATCH);
+      try {
+        // Compose panels + plan members BEFORE opening the tx (nested service
+        // reads need the per-op RLS GUC). Sequential: planMembers mutates the
+        // shared dedup maps.
+        const newTests = new Map<
+          string,
+          Prisma.BranchLabTestUncheckedCreateInput
+        >();
+        const items: {
+          copyId: string;
+          panel: LabPanelWithTests;
+          members: MemberPlan[];
+        }[] = [];
+        for (const c of batch) {
+          const panel = await this.labPanelService.findById(
+            masterData.id,
+            c.sourceLabPanelId!,
+            tenantId,
+          );
+          const members = await this.planMembers(
+            masterData.id,
+            tenantId,
+            branchId,
+            actorId,
+            panel,
+            branchTestBySource,
+            newTests,
+            walkInTest,
+          );
+          items.push({ copyId: c.id, panel, members });
+        }
+        await this.prisma.withTenant(tenantId, async (tx) => {
+          await this.persistNewTests(tx, newTests, branchTestBySource);
+          for (const { copyId, panel, members } of items) {
+            await tx.branchLabPanel.update({
+              where: { id: copyId },
+              data: this.buildPanelSyncData(panel, actorId, targetPanelList),
+            });
+            // Rebuild membership: retire existing active joins, then re-create.
+            await tx.branchLabPanelTest.updateMany({
+              where: {
+                branchLabPanelId: copyId,
+                tenantId,
+                deletedAt: null,
+              },
+              data: { deletedAt: new Date() },
+            });
+            await this.createJoins(
+              tx,
+              tenantId,
+              branchId,
+              copyId,
+              members,
+              branchTestBySource,
+            );
+          }
+        });
+        updated += batch.length;
+      } catch {
+        failed += batch.length;
+      }
+      processed += batch.length;
+      await onProgress?.({ type: 'tests-processed', processed });
+    }
+    // Final tick so the progress bar/batch table reach 100% even when total is 0.
+    await onProgress?.({ type: 'tests-processed', processed: total });
+
+    return { created, updated, deleted, failed };
   }
 
   /**
@@ -1176,7 +1223,7 @@ export class BranchLabPanelService {
     panel: LabPanelWithTests,
     branchTestBySource: Map<string, string>,
     newTests: Map<string, Prisma.BranchLabTestUncheckedCreateInput>,
-    testListId: string,
+    testList: ListPricingConfig & { id: string },
   ): Promise<MemberPlan[]> {
     const members: MemberPlan[] = [];
     for (const t of panel.tests) {
@@ -1200,7 +1247,8 @@ export class BranchLabPanelService {
             tenantId,
             branchId,
             sourceMasterDataId: masterDataId,
-            listId: testListId,
+            listId: testList.id,
+            list: testList,
             actorId,
           }),
         );
@@ -1264,6 +1312,8 @@ export class BranchLabPanelService {
       branchId: string;
       sourceMasterDataId: string;
       listId: string;
+      /** The target list's pricing config — drives the copied panel's `listPrice`. */
+      list: ListPricingConfig;
       actorId: string | null;
     },
   ): Prisma.BranchLabPanelUncheckedCreateInput {
@@ -1275,8 +1325,13 @@ export class BranchLabPanelService {
       sourceLabPanelId: source.id,
       sourceMasterDataId: target.sourceMasterDataId,
       listId: target.listId,
-      // Walk-in default list: the sellable list price starts at MSRP.
-      listPrice: (scalars.priceMsrp as number) ?? 0,
+      // List price honours the target list's pricing config: MSRP for the
+      // default Walk-in list, the source column × % for a PERCENTAGE list, or
+      // the source column copied as-is for a CUSTOMIZED list.
+      listPrice: resolveImportListPrice(
+        scalars as unknown as SourcePriceColumns,
+        target.list,
+      ),
       createdBy: target.actorId,
       updatedBy: target.actorId,
     } as Prisma.BranchLabPanelUncheckedCreateInput;
@@ -1320,17 +1375,29 @@ export class BranchLabPanelService {
     } as Prisma.BranchLabPanelUncheckedCreateInput;
   }
 
-  /** Build the overwrite (re-snapshot) update payload from a composed source panel. */
+  /**
+   * Build the overwrite (re-snapshot) update payload from a composed source panel.
+   * Reference scalars are always refreshed from Master Data; `listPrice` follows the
+   * target list's pricing config: recomputed to MSRP for the default Walk-in list,
+   * recomputed from the fresh source column × stored percentage for a PERCENTAGE
+   * list, and **omitted** for a CUSTOMIZED (non-default) list so its manually-set
+   * price is preserved untouched.
+   */
   private buildPanelSyncData(
     source: LabPanelWithTests,
     actorId: string | null,
+    list: ListPricingConfig,
   ): Prisma.BranchLabPanelUncheckedUpdateInput {
     const scalars = this.extractScalars(source);
+    const listPrice = resolveSyncListPrice(
+      scalars as unknown as SourcePriceColumns,
+      list,
+    );
     return {
       ...scalars,
-      // Walk-in list price tracks MSRP on re-snapshot (agreed overwrite contract).
-      listPrice: (scalars.priceMsrp as number) ?? 0,
       updatedBy: actorId,
+      // null = CUSTOMIZED list: leave `listPrice` out of the update to preserve it.
+      ...(listPrice !== null ? { listPrice } : {}),
     };
   }
 

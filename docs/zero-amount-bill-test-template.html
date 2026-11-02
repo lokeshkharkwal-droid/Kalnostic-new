@@ -1,0 +1,173 @@
+<!--
+  ════════════════════════════════════════════════════════════════════════════
+  ZERO-AMOUNT BILL — Print Template (test harness)
+  ════════════════════════════════════════════════════════════════════════════
+
+  PURPOSE
+    A `bill_print` template that makes the payment/bill status impossible to
+    miss, so you can confirm a ₹0 order (all tests priced ₹0, nothing collected)
+    prints as **PAID**, not "Not Paid".
+
+  WHY THIS PROVES THE FIX
+    The `{payment_status}` and `{bill_status}` tags are resolved server-side by
+    `billStatusLabel(...)` (src/modules/order/utils/bill-status.ts), whose ladder
+    starts with `if (net <= 0) return PAID`. So when gross = net = ₹0 and paid =
+    ₹0, both tags render "Paid". This template surfaces that value as a big badge
+    PLUS the raw amounts, so the ₹0 / "Paid" pairing is visible at a glance.
+
+  HOW TO USE
+    1. Go to (Business- or Branch-) Admin → Templates (Print) [or Old Templates →
+       Print] and create a new template of type "Lab Order Bill" (slot key
+       `bill_print`, label "Lab Order Bill PDF Template").
+    2. Paste the BODY block below into the template's Body (body_html). The
+       <style> block at the top of the body is fine to keep — it travels with the
+       body. Header/Footer are optional (samples provided at the very bottom).
+    3. Save, then set it as the active template for the "Lab Order Bill PDF
+       Template" slot in the Template Configuration.
+    4. Create an order whose tests are all priced ₹0, submit WITHOUT payment, then
+       Print the bill from Order Console / Billings. The badge must read PAID and
+       Gross / Net / Paid / Balance must all read ₹0.00.
+
+    Compare against a normal order (net > 0, paid ₹0) — that one must still read
+    NOT PAID, confirming non-zero behaviour is unchanged.
+
+  TAGS USED (all from OrderService.buildBillContext)
+    {bill_id} {order_code} {bill_date_time} {order_date_time} {status}
+    {payment_status} {bill_status} {branch_name} {referred_by} {referral_panel}
+    {patient_name} {patient_salutation} {patient_age} {patient_gender}
+    {patient_um_id} {patient_mobile}
+    {gross_amount} {discount_amount} {discount_percentage} {net_amount}
+    {paid_amount} {balance_amount} {total_amount_in_words}
+    {{#each items}} {sr_no} {name} {code} {type} {price} {discount} {{/each}}
+  ════════════════════════════════════════════════════════════════════════════
+-->
+
+<!-- ╔═══════════════════ BODY (paste into body_html) ═══════════════════╗ -->
+<style>
+  * { box-sizing: border-box; }
+  .bill { font-family: helvetica, Arial, sans-serif; color: #111; font-size: 12px; }
+  .bill h1 { font-size: 18px; margin: 0 0 2px; }
+  .muted { color: #555; }
+  .row { display: flex; justify-content: space-between; gap: 16px; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin: 10px 0; }
+  .kv { margin: 2px 0; }
+  .kv b { display: inline-block; min-width: 110px; color: #333; }
+
+  /* The star of the show: a big, unmissable status badge. The flat template
+     engine does plain text substitution (no equality branching), so the badge is
+     intentionally one neutral style and you READ the value — "Paid" for a ₹0
+     order, "Not Paid" for an unpaid non-zero order. */
+  .status-wrap { text-align: center; margin: 14px 0; }
+  .status-label { font-size: 11px; letter-spacing: 1px; color: #666; text-transform: uppercase; }
+  .status-badge {
+    display: inline-block; padding: 10px 28px; border-radius: 999px;
+    font-size: 22px; font-weight: 700; letter-spacing: .5px;
+    border: 2px solid #111; color: #111; background: #f3f4f6;
+  }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #f8fafc; }
+  td.num, th.num { text-align: right; }
+  .totals { width: 280px; margin-left: auto; }
+  .totals td { border: none; padding: 3px 8px; }
+  .totals .grand { border-top: 2px solid #111; font-weight: 700; font-size: 14px; }
+  .words { font-style: italic; color: #444; margin-top: 6px; }
+  .assert { margin-top: 16px; padding: 8px 12px; border-left: 4px solid #2563eb;
+            background: #eff6ff; font-size: 11px; color: #1e3a8a; }
+</style>
+
+<div class="bill">
+  <div class="row">
+    <div>
+      <h1>{branch_name}</h1>
+      <div class="muted">Payment Receipt / Bill</div>
+    </div>
+    <div style="text-align:right">
+      <div class="kv"><b>Bill No:</b> {bill_id}</div>
+      <div class="kv"><b>Order No:</b> {order_code}</div>
+      <div class="kv"><b>Date:</b> {bill_date_time}</div>
+    </div>
+  </div>
+
+  <!-- ★ Payment status — the value under test. Rendered from {payment_status}
+       (identical to {bill_status}); for a ₹0 order this must read "Paid". -->
+  <div class="status-wrap">
+    <div class="status-label">Payment Status</div>
+    <span class="status-badge">{payment_status}</span>
+  </div>
+
+  <div class="row">
+    <div class="card" style="flex:1">
+      <div class="kv"><b>Patient:</b> {patient_salutation} {patient_name}</div>
+      <div class="kv"><b>Age / Sex:</b> {patient_age} / {patient_gender}</div>
+      <div class="kv"><b>UM ID:</b> {patient_um_id}</div>
+      <div class="kv"><b>Mobile:</b> {patient_mobile}</div>
+    </div>
+    <div class="card" style="flex:1">
+      <div class="kv"><b>Referred By:</b> {referred_by}</div>
+      <div class="kv"><b>Panel:</b> {referral_panel}</div>
+      <div class="kv"><b>Order Date:</b> {order_date_time}</div>
+      <div class="kv"><b>Order Status:</b> {status}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:40px">#</th>
+        <th>Test / Panel</th>
+        <th style="width:80px">Code</th>
+        <th style="width:70px">Type</th>
+        <th class="num" style="width:90px">Price</th>
+        <th class="num" style="width:90px">Discount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each items}}
+      <tr>
+        <td>{sr_no}</td>
+        <td>{name}</td>
+        <td>{code}</td>
+        <td>{type}</td>
+        <td class="num">₹{price}</td>
+        <td class="num">₹{discount}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <table class="totals">
+    <tr><td>Gross Amount</td><td class="num">₹{gross_amount}</td></tr>
+    <tr><td>Discount ({discount_percentage}%)</td><td class="num">₹{discount_amount}</td></tr>
+    <tr class="grand"><td>Net Payable</td><td class="num">₹{net_amount}</td></tr>
+    <tr><td>Paid</td><td class="num">₹{paid_amount}</td></tr>
+    <tr><td>Balance</td><td class="num">₹{balance_amount}</td></tr>
+  </table>
+
+  <div class="words">Amount in words: {total_amount_in_words}</div>
+
+  <div class="assert">
+    <b>Zero-amount check:</b> for a ₹0 order the badge above must read
+    <b>Paid</b> while Gross / Net / Paid / Balance all read <b>₹0</b>. If it reads
+    "Not Paid", the fix has regressed.
+  </div>
+</div>
+<!-- ╚═══════════════════════════ END BODY ═════════════════════════════╝ -->
+
+
+<!-- ╔════════════ HEADER (optional — paste into header_html) ═══════════╗ -->
+<!--
+<div style="font-family:helvetica,Arial,sans-serif;text-align:center;border-bottom:1px solid #ccc;padding-bottom:4px">
+  <strong>{branch_name}</strong> &middot; Lab Order Bill
+</div>
+-->
+<!-- ╚═══════════════════════════════════════════════════════════════════╝ -->
+
+<!-- ╔════════════ FOOTER (optional — paste into footer_html) ═══════════╗ -->
+<!--
+<div style="font-family:helvetica,Arial,sans-serif;font-size:10px;color:#666;text-align:center">
+  Bill {bill_id} &middot; Status: {payment_status} &middot; Generated {bill_date_time}
+</div>
+-->
+<!-- ╚═══════════════════════════════════════════════════════════════════╝ -->

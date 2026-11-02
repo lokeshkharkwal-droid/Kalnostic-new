@@ -58,18 +58,33 @@ docs {
   with a high `limit` to get the whole order in one page.
 
   `search` matches Patient Name (first/last), Order ID (order code), Test
-  Name (the order item's branch lab test name), or Ref Panel (the order's
-  referral panel name) — a hit on any one field matches (substring,
-  case-insensitive), independent of the other filters above.
+  Name (the order item's branch lab test name), Ref Panel (the order's
+  referral panel name), or the sample Barcode (any live sample linked to the
+  order line — the value the row's Barcode column shows; one barcode can be
+  shared by several samples, so a scanned tube lists every test on it) — a hit
+  on any one field matches (substring, case-insensitive), independent of the
+  other filters above. The text is trimmed first (spaces, tabs and line breaks
+  around it are ignored, and a blank value is no search); `%`, `_` and `\` are
+  matched as typed, never as wildcards. At most 50 characters; a longer value
+  is refused with 400. The status counts (`GET /lab-reports/counts`) follow
+  the same search.
 
   `sampleStatus` is `NOT_COLLECTED` | `COLLECTED` only — Accession's own
   New/Collected/Accepted/... sample lifecycle doesn't exist in the backend
   yet, so this maps directly to whether `OrderItem.collectedAt` is set (a
   two-state proxy, not the full lifecycle the frontend chip set implies).
 
-  `outsource` is the standalone "Outsource" checkbox (distinct from the
-  `source` pill, but the same underlying signal — `LabReport.isOutsourced`);
-  checking it narrows to outsourced items same as `source=OUTSOURCE`.
+  `outsource` is the standalone "Outsource" checkbox. Distinct from the `source`
+  pill — it is a SUPERSET, matching `LabReport.isReferral` (not `isOutsourced`).
+  It narrows to referral/transfer work from the caller's branch perspective:
+  outsourced-out items (same as `source=OUTSOURCE`) PLUS samples that reached
+  ACCEPTED through a transfer — the INTERNAL clone received at this branch
+  (/accession/referral-orders) and the sender's own report once an EXTERNAL or
+  OUTSOURCE transfer is accepted (/accession/external-referral-orders,
+  /accession/outsource). `isReferral` is stamped at transfer-accept time, so a
+  forwarded/received sample only appears once the receiving/outside party has
+  taken it (not while still in transit). The `source` pill stays strict
+  (`isOutsourced` = outsource-center only).
 
   `homeCollection` matches `true` when the order's `OrderDiagnostics.isHomeVisit`
   flag is set — a booking-level home-visit/phlebotomist-collection flag on the

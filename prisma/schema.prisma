@@ -575,13 +575,19 @@ enum AgeUnit {
   YEARS
 }
 
-/// How an out-of-range result is visually flagged on the report.
+/// How an out-of-range result is visually flagged on the report. The first five
+/// are the original styles; the last three are faithful "combined" styles added
+/// so every Master Data → Abnormal Flag Logic label (and the matching Technician
+/// Reporting → Highlighted option) renders exactly as its name reads.
 enum AbnormalFlag {
   BOLD_AND_RED
   BOLD_ONLY
   ITALIC
   UNDERLINE
   COLOUR_HIGHLIGHT
+  ITALIC_AND_RED
+  BOLD_AND_ITALIC
+  BOLD_ITALIC_AND_RED
 }
 
 /// Sample container type (tube/colour or receptacle). One display label per value
@@ -7262,6 +7268,20 @@ model LabReport {
 
   labTestId String? @map("lab_test_id")
 
+  /// Denormalized department of the test this report is for, stamped at report
+  /// creation (`createReportForAcceptedItem`): for a panel-member report the
+  /// MEMBER test's own department, for a standalone test the order line test's —
+  /// each resolved branch-entry-first, falling back to the source Master Data
+  /// test, exactly as `OrderSample.departmentId` is at accession time. The
+  /// Reporting worklist's department-visibility scope filters directly on this
+  /// column instead of joining through `orderItem.branchLabTest` /
+  /// `branchLabPanel`, which resolved a panel member to the PANEL's single
+  /// department and so hid it from the member test's own department. NULL =
+  /// unassigned (visible to every department). A transferred report keeps this as
+  /// the order line's department; the HOLDING branch's re-chosen department lives
+  /// on `performingEntry` (a genuinely different value, still joined).
+  departmentId String? @map("department_id")
+
   /// The Lab Test List entry the branch that now HOLDS this report works it with
   /// (its report template / PDF settings, TAT windows and department). NULL = the
   /// order line's own entry (`OrderItem.branchLabTest`), which is the case until
@@ -7287,14 +7307,20 @@ model LabReport {
 
   /// The Notes sections the technician LEFT OUT of this report's printed
   /// version (keys: useful_for, interpretation, limitations, remarks,
-  /// references). Empty (the default for every report) means all five print,
-  /// exactly as before. Only honoured while the matching Technician setting
-  /// (`TechnicianSetting.isLabTestNotesSelectable` for a test report,
-  /// `isLabPanelNotesSelectable` for a report on a panel order line) is on;
-  /// when it is off every section prints. It never changes the content shown on
-  /// screen, only what the printed/shared PDF contains. Cleared when the report
-  /// is returned for a repeat (like the Notes overrides above); kept on re-run.
+  /// references). Only meaningful once `hasChosenNotePrint` is true: until then
+  /// the branch's Technician setting decides the default (see below) and this
+  /// list is ignored. It never changes the content shown on screen, only what
+  /// the printed/shared PDF contains. Reset (with `hasChosenNotePrint`) when the
+  /// report is returned for a repeat and when it is re-run.
   excludedNoteSections String[] @default([]) @map("excluded_note_sections")
+
+  /// Whether the technician (or the approval, which freezes the default) has
+  /// settled which Notes sections print. False = no choice yet: the branch's
+  /// Technician setting (`TechnicianSetting.isLabTestNotesSelectable` for a test
+  /// report, `isLabPanelNotesSelectable` for a report on a panel order line) sets
+  /// the DEFAULT, ON = every section prints, OFF = none prints, and the
+  /// technician can change it. True = `excludedNoteSections` is the choice.
+  hasChosenNotePrint Boolean @default(false) @map("has_chosen_note_print")
 
   status LabReportStatus @default(PENDING)
 
@@ -7374,6 +7400,18 @@ model LabReport {
   /// is decided at order-creation time and not expected to change afterward.
   isOutsourced Boolean @default(false) @map("is_outsourced")
 
+  /// Superset "Outsource" signal for the Technician Reporting worklist's
+  /// standalone Outsource checkbox (distinct from the ALL/IN_HOUSE/OUTSOURCE
+  /// source pill, which stays on `isOutsourced`). True when this report is
+  /// outsourced-out (same as `isOutsourced`, stamped at creation) OR its sample
+  /// reached ACCEPTED through a cross-branch/external transfer: the INTERNAL
+  /// clone created at the receiving branch, or the sender's own report once an
+  /// EXTERNAL/OUTSOURCE transfer is accepted. Stamped at accept time (not at
+  /// send) so a sample only counts as referral work once the receiving/outside
+  /// party has taken it. A plain indexed column so the checkbox filter stays a
+  /// simple equality and never has to join through OrderSample/SampleTransfer.
+  isReferral Boolean @default(false) @map("is_referral")
+
   resultValues     LabReportResultValue[]
   overallResults   LabReportOverallResult[]
   parameterNotes   LabReportParameterNote[]
@@ -7405,9 +7443,11 @@ model LabReport {
   @@index([branchId])
   @@index([status])
   @@index([labTestId])
+  @@index([departmentId])
   @@index([memberBranchLabTestId])
   @@index([performingBranchLabTestId])
   @@index([isOutsourced])
+  @@index([isReferral])
   @@index([tatBand])
   @@index([deletedAt])
   @@map("lab_reports")
@@ -8139,6 +8179,12 @@ model PaymentDetails {
   tdsDeduction           Decimal     @default(0) @map("tds_deduction") @db.Decimal(12, 2)
   payableAmount          Decimal     @default(0) @map("payable_amount") @db.Decimal(12, 2)
   paidAmount             Decimal     @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  /// DRAFT (not-yet-collected) amount for an APPOINTMENT booking. An appointment
+  /// is not a bill: the amount entered at creation is remembered here but NOT
+  /// collected (`paidAmount` stays 0, so no collected-money sum, due or report
+  /// counts it) until the appointment is checked in, when it is committed to a
+  /// real collected `paidAmount`. 0 on every ordinary (already-collected) row.
+  draftPaidAmount        Decimal     @default(0) @map("draft_paid_amount") @db.Decimal(12, 2)
   remainingBalance       Decimal     @default(0) @map("remaining_balance") @db.Decimal(12, 2)
   paymentMode            PaymentMode @default(CASH) @map("payment_mode")
   paymentDate            DateTime?   @map("payment_date")
@@ -9446,4 +9492,39 @@ enum MasterDataImportJobStatus {
   SUCCEEDED
   FAILED
   INTERRUPTED
+}
+
+/// Background "Sync from Master Data" jobs for a branch's Lab Test / Lab Panel
+/// List (reconcile the list against Branch Master Data) so the branch-admin
+/// dialog can poll live progress — mirrors `MasterDataImportJob`, one table for
+/// both kinds (`kind`). Reuses `MasterDataImportJobStatus` for `status`.
+model BranchListSyncJob {
+  id         String                    @id @default(uuid())
+  tenantId   String                    @map("tenant_id")
+  branchId   String                    @map("branch_id")
+  /// Which branch list this sync reconciles (lab tests vs lab panels).
+  kind       BranchListSyncKind
+  status     MasterDataImportJobStatus @default(RUNNING)
+  /// `MasterDataSyncJobProgress` (phase, batches, counts) — see the service.
+  progress   Json
+  /// `{ created, updated, deleted, failed }` once SUCCEEDED.
+  result     Json?
+  /// `{ code, message, phase }` once FAILED / INTERRUPTED.
+  error      Json?
+  startedBy  String?                   @map("started_by")
+  /// Backend process running it (`host#pm2-instance`); on startup that process
+  /// marks its own leftover RUNNING jobs INTERRUPTED at once.
+  runner     String?                   @map("runner")
+  startedAt  DateTime                  @default(now()) @map("started_at")
+  finishedAt DateTime?                 @map("finished_at")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+
+  @@index([tenantId, branchId, createdAt])
+  @@map("branch_list_sync_jobs")
+}
+
+enum BranchListSyncKind {
+  LAB_TEST
+  LAB_PANEL
 }

@@ -20,7 +20,9 @@ describe('blankNotesToNull', () => {
   });
 
   it('keeps real text exactly as sent', () => {
-    expect(blankNotesToNull({ notes: ' Fasting sample ' }).notes).toBe(' Fasting sample ');
+    expect(blankNotesToNull({ notes: ' Fasting sample ' }).notes).toBe(
+      ' Fasting sample ',
+    );
   });
 
   it('leaves an omitted Note omitted, so the stored Note is not touched', () => {
@@ -29,7 +31,10 @@ describe('blankNotesToNull', () => {
   });
 
   it('leaves an explicit null as null and the other fields alone', () => {
-    expect(blankNotesToNull({ notes: null, parameterName: 'pH' })).toEqual({ notes: null, parameterName: 'pH' });
+    expect(blankNotesToNull({ notes: null, parameterName: 'pH' })).toEqual({
+      notes: null,
+      parameterName: 'pH',
+    });
   });
 });
 
@@ -37,7 +42,9 @@ function build() {
   const labTestResultParam = {
     findMany: jest.fn().mockResolvedValue([{ id: 'p1', parameterCode: 'HB' }]),
     update: jest.fn<Promise<unknown>, [Where]>().mockResolvedValue({}),
-    create: jest.fn<Promise<unknown>, [{ data: Fields }]>().mockResolvedValue({ id: 'p-new' }),
+    create: jest
+      .fn<Promise<unknown>, [{ data: Fields }]>()
+      .mockResolvedValue({ id: 'p-new' }),
     updateMany: jest.fn().mockResolvedValue({}),
   };
   const tx = {
@@ -53,18 +60,34 @@ function build() {
       createMany: jest.fn().mockResolvedValue({}),
     },
   };
-  const service = new LabTestService({} as unknown as PrismaService, {} as unknown as MasterDataService);
+  const service = new LabTestService(
+    {} as unknown as PrismaService,
+    {} as unknown as MasterDataService,
+  );
   const priv = service as unknown as {
     upsertParamsByCode: (...a: unknown[]) => Promise<void>;
     createParams: (...a: unknown[]) => Promise<void>;
   };
   const save = (params: unknown[]) =>
-    priv.upsertParamsByCode(tx, 't1', 'b1', 'lt1', params, new Date('2026-10-29'));
+    priv.upsertParamsByCode(
+      tx,
+      't1',
+      'b1',
+      'lt1',
+      params,
+      new Date('2026-10-29'),
+    );
   return { save, priv, tx, labTestResultParam };
 }
 
-const param = (over: Fields = {}) => ({ id: 'p1', parameterName: 'Haemoglobin', parameterCode: 'HB', ...over });
-const patched = (m: ReturnType<typeof build>) => m.labTestResultParam.update.mock.calls[0]![0].data;
+const param = (over: Fields = {}) => ({
+  id: 'p1',
+  parameterName: 'Haemoglobin',
+  parameterCode: 'HB',
+  ...over,
+});
+const patched = (m: ReturnType<typeof build>) =>
+  m.labTestResultParam.update.mock.calls[0]![0].data;
 
 describe('saving a result parameter (edit)', () => {
   it('a cleared Note (sent as "") clears the stored Note: written as null', async () => {
@@ -93,14 +116,36 @@ describe('saving a result parameter (edit)', () => {
 
   it('a new parameter added in the same save with a blank Note is created with null, not an empty string', async () => {
     const m = build();
-    await m.save([param(), param({ id: undefined, parameterCode: 'MCV', parameterName: 'MCV', notes: '' })]);
-    expect(m.labTestResultParam.create.mock.calls[0]![0].data).toHaveProperty('notes', null);
+    await m.save([
+      param(),
+      param({
+        id: undefined,
+        parameterCode: 'MCV',
+        parameterName: 'MCV',
+        notes: '',
+      }),
+    ]);
+    expect(m.labTestResultParam.create.mock.calls[0]![0].data).toHaveProperty(
+      'notes',
+      null,
+    );
   });
 
   it('a new parameter with text keeps it', async () => {
     const m = build();
-    await m.save([param(), param({ id: undefined, parameterCode: 'MCV', parameterName: 'MCV', notes: 'Venous' })]);
-    expect(m.labTestResultParam.create.mock.calls[0]![0].data).toHaveProperty('notes', 'Venous');
+    await m.save([
+      param(),
+      param({
+        id: undefined,
+        parameterCode: 'MCV',
+        parameterName: 'MCV',
+        notes: 'Venous',
+      }),
+    ]);
+    expect(m.labTestResultParam.create.mock.calls[0]![0].data).toHaveProperty(
+      'notes',
+      'Venous',
+    );
   });
 });
 

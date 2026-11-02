@@ -187,6 +187,57 @@ export class AppointmentService {
   }
 
   /**
+   * Conditionally complete an appointment inside an existing (already
+   * tenant-scoped) transaction: transition CHECKED_IN / IN_PROGRESS → COMPLETED
+   * and append a history row, but ONLY when it is still in one of those active
+   * states. The guard is a conditional `updateMany` keyed on the current status,
+   * so concurrent callers (e.g. the last two reports of an order publishing at
+   * once) can't double-complete or stack duplicate history rows: exactly one
+   * caller sees `count === 1` and writes history, the rest no-op. Lets the
+   * lab-report module close out an appointment once every report for its order
+   * is published (CLAUDE.md rule #3 — injected via DI, never imported).
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param branchId branch for the history row (may be null)
+   * @param appointmentId the appointment to complete
+   * @param personId acting person id (updated/changed by)
+   * @param notes optional history note
+   * @returns true when this call performed the transition, false otherwise
+   */
+  async completeIfAllDoneInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchId: string | null,
+    appointmentId: string,
+    personId: string | null,
+    notes?: string,
+  ): Promise<boolean> {
+    const res = await tx.appointment.updateMany({
+      where: {
+        id: appointmentId,
+        tenantId,
+        deletedAt: null,
+        status: {
+          in: [AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_PROGRESS],
+        },
+      },
+      data: { status: AppointmentStatus.COMPLETED, updatedBy: personId },
+    });
+    if (res.count === 0) return false;
+    await tx.appointmentStatusHistory.create({
+      data: {
+        tenantId,
+        branchId,
+        appointmentId,
+        status: AppointmentStatus.COMPLETED,
+        notes: notes ?? null,
+        changedBy: personId,
+      },
+    });
+    return true;
+  }
+
+  /**
    * Mint the external appointment id ("APT" + configured auto-increment format)
    * inside the current transaction, atomically with the appointment. Reads the
    * branch's `Appointment` format straight from the settings row (no upsert, so

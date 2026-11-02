@@ -35,6 +35,7 @@ interface Rep {
   orderItemId: string;
   memberBranchLabTestId: string | null;
   excludedNoteSections: string[];
+  hasChosenNotePrint: boolean;
   orderItem: Record<string, unknown>;
   parameterNotes: Array<{ resultParamId: string; content: string }>;
   contentSections: Record<string, string>;
@@ -47,6 +48,8 @@ function report(
     id?: string;
     kind?: 'TEST' | 'PANEL';
     excluded?: string[];
+    /** Whether a choice was saved; by default one exists exactly when `excluded` is given. */
+    chosen?: boolean;
     branchId?: string | null;
     /** A panel member's own test; null = an old combined panel report. */
     member?: string | null;
@@ -60,6 +63,7 @@ function report(
     orderItemId: 'item1',
     memberBranchLabTestId: over.member === undefined ? null : over.member,
     excludedNoteSections: over.excluded ?? [],
+    hasChosenNotePrint: over.chosen ?? over.excluded !== undefined,
     orderItem: {
       direct: null,
       branchLabPanelId: kind === 'PANEL' ? 'panel1' : null,
@@ -174,14 +178,30 @@ function saving(
       branchId: 'A',
       orderItemId: 'item1',
       excludedNoteSections: [],
+      hasChosenNotePrint: false,
+      status: 'SAVED',
       ...stored,
     }),
+    lockReportForWrite: jest.fn().mockResolvedValue(undefined),
     technicianSettingsService: {
       getNotesPrintSwitches: jest.fn().mockResolvedValue(switches),
     },
     prisma: {
       orderItem: { findFirst: jest.fn().mockResolvedValue(line) },
       labReport: { update },
+      // The choice is written inside the report's row lock, which re-reads the status.
+      withTenant: (
+        _tenantId: string,
+        fn: (t: {
+          labReport: { findFirst: jest.Mock; update: jest.Mock };
+        }) => Promise<void>,
+      ) =>
+        fn({
+          labReport: {
+            findFirst: jest.fn().mockResolvedValue({ status: 'SAVED' }),
+            update,
+          },
+        }),
     },
   });
   return { svc, update };
@@ -197,7 +217,8 @@ describe('a panel with several member tests', () => {
         id: `r-${m}`,
         kind: 'PANEL',
         member: m,
-        excluded: excluded[m] ?? [],
+        // a member that is not listed has not chosen anything yet
+        excluded: excluded[m],
       }),
     );
 
@@ -223,22 +244,37 @@ describe('a panel with several member tests', () => {
     for (const k of SECTION_KEYS) expect(out.m5![k]).toBe(''); // all left out
   });
 
-  it('every member follows the Lab Panel switch; the Lab Test switch is irrelevant', async () => {
-    const reps = panelReports({ m1: ['remarks'], m2: ['references'] });
+  it('every member takes its DEFAULT from the Lab Panel setting; the Lab Test setting is irrelevant', async () => {
+    const reps = panelReports(); // nobody has chosen yet
     const panelOn = makeService(
       reps,
       jest.fn().mockResolvedValue({ labTest: false, labPanel: true }),
     );
-    expect((await printed(panelOn, 'r-m1')).variables.remarks).toBe('');
-    expect((await printed(panelOn, 'r-m2')).variables.references).toBe('');
+    for (const m of MEMBERS) {
+      const { variables } = await printed(panelOn, `r-${m}`);
+      for (const k of SECTION_KEYS) expect(variables[k]).not.toBe('');
+    }
 
     const panelOff = makeService(
       reps,
       jest.fn().mockResolvedValue({ labTest: true, labPanel: false }),
     );
-    for (const m of ['m1', 'm2']) {
+    for (const m of MEMBERS) {
       const { variables } = await printed(panelOff, `r-${m}`);
-      for (const k of SECTION_KEYS) expect(variables[k]).not.toBe('');
+      for (const k of SECTION_KEYS) expect(variables[k]).toBe('');
+    }
+  });
+
+  it('a member that chose keeps its own choice whatever the setting says', async () => {
+    const reps = panelReports({ m1: ['remarks'], m2: ['references'] });
+    for (const switches of [
+      { labTest: false, labPanel: true },
+      { labTest: true, labPanel: false },
+    ]) {
+      const svc = makeService(reps, jest.fn().mockResolvedValue(switches));
+      expect((await printed(svc, 'r-m1')).variables.remarks).toBe('');
+      expect((await printed(svc, 'r-m1')).variables.useful_for).toBe('U-text');
+      expect((await printed(svc, 'r-m2')).variables.references).toBe('');
     }
   });
 
@@ -251,30 +287,21 @@ describe('a panel with several member tests', () => {
   });
 
   it('in an order that mixes a panel and a single test, each line follows its own switch', async () => {
-    const single = report({
-      id: 'r-single',
-      kind: 'TEST',
-      excluded: ['remarks'],
-    });
-    const member = report({
-      id: 'r-member',
-      kind: 'PANEL',
-      member: 'm1',
-      excluded: ['remarks'],
-    });
+    const single = report({ id: 'r-single', kind: 'TEST' });
+    const member = report({ id: 'r-member', kind: 'PANEL', member: 'm1' });
     const svc = makeService(
       [single, member],
       jest.fn().mockResolvedValue({ labTest: true, labPanel: false }),
     );
     const shared: NotesSwitchCache = new Map();
-    // the single test honours the Lab Test switch (ON) ...
+    // the single test takes its default from the Lab Test setting (ON): remarks print ...
     expect(
       (await printed(svc, 'r-single', 'A', shared)).variables.remarks,
-    ).toBe('');
-    // ... the panel member the Lab Panel switch (OFF), so its remarks print
+    ).toBe('R-text');
+    // ... the panel member from the Lab Panel setting (OFF): remarks do not
     expect(
       (await printed(svc, 'r-member', 'A', shared)).variables.remarks,
-    ).toBe('R-text');
+    ).toBe('');
   });
 
   it('saving the choice on one member writes that report only', async () => {
@@ -285,17 +312,20 @@ describe('a panel with several member tests', () => {
     expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith({
       where: { id: 'r-m1' },
-      data: { excludedNoteSections: ['interpretation'] },
+      data: {
+        excludedNoteSections: ['interpretation'],
+        hasChosenNotePrint: true,
+      },
     });
     expect(result).toMatchObject({ enabled: true, isPanelMember: true });
   });
 });
 
 describe('an old combined panel report (no member test)', () => {
-  const old = (excluded: string[] = []) =>
+  const old = (excluded?: string[]) =>
     report({ kind: 'PANEL', member: null, excluded });
 
-  it('follows the Lab Panel switch: ON, so the choice applies', async () => {
+  it('a saved choice applies', async () => {
     const svc = makeService(
       old(['interpretation']),
       jest.fn().mockResolvedValue({ labTest: false, labPanel: true }),
@@ -305,16 +335,16 @@ describe('an old combined panel report (no member test)', () => {
     expect(variables.useful_for).toBe('U-text');
   });
 
-  it('follows the Lab Panel switch: OFF, so everything prints (the Lab Test switch cannot rescue it)', async () => {
+  it('with no choice it follows the Lab Panel setting: OFF, so nothing prints (the Lab Test setting cannot rescue it)', async () => {
     const svc = makeService(
-      old(['interpretation', 'remarks']),
+      old(),
       jest.fn().mockResolvedValue({ labTest: true, labPanel: false }),
     );
     const { variables } = await printed(svc);
-    for (const k of SECTION_KEYS) expect(variables[k]).not.toBe('');
+    for (const k of SECTION_KEYS) expect(variables[k]).toBe('');
   });
 
-  it('is a panel report to the screen; a save while the panel switch is off is refused', async () => {
+  it('is a panel report to the screen; a save while the panel setting is OFF is stored (the setting only sets the default)', async () => {
     const { svc, update } = saving(
       { labTest: true, labPanel: false },
       PANEL_LINE,
@@ -323,15 +353,18 @@ describe('an old combined panel report (no member test)', () => {
     const result = await svc.updateNotePrintSections('r1', 't1', 'A', {
       excludedSections: ['remarks'],
     });
-    expect(update).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'r1' },
+      data: { excludedNoteSections: ['remarks'], hasChosenNotePrint: true },
+    });
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       isPanelMember: true,
-      excludedSections: [],
+      excludedSections: ['remarks'],
     });
   });
 
-  it('a save while the panel switch is on is stored', async () => {
+  it('a save while the panel setting is ON is stored', async () => {
     const { svc, update } = saving(ALL_ON, PANEL_LINE, {
       id: 'r1',
       memberBranchLabTestId: null,
@@ -341,38 +374,33 @@ describe('an old combined panel report (no member test)', () => {
     });
     expect(update).toHaveBeenCalledWith({
       where: { id: 'r1' },
-      data: { excludedNoteSections: ['remarks'] },
+      data: { excludedNoteSections: ['remarks'], hasChosenNotePrint: true },
     });
   });
 });
 
 describe('printing a report held by another branch (Registration)', () => {
-  it('uses the HOLDER branch switches even when the caller branch has the opposite setting', async () => {
+  it('uses the HOLDER branch setting even when the caller branch has the opposite setting', async () => {
     const getSwitches = switchesByBranch({
       A: { labTest: false, labPanel: false }, // caller
       B: { labTest: true, labPanel: true }, // holder: the report was set up here
     });
-    const svc = makeService(
-      report({ branchId: 'B', excluded: ['limitations'] }),
-      getSwitches,
-    );
+    const svc = makeService(report({ branchId: 'B' }), getSwitches);
     const { variables } = await printed(svc, 'r1', 'A');
-    expect(variables.limitations).toBe('');
+    // holder ON = selected by default, so everything prints (the caller's OFF would print nothing)
+    for (const k of SECTION_KEYS) expect(variables[k]).not.toBe('');
     expect(getSwitches).toHaveBeenCalledTimes(1);
     expect(getSwitches).toHaveBeenCalledWith('t1', 'B');
   });
 
-  it('prints everything when the HOLDER has the switch off, even if the caller has it on', async () => {
+  it('prints nothing by default when the HOLDER has the setting off, even if the caller has it on', async () => {
     const getSwitches = switchesByBranch({
       A: ALL_ON,
       B: { labTest: false, labPanel: false },
     });
-    const svc = makeService(
-      report({ branchId: 'B', excluded: ['limitations', 'remarks'] }),
-      getSwitches,
-    );
+    const svc = makeService(report({ branchId: 'B' }), getSwitches);
     const { variables } = await printed(svc, 'r1', 'A');
-    for (const k of SECTION_KEYS) expect(variables[k]).not.toBe('');
+    for (const k of SECTION_KEYS) expect(variables[k]).toBe('');
   });
 
   it('the same report prints the same notes whichever branch presses Print', async () => {
@@ -391,21 +419,18 @@ describe('printing a report held by another branch (Registration)', () => {
     expect(fromRegistration.useful_for).toBe('');
   });
 
-  it('a panel member held elsewhere follows the HOLDER Lab Panel switch', async () => {
+  it('a panel member held elsewhere takes its default from the HOLDER Lab Panel setting', async () => {
     const getSwitches = switchesByBranch({
       A: { labTest: true, labPanel: false },
       B: { labTest: false, labPanel: true },
     });
     const svc = makeService(
-      report({
-        kind: 'PANEL',
-        member: 'm1',
-        branchId: 'B',
-        excluded: ['interpretation'],
-      }),
+      report({ kind: 'PANEL', member: 'm1', branchId: 'B' }),
       getSwitches,
     );
-    expect((await printed(svc, 'r1', 'A')).variables.interpretation).toBe('');
+    expect((await printed(svc, 'r1', 'A')).variables.interpretation).toBe(
+      'I-text',
+    );
   });
 
   it('one document holding reports of two branches reads each branch once and keeps them apart', async () => {
@@ -415,8 +440,8 @@ describe('printing a report held by another branch (Registration)', () => {
     });
     const svc = makeService(
       [
-        report({ id: 'r-a', branchId: 'A', excluded: ['remarks'] }),
-        report({ id: 'r-b', branchId: 'B', excluded: ['remarks'] }),
+        report({ id: 'r-a', branchId: 'A' }),
+        report({ id: 'r-b', branchId: 'B' }),
       ],
       getSwitches,
     );
@@ -424,9 +449,9 @@ describe('printing a report held by another branch (Registration)', () => {
     const a = await printed(svc, 'r-a', 'A', shared);
     const b = await printed(svc, 'r-b', 'A', shared);
     const again = await printed(svc, 'r-a', 'A', shared);
-    expect(a.variables.remarks).toBe(''); // holder A: Lab Test ON
-    expect(b.variables.remarks).toBe('R-text'); // holder B: Lab Test OFF
-    expect(again.variables.remarks).toBe('');
+    expect(a.variables.remarks).toBe('R-text'); // holder A: Lab Test ON, selected by default
+    expect(b.variables.remarks).toBe(''); // holder B: Lab Test OFF, not selected by default
+    expect(again.variables.remarks).toBe('R-text');
     expect(getSwitches).toHaveBeenCalledTimes(2); // A once, B once
   });
 
