@@ -1272,15 +1272,18 @@ export class LabReportService {
     // branchLabPanel: that join resolved a panel member to the PANEL's single
     // department and hid it from the member test's own department. A report is
     // visible when its department is unassigned (NULL → everyone) or one of the
-    // caller's; a user with no department sees only unassigned reports.
+    // caller's; a user with NO department is UNRESTRICTED — they see every
+    // report regardless of department (an empty `{}` fragment adds no
+    // constraint), mirroring the Accession In-House rule
+    // (`OrderSampleService.departmentScopeForSamples`).
     const lineOk: Prisma.LabReportWhereInput =
       scopeIds.length > 0
         ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+        : {};
     const entryOk: Prisma.BranchLabTestWhereInput =
       scopeIds.length > 0
         ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+        : {};
     const heldOk: Prisma.LabReportWhereInput = {
       OR: [
         { performingBranchLabTestId: null, ...lineOk },
@@ -2376,7 +2379,7 @@ export class LabReportService {
     const deptScope =
       scopeIds.length > 0
         ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+        : {};
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabTest.findMany({
@@ -2440,7 +2443,7 @@ export class LabReportService {
     const deptScope =
       scopeIds.length > 0
         ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+        : {};
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabPanel.findMany({

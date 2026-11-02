@@ -7119,6 +7119,20 @@ model OrderItem {
   /// exclusive with the test/panel refs).
   direct String?
 
+  /// For a PANEL line (`branchLabPanelId` set): the subset of the panel's member
+  /// tests the user chose to actually run, stored as the selected members'
+  /// `BranchLabTest` ids (matching `BranchLabPanelTest.branchLabTestId`). An
+  /// EMPTY array means "all members" — the default and the backward-compatible
+  /// behaviour for every line created before this feature. Only the listed
+  /// members are expanded into OrderSamples / LabReports downstream (accession +
+  /// technician); the panel's own pricing/billing is unaffected (the full panel
+  /// `unitPrice` is still charged regardless of how many members are selected).
+  /// Deselection is gated server-side (see OrderService.assertItems): a member
+  /// can be dropped only if its `BranchLabPanelTest.isRemovable` is true and the
+  /// panel's `isAllowPartialBilling` is true, up to `maxTestsRemovable` removals,
+  /// and at least one member must remain. Always empty for test/direct lines.
+  selectedMemberBranchLabTestIds String[] @default([]) @map("selected_member_branch_lab_test_ids")
+
   /// Snapshot of the resolved list unit price (minor units) at order/quotation
   /// time, copied from the chosen list's `BranchLabTest`/`BranchLabPanel`
   /// `listPrice`. Stable even if the list is later re-priced.

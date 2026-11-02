@@ -67,17 +67,19 @@ describe('worklist branch scope → query', () => {
     // denormalized department (no join); transferred ones use the chosen entry.
     expect(held.branchId).toBe('A');
     expect(held.OR).toEqual([
-      // empty scope → only unassigned, filtered directly on the report line
-      { performingBranchLabTestId: null, departmentId: null },
+      // empty scope → UNRESTRICTED: no department predicate, only the
+      // branch-structure key (a no-department user sees every report).
+      { performingBranchLabTestId: null },
       expect.objectContaining({
         performingBranchLabTestId: { not: null },
-        performingEntry: { is: { departmentId: null } },
+        performingEntry: { is: {} },
       }),
     ]);
     // sent by A and held elsewhere: the report's own department, filtered
-    // directly (no join through orderItem.branchLabTest/branchLabPanel).
+    // directly (no join through orderItem.branchLabTest/branchLabPanel). Empty
+    // scope adds no department predicate here either.
     expect(sent.branchId).toEqual({ not: 'A' });
-    expect(sent.departmentId).toBeNull();
+    expect(sent.departmentId).toBeUndefined();
     expect(sent.orderItem).toBeUndefined();
     expect(sent.performingEntry).toBeUndefined();
   });

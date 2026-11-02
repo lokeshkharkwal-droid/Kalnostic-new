@@ -57,12 +57,14 @@ describe('Reporting worklist department visibility → query', () => {
     expect(JSON.stringify(line)).not.toContain('branchLabPanel');
   });
 
-  it('a user with NO department sees only unassigned (NULL-department) reports', () => {
+  it('a user with NO department is UNRESTRICTED — sees every report (no department constraint), like Accession In-House', () => {
     const line = lineClause([]);
+    // Empty scope adds no department predicate: the line clause carries only the
+    // branch-structure key, not a `departmentId` filter.
     expect(line).toEqual({
       performingBranchLabTestId: null,
-      departmentId: null,
     });
+    expect(line.departmentId).toBeUndefined();
   });
 
   it('the explicit Department filter matches the report line department (works for panel members too)', () => {

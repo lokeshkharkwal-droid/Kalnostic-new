@@ -1,0 +1,40 @@
+meta {
+  name: Get Branch Lab Panel Member Tests
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/branch-lab-panels/{{branchLabPanelId}}/member-tests
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  branchLabPanelId: 00000000-0000-0000-0000-000000000000
+}
+
+docs {
+  The member tests of one branch lab panel + its partial-billing controls, for the
+  Create-Order Diagnostic Items table's expandable panel row. Returns
+  `{ panelId, isAllowPartialBilling, maxTestsRemovable, members[] }` where each
+  member carries the per-test display fields (`branchLabTestId`, `name`,
+  `sampleName`, `sampleType`, `isFasting`, `samplePriorityType` (ROUTINE/URGENT/STAT),
+  `scheduleDays`, `scheduleFrom`, `scheduleTo`, `tatMin*`/`tatMax*`), plus
+  `isRemovable` (from the BranchLabPanelTest junction) and `isBillOnlyTest`.
+  Members are returned in the panel's own `sortOrder`.
+
+  The frontend uses this to let a user de-select individual tests of a panel: a
+  member can be de-selected only when `isAllowPartialBilling` is true, the member's
+  `isRemovable` is true, and at most `maxTestsRemovable` are removed (at least one
+  must remain). The chosen subset is submitted as each panel order item's
+  `selectedMemberBranchLabTestIds` (empty = all members) — only those members flow
+  into accession/technician; the panel's price/billing is unaffected.
+
+  Scoped to the JWT tenant + active branch (no `branchId` in the query). 404
+  `BRANCH_LAB_PANEL_NOT_FOUND` if the panel is missing/soft-deleted/other branch.
+}

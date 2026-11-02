@@ -272,6 +272,17 @@ docs {
   (the referenced catalogue's current master reference price, which can drift
   from what was actually charged).
 
+  Optional `selectedMemberBranchLabTestIds` (PANEL lines only) runs only a chosen
+  **subset** of a panel's member tests — the selected members' branch lab test ids.
+  Omitted/empty = all members (the default, backward compatible). Only the selected
+  members are expanded into accession samples / technician reports downstream; the
+  panel's **price/billing is unaffected** (the full panel price is always charged).
+  Gated server-side (422 `INVALID_PANEL_MEMBER_SELECTION`): every id must be a member
+  of this panel, a dropped member must have `BranchLabPanelTest.isRemovable` and the
+  panel `isAllowPartialBilling` (capped at `maxTestsRemovable`), at least one member
+  must remain, and it may only appear on a `branchLabPanelId` line. Fetch a panel's
+  members + its controls via `GET /branch-lab-panels/:id/member-tests`.
+
   Optional `outsourceCenterId` sends this specific line to an outside lab instead
   of processing it in-house (omit = in-house, the default). Validated to be an
   active `OutsourceCenter` in the tenant AND configured to handle this line's

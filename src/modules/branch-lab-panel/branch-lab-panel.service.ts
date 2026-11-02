@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { BranchLabPanel, Prisma, TatUnit } from '@prisma/client';
+import {
+  BranchLabPanel,
+  DayOfWeek,
+  Prisma,
+  SamplePriority,
+  TatUnit,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ListPricingConfig,
@@ -59,6 +65,48 @@ export interface BranchLabPanelOption {
   tatMinUnit: TatUnit | null;
   tatMaxValue: number | null;
   tatMaxUnit: TatUnit | null;
+}
+
+/**
+ * One member test of a branch lab panel, shaped for the Create-Order Diagnostic
+ * Items table's expandable panel rows. Carries the per-test display fields the
+ * table shows (sample name, schedule, fasting, STAT, schedule days, TAT) plus
+ * `isRemovable` (from the `BranchLabPanelTest` junction) so the UI knows whether
+ * its de-select checkbox may be unchecked. `branchLabTestId` is the member's
+ * BranchLabTest id — what the order line submits in `selectedMemberBranchLabTestIds`.
+ */
+export interface BranchLabPanelMemberTest {
+  branchLabTestId: string;
+  name: string;
+  sampleName: string | null;
+  sampleType: string | null;
+  isFasting: boolean;
+  /** ROUTINE | URGENT | STAT — drives the "STAT" badge. */
+  samplePriorityType: SamplePriority;
+  scheduleDays: DayOfWeek[];
+  scheduleFrom: string | null;
+  scheduleTo: string | null;
+  tatMinValue: number | null;
+  tatMinUnit: TatUnit | null;
+  tatMaxValue: number | null;
+  tatMaxUnit: TatUnit | null;
+  /** Whether this member may be de-selected (BranchLabPanelTest.isRemovable). */
+  isRemovable: boolean;
+  /** Billed-only member: no sample/report even when selected. */
+  isBillOnlyTest: boolean;
+}
+
+/**
+ * A branch lab panel's member tests + its partial-billing controls, for the
+ * expandable Create-Order panel row. `isAllowPartialBilling`/`maxTestsRemovable`
+ * come from the panel; the UI uses them (with each member's `isRemovable`) to gate
+ * de-selection. Members are returned in the panel's own `sortOrder`.
+ */
+export interface BranchLabPanelMembers {
+  panelId: string;
+  isAllowPartialBilling: boolean;
+  maxTestsRemovable: number;
+  members: BranchLabPanelMemberTest[];
 }
 
 /** A resolved panel member: the source test id + its ordering/removable flags. */
@@ -938,6 +986,107 @@ export class BranchLabPanelService {
       this.prisma.branchLabPanel.count({ where }),
     ]);
     return { data: rows.map(toOption), total, page, limit };
+  }
+
+  /**
+   * The member tests of a branch lab panel + its partial-billing controls, for
+   * the expandable Create-Order Diagnostic Items row. Returns each member's
+   * display fields (sample name, schedule, fasting, STAT, schedule days, TAT) and
+   * `isRemovable` (from the `BranchLabPanelTest` junction), ordered by the panel's
+   * own `sortOrder`. The branch is resolved from the JWT (never the body); the id
+   * is validated to belong to this tenant+branch.
+   * @throws BranchLabPanelNotFoundException if the panel is missing/foreign
+   */
+  async findMemberTests(
+    id: string,
+    tenantId: string,
+    branchId: string,
+  ): Promise<BranchLabPanelMembers> {
+    const panel = await this.prisma.branchLabPanel.findFirst({
+      where: { id, tenantId, branchId, deletedAt: null },
+      select: {
+        id: true,
+        isAllowPartialBilling: true,
+        maxTestsRemovable: true,
+      },
+    });
+    if (!panel) {
+      throw new BranchLabPanelNotFoundException(id);
+    }
+
+    const junctions = await this.prisma.branchLabPanelTest.findMany({
+      where: { branchLabPanelId: id, tenantId, deletedAt: null },
+      select: { branchLabTestId: true, isRemovable: true, sortOrder: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    if (junctions.length === 0) {
+      return {
+        panelId: panel.id,
+        isAllowPartialBilling: panel.isAllowPartialBilling,
+        maxTestsRemovable: panel.maxTestsRemovable,
+        members: [],
+      };
+    }
+
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: {
+        id: { in: junctions.map((j) => j.branchLabTestId) },
+        tenantId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        testName: true,
+        configSnapshot: true,
+        isBillOnlyTest: true,
+        samplePriorityType: true,
+        scheduleDays: true,
+        scheduleFrom: true,
+        scheduleTo: true,
+        tatMinValue: true,
+        tatMinUnit: true,
+        tatMaxValue: true,
+        tatMaxUnit: true,
+      },
+    });
+    const testById = new Map(tests.map((t) => [t.id, t]));
+
+    // Preserve the panel's own member ordering (the join above has no guaranteed
+    // order), skipping any member whose branch test no longer exists.
+    const members: BranchLabPanelMemberTest[] = [];
+    for (const j of junctions) {
+      const t = testById.get(j.branchLabTestId);
+      if (!t) continue;
+      // Mirror branch-lab-test findOptions: the first configured sample carries
+      // the sample name/type + fasting flag shown in the table.
+      const sample = (
+        t.configSnapshot as unknown as BranchLabTestConfigSnapshot
+      )?.samples?.[0];
+      members.push({
+        branchLabTestId: t.id,
+        name: t.testName,
+        sampleName: sample?.sampleName ?? null,
+        sampleType: sample?.sampleType ?? null,
+        isFasting: sample?.isFastingRequired ?? false,
+        samplePriorityType: t.samplePriorityType,
+        scheduleDays: t.scheduleDays,
+        scheduleFrom: t.scheduleFrom,
+        scheduleTo: t.scheduleTo,
+        tatMinValue: t.tatMinValue,
+        tatMinUnit: t.tatMinUnit,
+        tatMaxValue: t.tatMaxValue,
+        tatMaxUnit: t.tatMaxUnit,
+        isRemovable: j.isRemovable,
+        isBillOnlyTest: t.isBillOnlyTest,
+      });
+    }
+
+    return {
+      panelId: panel.id,
+      isAllowPartialBilling: panel.isAllowPartialBilling,
+      maxTestsRemovable: panel.maxTestsRemovable,
+      members,
+    };
   }
 
   /**
