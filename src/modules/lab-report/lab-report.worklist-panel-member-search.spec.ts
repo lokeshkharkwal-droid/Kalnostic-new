@@ -4,7 +4,10 @@ import { LabReportNotFoundException } from './exceptions/lab-report.exceptions';
 import { ListLabReportsDto } from './dto/list-lab-reports.dto';
 import type { WorklistBranchScope } from './access/worklist-branch-scope';
 import type { MemberEntryMatches } from './utils/member-test-match.util';
-import type { LabReportWorklistRow } from './entities/lab-report.entity';
+import {
+  toWorklistRow,
+  type LabReportListRow,
+} from './entities/lab-report.entity';
 
 const SINGLE_BRANCH: WorklistBranchScope = {
   rules: [{ branchId: 'b1', statuses: 'ALL' }],
@@ -332,113 +335,66 @@ describe('LabReportService.resolveMemberEntryMatches', () => {
   });
 });
 
-describe('LabReportService.attachMemberDepartments — the Department column of a panel test', () => {
-  const rowOf = (id: string, departmentId: string | null) =>
-    ({ id, departmentId, department: null }) as unknown as LabReportWorklistRow;
-  function build(entries: Array<{ id: string; departmentId: string | null }>) {
-    const branchLabTest = {
-      findMany: jest.fn().mockResolvedValue(entries),
-    };
-    const deps = Array(11).fill(undefined) as unknown[];
-    deps[0] = { branchLabTest };
-    const service = new LabReportService(
-      ...(deps as ConstructorParameters<typeof LabReportService>),
-    );
-    const run = (
-      rows: LabReportWorklistRow[],
-      sources: Array<{
-        id: string;
-        memberBranchLabTestId: string | null;
-        performingEntry: unknown;
-      }>,
-    ) =>
-      (
-        service as unknown as {
-          attachMemberDepartments: (
-            r: LabReportWorklistRow[],
-            s: typeof sources,
-          ) => Promise<LabReportWorklistRow[]>;
-        }
-      ).attachMemberDepartments(rows, sources);
-    return { run, branchLabTest };
-  }
+describe('toWorklistRow - the Department column is the department stamped on the report', () => {
+  const row = (over: Record<string, unknown>) =>
+    ({
+      id: 'r1',
+      status: 'PENDING',
+      createdAt: new Date('2026-10-08T00:00:00Z'),
+      branchId: 'b1',
+      departmentId: null,
+      performingEntry: null,
+      orderItem: { branchLabTest: null, branchLabPanel: null },
+      ...over,
+    }) as unknown as LabReportListRow;
 
-  it("a panel's test shows its OWN department, not the panel's", async () => {
-    const m = build([{ id: 'e1', departmentId: 'bio' }]);
-    const out = await m.run(
-      [rowOf('r1', 'panel-dept')],
-      [{ id: 'r1', memberBranchLabTestId: 'e1', performingEntry: null }],
+  it('shows the department stamped on the report', () => {
+    expect(toWorklistRow(row({ departmentId: 'haem' })).departmentId).toBe(
+      'haem',
     );
-    expect(out[0]!.departmentId).toBe('bio');
   });
 
-  it("a panel's test whose own entry has no department shows none (not the panel's)", async () => {
-    const m = build([{ id: 'e1', departmentId: null }]);
-    const out = await m.run(
-      [rowOf('r1', 'panel-dept')],
-      [{ id: 'r1', memberBranchLabTestId: 'e1', performingEntry: null }],
+  it('a test moved to another department AFTER the report was made does not change the column', () => {
+    const r = toWorklistRow(
+      row({
+        departmentId: 'haem',
+        orderItem: {
+          branchLabTest: { departmentId: 'immu' },
+          branchLabPanel: { departmentId: 'immu' },
+        },
+      }),
     );
-    expect(out[0]!.departmentId).toBeNull();
+    expect(r.departmentId).toBe('haem');
   });
 
-  it('a member entry that was deleted gives no department', async () => {
-    const m = build([]);
-    const out = await m.run(
-      [rowOf('r1', 'panel-dept')],
-      [{ id: 'r1', memberBranchLabTestId: 'gone', performingEntry: null }],
+  it('a report with no stamped department shows none, even when its order line test or panel has one now', () => {
+    const r = toWorklistRow(
+      row({
+        departmentId: null,
+        orderItem: {
+          branchLabTest: { departmentId: 'immu' },
+          branchLabPanel: { departmentId: 'immu' },
+        },
+      }),
     );
-    expect(out[0]!.departmentId).toBeNull();
+    expect(r.departmentId).toBeNull();
   });
 
-  it('a report sent to another branch keeps the receiving branch entry department', async () => {
-    const m = build([{ id: 'e1', departmentId: 'bio' }]);
-    const out = await m.run(
-      [rowOf('r1', 'receiver-dept')],
-      [{ id: 'r1', memberBranchLabTestId: 'e1', performingEntry: { id: 'p' } }],
-    );
-    expect(out[0]!.departmentId).toBe('receiver-dept');
-  });
-
-  it('a single test and an unsplit panel line keep the order line department, and cost no lookup', async () => {
-    const m = build([{ id: 'e1', departmentId: 'bio' }]);
-    const out = await m.run(
-      [rowOf('r1', 'line-dept')],
-      [{ id: 'r1', memberBranchLabTestId: null, performingEntry: null }],
-    );
-    expect(out[0]!.departmentId).toBe('line-dept');
-    expect(m.branchLabTest.findMany).not.toHaveBeenCalled();
-  });
-
-  it('many rows, one batched lookup', async () => {
-    const m = build([
-      { id: 'e1', departmentId: 'bio' },
-      { id: 'e2', departmentId: 'rad' },
-    ]);
-    const out = await m.run(
-      [
-        rowOf('r1', 'x'),
-        rowOf('r2', 'x'),
-        rowOf('r3', 'x'),
-        rowOf('r4', 'keep'),
-      ],
-      [
-        { id: 'r1', memberBranchLabTestId: 'e1', performingEntry: null },
-        { id: 'r2', memberBranchLabTestId: 'e2', performingEntry: null },
-        { id: 'r3', memberBranchLabTestId: 'e1', performingEntry: null },
-        { id: 'r4', memberBranchLabTestId: null, performingEntry: null },
-      ],
-    );
-    expect(out.map((r) => r.departmentId)).toEqual([
-      'bio',
-      'rad',
-      'bio',
-      'keep',
-    ]);
-    expect(m.branchLabTest.findMany).toHaveBeenCalledTimes(1);
+  it("a report sent to another branch shows the receiving branch's entry department (even none)", () => {
+    expect(
+      toWorklistRow(
+        row({ departmentId: 'haem', performingEntry: { departmentId: 'rad' } }),
+      ).departmentId,
+    ).toBe('rad');
+    expect(
+      toWorklistRow(
+        row({ departmentId: 'haem', performingEntry: { departmentId: null } }),
+      ).departmentId,
+    ).toBeNull();
   });
 });
 
-describe('LabReportService.findByIdForViewer — opening one report', () => {
+describe('LabReportService.findByIdForViewer — opening one report (judged by the same department the column shows: the stamped one)', () => {
   function build(detailDepartment: string | null, scopeIds: string[]) {
     const deps = Array(11).fill(undefined) as unknown[];
     const service = new LabReportService(
@@ -497,188 +453,134 @@ describe('LabReportService.findByIdForViewer — opening one report', () => {
   });
 });
 
-describe('LabReportService.getLabPanelOptions — a panel is offered by the tests inside it', () => {
-  type Panel = {
-    id: string;
-    panelName: string;
-    sourceLabPanelId: string | null;
-    departmentId: string | null;
-  };
-  /** panels, their test links (panel id -> test entry ids) and the live test entries (id -> own department). */
-  function build(
-    panels: Panel[],
-    links: Record<string, string[]>,
-    entries: Record<string, string | null>,
-    scopeIds: string[],
-  ) {
-    const branchLabPanel = {
-      findMany: jest
-        .fn<Promise<Panel[]>, [{ where: Record<string, unknown> }]>()
-        .mockResolvedValue(panels),
-    };
-    const branchLabPanelTest = {
-      findMany: jest.fn().mockResolvedValue(
-        Object.entries(links).flatMap(([panelId, tests]) =>
-          tests.map((t) => ({
-            branchLabPanelId: panelId,
-            branchLabTestId: t,
-          })),
+describe('Lab Test / Lab Panel dropdowns - a catalogue of the branch, NOT filtered by department (like Accession)', () => {
+  type Row = { id: string; name: string; sourceId: string | null };
+
+  /** A service whose branch test / panel tables return `rows` (already name-sorted, as the query orders them). */
+  function build(kind: 'test' | 'panel', rows: Row[]) {
+    const findMany = jest
+      .fn<Promise<unknown[]>, [{ where: Record<string, unknown> }]>()
+      .mockResolvedValue(
+        rows.map((r) =>
+          kind === 'test'
+            ? { id: r.id, testName: r.name, sourceLabTestId: r.sourceId }
+            : { id: r.id, panelName: r.name, sourceLabPanelId: r.sourceId },
         ),
-      ),
-    };
-    const branchLabTest = {
-      findMany: jest.fn().mockResolvedValue(
-        Object.entries(entries).map(([id, departmentId]) => ({
-          id,
-          departmentId,
-        })),
-      ),
-    };
+      );
     const deps = Array(11).fill(undefined) as unknown[];
-    deps[0] = { branchLabPanel, branchLabPanelTest, branchLabTest };
+    deps[0] =
+      kind === 'test'
+        ? { branchLabTest: { findMany } }
+        : { branchLabPanel: { findMany } };
     const service = new LabReportService(
       ...(deps as ConstructorParameters<typeof LabReportService>),
     );
-    Object.assign(service, {
-      userDepartmentScope: {
-        resolveDepartmentIds: jest.fn().mockResolvedValue(scopeIds),
-      },
-    });
     const options = async (
       query: { search?: string; page?: number; limit?: number } = {},
     ) =>
-      (await service.getLabPanelOptions('t1', 'b1', 'p1', query)).data.map(
-        (o) => o.name,
-      );
-    return { options, branchLabPanel, branchLabPanelTest, branchLabTest };
+      kind === 'test'
+        ? await service.getLabTestOptions('t1', 'b1', query)
+        : await service.getLabPanelOptions('t1', 'b1', query);
+    const names = async (
+      query: { search?: string; page?: number; limit?: number } = {},
+    ) => (await options(query)).data.map((o) => o.name);
+    const lastWhere = () => findMany.mock.calls.at(-1)![0].where;
+    return { options, names, lastWhere, findMany, service };
   }
-  const panel = (
+  const row = (
     id: string,
     name: string,
-    dept: string | null = null,
-    master: string | null = null,
-  ): Panel => ({
+    sourceId: string | null = null,
+  ): Row => ({
     id,
-    panelName: name,
-    sourceLabPanelId: master,
-    departmentId: dept,
+    name,
+    sourceId,
   });
 
-  it("offered when the user can see one of its tests, whatever the panel's own department", async () => {
-    const m = build(
-      [panel('p1', 'Liver', 'zzz')],
-      { p1: ['t1', 't2'] },
-      { t1: 'bio', t2: 'rad' },
-      ['bio'],
-    );
-    expect(await m.options()).toEqual(['Liver']);
-  });
+  describe.each([['test' as const], ['panel' as const]])(
+    'Lab %s dropdown',
+    (kind) => {
+      const nameKey = kind === 'test' ? 'testName' : 'panelName';
 
-  it("not offered when the user can see none of its tests, even when it is the panel's own department or the panel has none", async () => {
-    const own = build(
-      [panel('p1', 'Liver', 'bio')],
-      { p1: ['t1', 't2'] },
-      { t1: 'rad', t2: 'path' },
-      ['bio'],
-    );
-    expect(await own.options()).toEqual([]);
-    const none = build(
-      [panel('p1', 'Liver', null)],
-      { p1: ['t1'] },
-      { t1: 'rad' },
-      ['bio'],
-    );
-    expect(await none.options()).toEqual([]);
-  });
+      it('lists every active entry of the branch: the query has no department condition at all', async () => {
+        const m = build(kind, [row('1', 'Alpha')]);
+        await m.names();
+        const where = m.lastWhere();
+        expect(where).toMatchObject({
+          tenantId: 't1',
+          branchId: 'b1',
+          isActive: true,
+          deletedAt: null,
+        });
+        expect(JSON.stringify(where)).not.toContain('department');
+        expect(where).not.toHaveProperty('OR');
+      });
 
-  it('a test with no department is visible to everyone, so it makes its panel offered to everyone', async () => {
-    const m = build(
-      [panel('p1', 'Liver')],
-      { p1: ['t1', 't2'] },
-      { t1: 'rad', t2: null },
-      [],
-    );
-    expect(await m.options()).toEqual(['Liver']);
-  });
+      it('needs no user: only the tenant and the active branch decide the list', async () => {
+        const m = build(kind, [row('1', 'Alpha'), row('2', 'Beta')]);
+        expect(await m.names()).toEqual(['Alpha', 'Beta']);
+      });
 
-  it('a user with no department is offered only panels that have a test with no department', async () => {
-    const m = build(
-      [panel('p1', 'A'), panel('p2', 'B')],
-      { p1: ['t1'], p2: ['t2'] },
-      { t1: 'bio', t2: null },
-      [],
-    );
-    expect(await m.options()).toEqual(['B']);
-  });
+      it('returns the shared source id when there is one, else the own id', async () => {
+        const m = build(kind, [row('1', 'Alpha', 'S1'), row('2', 'Beta')]);
+        expect((await m.options()).data).toEqual([
+          { id: 'S1', name: 'Alpha' },
+          { id: '2', name: 'Beta' },
+        ]);
+      });
 
-  it("a panel with no tests keeps the old rule: its own department unassigned or the user's", async () => {
-    const m = build(
-      [
-        panel('p1', 'Free'),
-        panel('p2', 'Mine', 'bio'),
-        panel('p3', 'Theirs', 'rad'),
-      ],
-      {},
-      {},
-      ['bio'],
-    );
-    expect(await m.options()).toEqual(['Free', 'Mine']);
-  });
+      it('copies of one master entry (one per pricing list) are listed once, under the first copy', async () => {
+        const m = build(kind, [
+          row('1', 'Alpha A', 'M'),
+          row('2', 'Alpha B', 'M'),
+          row('3', 'Beta'),
+        ]);
+        expect(await m.names()).toEqual(['Alpha A', 'Beta']);
+        expect((await m.options()).total).toBe(2);
+      });
 
-  it('a panel whose tests were all removed (no live test entry) also falls back to its own department', async () => {
-    const m = build(
-      [panel('p1', 'Gone', 'rad'), panel('p2', 'GoneFree')],
-      { p1: ['x'], p2: ['y'] },
-      {},
-      ['bio'],
-    );
-    expect(await m.options()).toEqual(['GoneFree']);
-  });
+      it('a trimmed name search is applied on top, case-insensitively', async () => {
+        const m = build(kind, [row('1', 'Alpha')]);
+        await m.names({ search: '  alp ' });
+        expect(m.lastWhere()).toMatchObject({
+          [nameKey]: { contains: 'alp', mode: 'insensitive' },
+        });
+        await m.names({ search: '   ' });
+        expect(m.lastWhere()).not.toHaveProperty(nameKey);
+      });
 
-  it('copies of one master panel are offered once, under the first copy the user may see', async () => {
-    const m = build(
-      [panel('p1', 'Liver A', null, 'M'), panel('p2', 'Liver B', null, 'M')],
-      { p1: ['t1'], p2: ['t2'] },
-      { t1: 'rad', t2: 'bio' },
-      ['bio'],
-    );
-    expect(await m.options()).toEqual(['Liver B']);
-  });
+      it('% _ and a backslash in the search are matched as typed, never as wildcards', async () => {
+        const m = build(kind, [row('1', 'Alpha')]);
+        await m.names({ search: '100%_x\\y' });
+        expect(m.lastWhere()).toMatchObject({
+          [nameKey]: { contains: '100\\%\\_x\\\\y', mode: 'insensitive' },
+        });
+        await m.names({ search: '%' });
+        expect(m.lastWhere()).toMatchObject({
+          [nameKey]: { contains: '\\%', mode: 'insensitive' },
+        });
+      });
 
-  it('the name search, the page and the page size still apply on top', async () => {
-    const m = build(
-      [panel('p1', 'Alpha'), panel('p2', 'Beta'), panel('p3', 'Gamma')],
-      { p1: ['t'], p2: ['t'], p3: ['t'] },
-      { t: null },
-      [],
-    );
-    expect(await m.options({ page: 1, limit: 2 })).toEqual(['Alpha', 'Beta']);
-    expect(await m.options({ page: 2, limit: 2 })).toEqual(['Gamma']);
-    await m.options({ search: '  alp ' });
-    expect(m.branchLabPanel.findMany.mock.calls.at(-1)![0].where).toMatchObject(
-      {
-        panelName: { contains: 'alp', mode: 'insensitive' },
-      },
-    );
-  });
+      it('the page and the page size still apply', async () => {
+        const m = build(kind, [
+          row('1', 'Alpha'),
+          row('2', 'Beta'),
+          row('3', 'Gamma'),
+        ]);
+        expect(await m.names({ page: 1, limit: 2 })).toEqual(['Alpha', 'Beta']);
+        expect(await m.names({ page: 2, limit: 2 })).toEqual(['Gamma']);
+        expect((await m.options({ page: 1, limit: 2 })).total).toBe(3);
+      });
 
-  it('no panels: no further lookups', async () => {
-    const m = build([], {}, {}, ['bio']);
-    expect(await m.options()).toEqual([]);
-    expect(m.branchLabPanelTest.findMany).not.toHaveBeenCalled();
-    expect(m.branchLabTest.findMany).not.toHaveBeenCalled();
-  });
-
-  it("the panel's department is no longer a condition of the panel query itself", async () => {
-    const m = build(
-      [panel('p1', 'Liver', 'rad')],
-      { p1: ['t1'] },
-      { t1: null },
-      ['bio'],
-    );
-    await m.options();
-    const where = m.branchLabPanel.findMany.mock.calls[0]![0].where;
-    expect(where).not.toHaveProperty('departmentId');
-    expect(where).not.toHaveProperty('OR');
-  });
+      it('no active branch is refused (the dropdown is branch-wide, never tenant-wide)', async () => {
+        const m = build(kind, []);
+        await expect(
+          kind === 'test'
+            ? m.service.getLabTestOptions('t1', null, {})
+            : m.service.getLabPanelOptions('t1', null, {}),
+        ).rejects.toBeDefined();
+        expect(m.findMany).not.toHaveBeenCalled();
+      });
+    },
+  );
 });

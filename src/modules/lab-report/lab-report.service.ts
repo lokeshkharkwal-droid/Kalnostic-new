@@ -1455,7 +1455,6 @@ export class LabReportService {
 
     let worklistRows = rows.map(toWorklistRow);
     worklistRows = await this.attachBranchNames(tenantId, worklistRows);
-    worklistRows = await this.attachMemberDepartments(worklistRows, rows);
     worklistRows = await this.attachDepartmentNames(tenantId, worklistRows);
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
@@ -1680,44 +1679,6 @@ export class LabReportService {
           ? { id: row.departmentId, name: nameById.get(row.departmentId)! }
           : null,
     }));
-  }
-
-  /**
-   * The Department column of a panel member's row: the department of the member's OWN test entry (what the
-   * Department filter and the visibility rule judge it by), not the panel's. A row whose report was sent to another
-   * branch keeps the receiving branch's entry department (`toWorklistRow`), a single test and a panel line that was
-   * never split keep the order line's. A member entry that was deleted, or has no department, gives no department.
-   * Run BEFORE `attachDepartmentNames`, which turns the id into the name. One batched lookup.
-   *
-   * @param rows the worklist rows
-   * @param sources the reports the rows were built from (same ids), to tell which rows were sent to another branch
-   */
-  private async attachMemberDepartments(
-    rows: LabReportWorklistRow[],
-    sources: ReadonlyArray<{
-      id: string;
-      memberBranchLabTestId: string | null;
-      performingEntry: unknown;
-    }>,
-  ): Promise<LabReportWorklistRow[]> {
-    const memberOf = new Map<string, string>();
-    for (const s of sources) {
-      if (s.memberBranchLabTestId && !s.performingEntry) {
-        memberOf.set(s.id, s.memberBranchLabTestId);
-      }
-    }
-    if (memberOf.size === 0) return rows;
-    const entries = await this.prisma.branchLabTest.findMany({
-      where: { id: { in: [...new Set(memberOf.values())] }, deletedAt: null },
-      select: { id: true, departmentId: true },
-    });
-    const departmentOf = new Map(entries.map((e) => [e.id, e.departmentId]));
-    return rows.map((row) => {
-      const entryId = memberOf.get(row.id);
-      return entryId === undefined
-        ? row
-        : { ...row, departmentId: departmentOf.get(entryId) ?? null };
-    });
   }
 
   /**
@@ -2515,10 +2476,16 @@ export class LabReportService {
    * The same master test is copied into every pricing list as its own
    * `BranchLabTest` row (one row per list), so without dedup the same test
    * would show once per list it's been imported into. Dedup happens in two
-   * passes: first a lightweight id-only fetch (scoped by department, active,
-   * search) to compute the true deduped set + total count and pick out this
-   * page's representative row ids; then a second fetch for just those rows'
-   * display names. Dedup key is `sourceLabTestId ?? id` — a branch-only row
+   * passes: first a lightweight id-only fetch (active, search) to compute the
+   * true deduped set + total count and pick out this page's representative row
+   * ids; then a second fetch for just those rows' display names.
+   *
+   * The dropdown is NOT filtered by the caller's departments - the same as
+   * Accession's. It is a catalogue of the branch's tests; who may see a report is
+   * decided by the worklist itself (the department stamped on the report), so a
+   * test whose department was edited after its reports were made can never
+   * disagree with those reports. Choosing a test the user has no department for
+   * simply lists nothing. Dedup key is `sourceLabTestId ?? id` — a branch-only row
    * with no source (hand-created, never imported from Master Data) has
    * nothing to share, so it's simply its own group of one. The returned `id`
    * is the shared source id (or the row's own id when there's no source), so
@@ -2528,21 +2495,11 @@ export class LabReportService {
   async getLabTestOptions(
     tenantId: string,
     branchId: string | null,
-    personId: string,
     query: { search?: string; page?: number; limit?: number },
   ): Promise<PaginatedResult<LabReportOption>> {
     const activeBranchId = this.requireBranch(branchId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabTest.findMany({
@@ -2551,8 +2508,11 @@ export class LabReportService {
         branchId: activeBranchId,
         isActive: true,
         deletedAt: null,
-        ...deptScope,
-        ...(term ? { testName: { contains: term, mode: 'insensitive' } } : {}),
+        // `%`, `_` and `\` are matched as typed (Prisma hands `contains` to LIKE as it is),
+        // the same as the worklist search.
+        ...(term
+          ? { testName: { contains: escapeLike(term), mode: 'insensitive' } }
+          : {}),
       },
       select: { id: true, testName: true, sourceLabTestId: true },
       orderBy: { testName: 'asc' },
@@ -2583,104 +2543,38 @@ export class LabReportService {
   }
 
   /**
-   * Which panels a user is offered in the Lab Panel dropdown. A lab panel is split into its tests in the worklist and
-   * each test is judged by its OWN department, so a panel is offered when the user can see at least one test inside
-   * it: a test is visible when its own department is unassigned or one of the user's (the same rule the worklist
-   * applies). The panel's own department does not decide it. A panel with no (live) tests keeps the old rule: its own
-   * department unassigned or one of the user's. Two small batched lookups (the panels' tests, then those tests).
-   *
-   * @param tenantId the lab's tenant
-   * @param panels the candidate panels (id and own department)
-   * @param scopeIds the user's department ids
-   * @returns the panels to offer, in the same order
-   */
-  private async panelsOfferedByDepartment<
-    T extends { id: string; departmentId: string | null },
-  >(tenantId: string, panels: T[], scopeIds: string[]): Promise<T[]> {
-    if (panels.length === 0) return panels;
-    const links = await this.prisma.branchLabPanelTest.findMany({
-      where: {
-        tenantId,
-        branchLabPanelId: { in: panels.map((p) => p.id) },
-        deletedAt: null,
-      },
-      select: { branchLabPanelId: true, branchLabTestId: true },
-    });
-    const entries =
-      links.length > 0
-        ? await this.prisma.branchLabTest.findMany({
-            where: {
-              id: { in: [...new Set(links.map((l) => l.branchLabTestId))] },
-              deletedAt: null,
-            },
-            select: { id: true, departmentId: true },
-          })
-        : [];
-    const departmentOf = new Map(entries.map((e) => [e.id, e.departmentId]));
-    const visible = (department: string | null | undefined): boolean =>
-      !department || scopeIds.includes(department);
-    const testsOf = new Map<string, string[]>();
-    for (const l of links) {
-      if (!departmentOf.has(l.branchLabTestId)) continue;
-      testsOf.set(l.branchLabPanelId, [
-        ...(testsOf.get(l.branchLabPanelId) ?? []),
-        l.branchLabTestId,
-      ]);
-    }
-    return panels.filter((p) => {
-      const tests = testsOf.get(p.id) ?? [];
-      return tests.length > 0
-        ? tests.some((t) => visible(departmentOf.get(t)))
-        : visible(p.departmentId);
-    });
-  }
-
-  /**
    * Paginated, searchable **Lab Panel** options for the Reporting Worklist's
    * filter row (`GET /lab-reports/lab-panel-options`) — mirrors
    * {@link getLabTestOptions} exactly (same list-per-pricing-list dedup
    * reasoning, same `sourceLabPanelId ?? id` dedup/return key), for
-   * `BranchLabPanel` instead of `BranchLabTest`. A panel is offered when the
-   * user can see at least one test inside it (see `panelsOfferedByDepartment`).
+   * `BranchLabPanel` instead of `BranchLabTest`. Like the Lab Test dropdown it is
+   * NOT filtered by the caller's departments (the same as Accession's): the
+   * worklist decides who may see which report, so a panel the user has no
+   * department for simply lists nothing.
    */
   async getLabPanelOptions(
     tenantId: string,
     branchId: string | null,
-    personId: string,
     query: { search?: string; page?: number; limit?: number },
   ): Promise<PaginatedResult<LabReportOption>> {
     const activeBranchId = this.requireBranch(branchId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
     const term = query.search?.trim();
 
-    const allRows = await this.prisma.branchLabPanel.findMany({
+    const rows = await this.prisma.branchLabPanel.findMany({
       where: {
         tenantId,
         branchId: activeBranchId,
         isActive: true,
         deletedAt: null,
-        ...(term ? { panelName: { contains: term, mode: 'insensitive' } } : {}),
+        ...(term
+          ? { panelName: { contains: escapeLike(term), mode: 'insensitive' } }
+          : {}),
       },
-      select: {
-        id: true,
-        panelName: true,
-        sourceLabPanelId: true,
-        departmentId: true,
-      },
+      select: { id: true, panelName: true, sourceLabPanelId: true },
       orderBy: { panelName: 'asc' },
     });
-    // A panel is offered by the tests inside it, not by its own department (see `panelsOfferedByDepartment`).
-    const rows = await this.panelsOfferedByDepartment(
-      tenantId,
-      allRows,
-      scopeIds,
-    );
 
     const seen = new Set<string>();
     const deduped: typeof rows = [];
@@ -2958,9 +2852,6 @@ export class LabReportService {
     )[0]!;
     worklistRow = (await this.attachBranchNames(tenantId, [worklistRow]))[0]!;
     worklistRow = (
-      await this.attachMemberDepartments([worklistRow], [report])
-    )[0]!;
-    worklistRow = (
       await this.attachDepartmentNames(tenantId, [worklistRow])
     )[0]!;
     worklistRow = (await this.attachMemberTestNames([worklistRow]))[0]!;
@@ -2988,8 +2879,8 @@ export class LabReportService {
   /**
    * `GET /lab-reports/:id` for a signed-in user: the report as {@link findByIdForApi} returns it, but only when the
    * user may see it by department - the same rule the worklist applies (a row is visible when its department is
-   * unassigned or one of the user's departments; the department is the one the row shows, so a panel's test is
-   * judged by its own department). A report the user may not see behaves as not found, like one that does not exist.
+   * unassigned or one of the user's departments; the department is the one the row shows - the one stamped on the
+   * report when it was created). A report the user may not see behaves as not found, like one that does not exist.
    * Only this read route checks it: {@link findByIdForApi} also answers every save / submit, which must not fail
    * after the write.
    *

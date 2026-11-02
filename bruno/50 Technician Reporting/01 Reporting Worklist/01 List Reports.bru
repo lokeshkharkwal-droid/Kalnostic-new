@@ -132,13 +132,18 @@ docs {
   such report is visible when the department stamped on it (that test's OWN department) is unassigned or one of the
   caller's departments. The
   panel's own department is ignored for them, so a panel with no department no longer shows every test to everyone.
-  The row's `departmentId` (the Department column) is that test's own department. A single test is judged the same way, by the department stamped on its report. Legacy reports of a panel line
-  that was never split into member tests have no stamped department, so they are visible to everyone. A report sent to another branch keeps the
+  The row's `departmentId` (the Department column) is that same stamped department, so the column always agrees
+  with why the row is listed. Changing a test's department later does not move reports already made: they keep the
+  department they were created under, and only new reports follow the new one. Legacy reports of a panel line that
+  was never split into member tests have no stamped department, so they are visible to everyone and show a blank
+  Department. A report sent to another branch keeps the
   receiving branch's entry. The Patient Entry popup loads an order's tests through this same list (`orderId`), so it
   shows the same tests as the worklist.
 
-  **Lab Panel dropdown** (`GET /lab-reports/lab-panel-options`): a panel is offered when the caller can see at least
-  one test inside it (a test is visible when its own department is unassigned or one of the caller's). The panel's own
-  department does not decide it. A panel with no tests keeps the old rule: its own department unassigned or one of the
-  caller's. Choosing a panel lists the tests of that panel the caller may see.
+  **Lab Test and Lab Panel dropdowns** (`GET /lab-reports/lab-test-options`, `GET /lab-reports/lab-panel-options`):
+  they list the active tests / panels of the caller's active branch (one entry per master test or panel, search and
+  paging as usual) and are NOT filtered by the caller's departments - the same as Accession's dropdowns. Who may see
+  which report is decided by this list (the department stamped on the report), so choosing a test or panel the
+  caller has no department for simply lists no rows, and a department edited after reports were made can never make a
+  dropdown disagree with them.
 }
