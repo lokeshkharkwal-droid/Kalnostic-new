@@ -7129,8 +7129,9 @@ model OrderItem {
   /// `unitPrice` is still charged regardless of how many members are selected).
   /// Deselection is gated server-side (see OrderService.assertItems): a member
   /// can be dropped only if its `BranchLabPanelTest.isRemovable` is true and the
-  /// panel's `isAllowPartialBilling` is true, up to `maxTestsRemovable` removals,
-  /// and at least one member must remain. Always empty for test/direct lines.
+  /// panel's `isAllowPartialBilling` is true, up to `maxTestsRemovable` removals
+  /// (0 = no limit), and at least one member must remain. Always empty for
+  /// test/direct lines.
   selectedMemberBranchLabTestIds String[] @default([]) @map("selected_member_branch_lab_test_ids")
 
   /// Snapshot of the resolved list unit price (minor units) at order/quotation

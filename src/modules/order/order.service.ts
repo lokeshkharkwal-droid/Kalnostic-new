@@ -7833,7 +7833,9 @@ export class OrderService {
         { panelId, nonRemovable },
       );
     }
-    if (removed.length > panel.maxTestsRemovable) {
+    // maxTestsRemovable = 0 means "no limit" (a panel that allows partial billing
+    // but caps removals at 0 would be unusable), so the cap only bites when > 0.
+    if (panel.maxTestsRemovable > 0 && removed.length > panel.maxTestsRemovable) {
       throw new InvalidPanelMemberSelectionException(
         'too many tests deselected for this panel',
         {
