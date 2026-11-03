@@ -398,10 +398,16 @@ export class OrderSampleService {
       } else if (item.branchLabPanel) {
         // The panel's own Sample Flow governs all its member-test samples.
         const panelSampleFlow = item.branchLabPanel.isSampleFlow;
+        // Partial panel ordering: when the line selected only a subset of the
+        // panel's member tests (`selectedMemberBranchLabTestIds` non-empty), only
+        // those members are expanded into samples here — so only they flow on to
+        // collection / acceptance / reporting. An empty array = all members (the
+        // default + every line created before partial ordering shipped).
         const tests = await this.panelConstituentTests(
           tx,
           tenantId,
           item.branchLabPanel.id,
+          item.selectedMemberBranchLabTestIds,
         );
         for (const test of tests) {
           await this.collectTestUnits(
@@ -5317,11 +5323,19 @@ export class OrderSampleService {
    * junction — a logical ref, so the tests are fetched separately), carrying the
    * fields needed to resolve each one's samples + department. A panel order item
    * has no `branchLabTest` of its own, so this is how it's expanded into tests.
+   *
+   * `selectedBranchLabTestIds` (from the order line's
+   * `OrderItem.selectedMemberBranchLabTestIds`) optionally narrows the expansion
+   * to a chosen subset of the panel's members: a non-empty list keeps only those
+   * members, while an empty/omitted list expands ALL members (the default +
+   * backward-compatible behaviour). Any id in the list that is not actually a
+   * member of this panel is ignored (the junction query is the source of truth).
    */
   private async panelConstituentTests(
     tx: Prisma.TransactionClient,
     tenantId: string,
     branchLabPanelId: string,
+    selectedBranchLabTestIds?: string[],
   ): Promise<
     {
       testName: string | null;
@@ -5331,7 +5345,14 @@ export class OrderSampleService {
     }[]
   > {
     const panelTests = await tx.branchLabPanelTest.findMany({
-      where: { tenantId, branchLabPanelId, deletedAt: null },
+      where: {
+        tenantId,
+        branchLabPanelId,
+        deletedAt: null,
+        ...(selectedBranchLabTestIds?.length
+          ? { branchLabTestId: { in: selectedBranchLabTestIds } }
+          : {}),
+      },
       select: { branchLabTestId: true },
     });
     if (panelTests.length === 0) return [];
