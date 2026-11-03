@@ -19,6 +19,14 @@ docs {
   (LABORATORY.docx §4.1), result values, notes (4 categories), attachments,
   and multi-step process if assigned.
 
+  Department access: the report opens only when the caller may see it by
+  department, the same rule as the worklist (the row's `departmentId` is
+  unassigned or one of the caller's departments; a test inside a lab panel is
+  judged by its own department; the department stamped on the report when it was created). A caller with NO department
+  is unrestricted, as in the worklist: every report they are listed opens. Otherwise it answers 404, as if it did not
+  exist. Only this read route checks it: saving, submitting and the other actions
+  are unchanged.
+
   Response also includes `contentSections` (§4.5) — `{ usefulFor,
   interpretation, limitations, remarks, references }`. Each field resolves as
   this REPORT's own saved override (if a technician has ever set one via

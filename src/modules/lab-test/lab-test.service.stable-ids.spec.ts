@@ -523,3 +523,91 @@ describe('the same analyzer, method, unit, gender and age band with different li
     ).toMatch(SIMILAR);
   });
 });
+
+/**
+ * Drag-to-reorder in the Master Data editor sends each range's / value's position in the test's whole list as
+ * `sortOrder`. Moving a range must never replace it (reports point at its id): the kept row's `sortOrder` is
+ * patched in place, like its Default flag and Display text.
+ */
+describe('reordering reference ranges keeps every row and id', () => {
+  const male = { gender: ReferenceGender.MALE };
+  const female = { gender: ReferenceGender.FEMALE };
+
+  it('swapping two ranges only patches their sortOrder (no soft-delete, no new row)', async () => {
+    const m = build({
+      ranges: [
+        live('r1', { ...male, sortOrder: 1 }),
+        live('r2', { ...female, sortOrder: 2 }),
+      ],
+    });
+    await m.save([
+      param({
+        referenceRanges: [
+          sent({ ...female, sortOrder: 1 }),
+          sent({ ...male, sortOrder: 2 }),
+        ],
+      }),
+    ]);
+    const w = rangeWrites(m);
+    expect(w.softDeleted).toEqual([]);
+    expect(w.created).toEqual([]);
+    expect(w.updated).toEqual([
+      {
+        where: { id: 'r2' },
+        data: { isDefault: false, displayOfReferenceRange: null, sortOrder: 1 },
+      },
+      {
+        where: { id: 'r1' },
+        data: { isDefault: false, displayOfReferenceRange: null, sortOrder: 2 },
+      },
+    ]);
+  });
+
+  it('a range that stays in place writes nothing', async () => {
+    const m = build({ ranges: [live('r1', { sortOrder: 3 })] });
+    await m.save([param({ referenceRanges: [sent({ sortOrder: 3 })] })]);
+    expect(rangeWrites(m)).toEqual({
+      updated: [],
+      softDeleted: [],
+      created: [],
+    });
+  });
+
+  it('a client that sends no sortOrder leaves the stored position alone', async () => {
+    const m = build({ ranges: [live('r1', { sortOrder: 4 })] });
+    await m.save([param({ referenceRanges: [sent()] })]);
+    expect(rangeWrites(m)).toEqual({
+      updated: [],
+      softDeleted: [],
+      created: [],
+    });
+  });
+
+  it('a new range and the (replaced) reference values are created with the positions sent', async () => {
+    const m = build({ ranges: [live('r1', { sortOrder: 2 })] });
+    await m.save([
+      param({
+        referenceRanges: [
+          sent({ ...male, sortOrder: 1 }),
+          sent({ sortOrder: 2 }),
+        ],
+        referenceValues: [
+          { normalValueText: 'Neg', sortOrder: 2 },
+          { normalValueText: 'Pos', sortOrder: 1 },
+        ],
+      }),
+    ]);
+    const w = rangeWrites(m);
+    expect(w.updated).toEqual([]);
+    expect(w.created[0]).toEqual([
+      expect.objectContaining({ gender: ReferenceGender.MALE, sortOrder: 1 }),
+    ]);
+    const values = (
+      m.labTestReferenceValue.createMany.mock.calls[0] as [{ data: Fields[] }]
+    )[0].data;
+    expect(values.map((v) => [v.normalValueText, v.sortOrder])).toEqual([
+      ['Neg', 2],
+      ['Pos', 1],
+    ]);
+  });
+});

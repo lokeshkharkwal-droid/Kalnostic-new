@@ -49,6 +49,7 @@ import { ReferralCreditService } from '../referral-credit/referral-credit.servic
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
 import { PatientService } from '../patient/patient.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -203,6 +204,7 @@ import {
   OrderHomeVisitPhlebotomistRequiredException,
   OrderHomeVisitSlotRequiredException,
   InvalidOrderItemException,
+  InvalidPanelMemberSelectionException,
   OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
@@ -470,6 +472,7 @@ export class OrderService {
     private readonly tenantService: TenantService,
     private readonly referralCredit: ReferralCreditService,
     private readonly patientService: PatientService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
   ) {}
 
   /**
@@ -895,6 +898,12 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
+              // Partial panel selection (empty = all members; always empty on a
+              // test/direct line). Only the listed members flow into accession/
+              // technician downstream — the panel price is unaffected.
+              selectedMemberBranchLabTestIds: i.branchLabPanelId
+                ? (i.selectedMemberBranchLabTestIds ?? [])
+                : [],
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
                 : (itemPrices.get(
@@ -3423,7 +3432,7 @@ export class OrderService {
     query: ListOrdersDto,
     tenantId: string,
     activeBranchId: string | null,
-    opts?: { classificationCoarse?: boolean },
+    opts?: { classificationCoarse?: boolean; departmentScopeIds?: string[] },
   ): Promise<{
     where: Prisma.OrderWhereInput;
     quotationValidityValue: number | null;
@@ -3442,6 +3451,40 @@ export class OrderService {
 
     // B2B Referral Panel isolation: force the panel filter for B2B sessions.
     applyB2bOrderScope(where, getReferralPanelId());
+
+    // Department visibility scope (Order Console) — mirrors the Accession
+    // In-House (`OrderSampleService.departmentScopeForSamples`) and Technician
+    // Reporting (`LabReportService.buildListWhere`) rule, applied here at the
+    // ORDER level: a staff user assigned to one or more departments sees only
+    // orders that contain at least ONE item whose test/panel is visible to them,
+    // where an item is visible when its department is unassigned (NULL →
+    // everyone) OR one of the caller's departments. An order with multiple items
+    // still appears when a single item matches (`some`). A user with NO
+    // department assignment is UNRESTRICTED (empty `departmentScopeIds` → no
+    // clause added), seeing every order. Opt-in per request via
+    // `scopeByDepartment` so other `GET /orders` consumers (Billing, Quotations,
+    // patient history) are never department-filtered. Pushed before the
+    // `reportStatus` candidate scan so that scan honours the same visible set.
+    const departmentScopeIds = opts?.departmentScopeIds ?? [];
+    if (departmentScopeIds.length > 0) {
+      const deptVisible = {
+        OR: [
+          { departmentId: null },
+          { departmentId: { in: departmentScopeIds } },
+        ],
+      };
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchLabTest: { is: deptVisible } },
+              { branchLabPanel: { is: deptVisible } },
+            ],
+          },
+        },
+      });
+    }
 
     // Quote ID takes precedence over the generic search. A bare `search`
     // matches the order code OR any of the patient's name / mobile / UMID.
@@ -3909,6 +3952,7 @@ export class OrderService {
     tenantId: string,
     activeBranchId: string | null,
     query: ListOrdersDto,
+    personId?: string,
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -3918,12 +3962,24 @@ export class OrderService {
     // branch (their expiry comes from that branch's settings).
     const scopeBranchId =
       query.patientId && !query.isQuotation ? null : activeBranchId;
+    // Order Console department visibility: only resolve the caller's departments
+    // when the screen opts in (`scopeByDepartment`). A user with no department
+    // assignment resolves to an empty set → unrestricted (see `buildOrderWhere`).
+    const departmentScopeIds =
+      query.scopeByDepartment && personId
+        ? await this.userDepartmentScope.resolveDepartmentIds(
+            tenantId,
+            personId,
+          )
+        : [];
     const {
       where,
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId, {
+      departmentScopeIds,
+    });
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -6509,6 +6565,12 @@ export class OrderService {
                 branchLabTestId: i.branchLabTestId ?? null,
                 branchLabPanelId: i.branchLabPanelId ?? null,
                 direct: i.direct ?? null,
+                // Partial panel selection for a newly-added line (empty = all;
+                // always empty on a test/direct line). Kept lines keep their
+                // stored selection — member selection isn't edited post-creation.
+                selectedMemberBranchLabTestIds: i.branchLabPanelId
+                  ? (i.selectedMemberBranchLabTestIds ?? [])
+                  : [],
                 unitPrice: i.direct
                   ? (i.unitPrice ?? 0)
                   : (addPrices.get(
@@ -7688,6 +7750,17 @@ export class OrderService {
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
 
+      // A partial member selection is only meaningful for a panel line — a
+      // test/direct line has no member tests to select from.
+      if (
+        item.selectedMemberBranchLabTestIds?.length &&
+        !item.branchLabPanelId
+      ) {
+        throw new InvalidPanelMemberSelectionException(
+          'selectedMemberBranchLabTestIds may only be sent on a lab panel line',
+        );
+      }
+
       // `unitPrice` is only meaningful for a free-text direct line — a
       // catalogue line's price is always resolved server-side from the
       // active pricing list, never trusted from the client, so a payload
@@ -7728,6 +7801,102 @@ export class OrderService {
         .filter((item) => item.outsourceCenterId)
         .map((item) => this.assertOutsourceCenter(tenantId, item)),
     );
+    await Promise.all(
+      items
+        .filter((item) => item.selectedMemberBranchLabTestIds?.length)
+        .map((item) => this.assertPanelMemberSelection(tenantId, item)),
+    );
+  }
+
+  /**
+   * Validate a panel line's partial member selection
+   * (`selectedMemberBranchLabTestIds`). Only called for a panel line that
+   * carries a non-empty selection (empty/omitted = all members, nothing to
+   * check). Enforces the partial-billing gate (CLAUDE.md feature decision):
+   * every selected id must be a member of this panel; dropping a member requires
+   * both the panel's `isAllowPartialBilling` and that member's
+   * `BranchLabPanelTest.isRemovable`, capped at `maxTestsRemovable` removals; and
+   * at least one member must remain. Selecting every member is always allowed.
+   * @throws InvalidPanelMemberSelectionException on any violation
+   */
+  private async assertPanelMemberSelection(
+    tenantId: string,
+    item: OrderItemDto,
+  ): Promise<void> {
+    const panelId = item.branchLabPanelId!;
+    const selected = [...new Set(item.selectedMemberBranchLabTestIds ?? [])];
+    const [panel, members] = await Promise.all([
+      this.prisma.branchLabPanel.findFirst({
+        where: { id: panelId, tenantId, deletedAt: null },
+        select: { isAllowPartialBilling: true, maxTestsRemovable: true },
+      }),
+      this.prisma.branchLabPanelTest.findMany({
+        where: { branchLabPanelId: panelId, tenantId, deletedAt: null },
+        select: { branchLabTestId: true, isRemovable: true },
+      }),
+    ]);
+    if (!panel) {
+      // assertBranchLabPanels already guards existence, but keep this defensive.
+      throw new OrderBranchLabPanelNotFoundException([panelId]);
+    }
+    const memberById = new Map(members.map((m) => [m.branchLabTestId, m]));
+
+    // Every selected id must be a real member of this panel.
+    const foreign = selected.filter((id) => !memberById.has(id));
+    if (foreign.length) {
+      throw new InvalidPanelMemberSelectionException(
+        'one or more selected tests are not members of this panel',
+        { panelId, foreign },
+      );
+    }
+
+    // At least one member must remain on the order.
+    if (selected.length === 0) {
+      throw new InvalidPanelMemberSelectionException(
+        'at least one member test must be selected',
+        { panelId },
+      );
+    }
+
+    // Selecting every member is always allowed — no removal, no gating.
+    if (selected.length === members.length) {
+      return;
+    }
+
+    // Partial selection: a strict subset. Validate the dropped members against
+    // the panel's partial-billing controls.
+    const selectedSet = new Set(selected);
+    const removed = members.filter((m) => !selectedSet.has(m.branchLabTestId));
+    if (!panel.isAllowPartialBilling) {
+      throw new InvalidPanelMemberSelectionException(
+        'this panel does not allow partial billing (all member tests must be selected)',
+        { panelId },
+      );
+    }
+    const nonRemovable = removed
+      .filter((m) => !m.isRemovable)
+      .map((m) => m.branchLabTestId);
+    if (nonRemovable.length) {
+      throw new InvalidPanelMemberSelectionException(
+        'one or more deselected tests are not removable',
+        { panelId, nonRemovable },
+      );
+    }
+    // maxTestsRemovable = 0 means "no limit" (a panel that allows partial billing
+    // but caps removals at 0 would be unusable), so the cap only bites when > 0.
+    if (
+      panel.maxTestsRemovable > 0 &&
+      removed.length > panel.maxTestsRemovable
+    ) {
+      throw new InvalidPanelMemberSelectionException(
+        'too many tests deselected for this panel',
+        {
+          panelId,
+          removed: removed.length,
+          maxTestsRemovable: panel.maxTestsRemovable,
+        },
+      );
+    }
   }
 
   /**

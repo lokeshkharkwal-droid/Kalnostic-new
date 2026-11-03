@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { BranchLabPanelService } from './branch-lab-panel.service';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
@@ -47,6 +47,27 @@ export class BranchLabPanelOptionsController {
         listId: query.listId,
         preferredOnly: query.preferredOnly,
       },
+    );
+  }
+
+  /**
+   * The member tests of one branch lab panel + its partial-billing controls —
+   * `GET /branch-lab-panels/:id/member-tests`. Powers the Create-Order Diagnostic
+   * Items table's expandable panel row (each member shows its own sample name /
+   * schedule / fasting / STAT / schedule days, with a de-select checkbox gated by
+   * `isRemovable` + the panel's `isAllowPartialBilling`/`maxTestsRemovable`). The
+   * active branch is resolved from the JWT profile — never the body.
+   */
+  @Get(':id/member-tests')
+  findMemberTests(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('id') id: string,
+  ) {
+    return this.branchLabPanelService.findMemberTests(
+      id,
+      tenantId,
+      this.requireBranch(profile),
     );
   }
 }

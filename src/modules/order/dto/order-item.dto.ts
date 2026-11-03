@@ -1,4 +1,6 @@
 import {
+  ArrayUnique,
+  IsArray,
   IsEnum,
   IsNumber,
   IsOptional,
@@ -38,6 +40,22 @@ export class OrderItemDto {
   @IsOptional()
   @IsUUID()
   branchLabPanelId?: string;
+
+  /**
+   * PANEL lines only (`branchLabPanelId` set): the subset of the panel's member
+   * tests to actually run, as the selected members' `BranchLabTest` ids (i.e.
+   * `BranchLabPanelTest.branchLabTestId`). Omitted or empty = ALL members (the
+   * default, backward compatible). Validated in `OrderService.assertItems`: every
+   * id must be a member of this panel, a dropped member must have `isRemovable`
+   * and the panel `isAllowPartialBilling` (capped at `maxTestsRemovable`), and at
+   * least one member must remain. Rejected on a test/direct line. The panel's
+   * price/billing is unaffected — the full panel price is always charged.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  selectedMemberBranchLabTestIds?: string[];
 
   /**
    * A free-text catalogue entry passed directly from the frontend (mutually

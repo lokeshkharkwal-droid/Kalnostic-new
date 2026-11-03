@@ -398,10 +398,16 @@ export class OrderSampleService {
       } else if (item.branchLabPanel) {
         // The panel's own Sample Flow governs all its member-test samples.
         const panelSampleFlow = item.branchLabPanel.isSampleFlow;
+        // Partial panel ordering: when the line selected only a subset of the
+        // panel's member tests (`selectedMemberBranchLabTestIds` non-empty), only
+        // those members are expanded into samples here — so only they flow on to
+        // collection / acceptance / reporting. An empty array = all members (the
+        // default + every line created before partial ordering shipped).
         const tests = await this.panelConstituentTests(
           tx,
           tenantId,
           item.branchLabPanel.id,
+          item.selectedMemberBranchLabTestIds,
         );
         for (const test of tests) {
           await this.collectTestUnits(
@@ -2351,18 +2357,18 @@ export class OrderSampleService {
    * same transaction.
    */
   /**
-   * Enforce the department-visibility rule on a COLLECT action: a caller may
-   * collect a sample only when its department is unassigned (NULL → everyone) or
-   * one of their mapped departments (resolved via `UserDepartmentScopeService`); a
-   * caller mapped to no department may collect only unassigned samples. This is
-   * the write-side twin of {@link departmentScopeForSamples}, which hides the same
-   * samples from the Accession In-House / Technician Reporting listings — a sample
-   * the caller cannot see there must not be collectable by id either. It is the
-   * single enforcement point for every user-initiated collect path (the Accession
+   * Enforce the department-visibility rule on a COLLECT action: a caller mapped
+   * to one or more departments may collect a sample only when its department is
+   * unassigned (NULL → everyone) or one of theirs (resolved via
+   * `UserDepartmentScopeService`). A caller mapped to NO department is
+   * UNRESTRICTED (mirrors the read-side {@link departmentScopeForSamples}, which
+   * now shows such a caller every sample on the Accession In-House workflow) — a
+   * sample the caller can see there must stay collectable by id. It is the single
+   * enforcement point for every user-initiated collect path (the Accession
    * worklist {@link collect}, the Order Overview per-item and group collect). The
    * internal order-creation / check-in bridges never pass through here.
    * @param tenantId tenant scope (from JWT)
-   * @param personId the acting user (null → treated as mapped to no department)
+   * @param personId the acting user (null → treated as mapped to no department → unrestricted)
    * @param sampleIds the accession samples about to be collected
    * @throws SampleDepartmentForbiddenException if any sample is out of scope
    */
@@ -2375,6 +2381,10 @@ export class OrderSampleService {
     const scopeIds = personId
       ? await this.userDepartmentScope.resolveDepartmentIds(tenantId, personId)
       : [];
+    // A caller mapped to no department is unrestricted (same rule as the In-House
+    // listing): there is nothing to enforce. Only a caller WITH departments is
+    // held to them.
+    if (scopeIds.length === 0) return;
     const samples = await this.prisma.orderSample.findMany({
       where: { id: { in: sampleIds }, tenantId, deletedAt: null },
       select: { id: true, departmentId: true },
@@ -5139,8 +5149,13 @@ export class OrderSampleService {
 
   /**
    * The department-visibility condition for `OrderSample.departmentId` (a
-   * denormalized, indexed snapshot): unassigned rows (NULL) are visible to all;
-   * an empty scope (user with no department) therefore sees only unassigned rows.
+   * denormalized, indexed snapshot). A caller mapped to one or more departments
+   * sees a sample only when its department is unassigned (NULL → everyone) or one
+   * of theirs. A caller mapped to NO department is UNRESTRICTED on the Accession
+   * In-House workflow — they see every sample regardless of department, so an
+   * empty scope contributes no constraint (an empty `{}` fragment matches all).
+   * (This is the Accession In-House rule only; Technician Reporting keeps the
+   * stricter "no mapping → only unassigned" — see `LabReportService`.)
    * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
    */
   private departmentScopeForSamples(
@@ -5148,7 +5163,7 @@ export class OrderSampleService {
   ): Prisma.OrderSampleWhereInput {
     return scopeIds.length > 0
       ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-      : { departmentId: null };
+      : {};
   }
 
   /** Translate the §A.3 "Order Mode" filter into order/sample conditions. */
@@ -5308,11 +5323,19 @@ export class OrderSampleService {
    * junction — a logical ref, so the tests are fetched separately), carrying the
    * fields needed to resolve each one's samples + department. A panel order item
    * has no `branchLabTest` of its own, so this is how it's expanded into tests.
+   *
+   * `selectedBranchLabTestIds` (from the order line's
+   * `OrderItem.selectedMemberBranchLabTestIds`) optionally narrows the expansion
+   * to a chosen subset of the panel's members: a non-empty list keeps only those
+   * members, while an empty/omitted list expands ALL members (the default +
+   * backward-compatible behaviour). Any id in the list that is not actually a
+   * member of this panel is ignored (the junction query is the source of truth).
    */
   private async panelConstituentTests(
     tx: Prisma.TransactionClient,
     tenantId: string,
     branchLabPanelId: string,
+    selectedBranchLabTestIds?: string[],
   ): Promise<
     {
       testName: string | null;
@@ -5322,7 +5345,14 @@ export class OrderSampleService {
     }[]
   > {
     const panelTests = await tx.branchLabPanelTest.findMany({
-      where: { tenantId, branchLabPanelId, deletedAt: null },
+      where: {
+        tenantId,
+        branchLabPanelId,
+        deletedAt: null,
+        ...(selectedBranchLabTestIds?.length
+          ? { branchLabTestId: { in: selectedBranchLabTestIds } }
+          : {}),
+      },
       select: { branchLabTestId: true },
     });
     if (panelTests.length === 0) return [];

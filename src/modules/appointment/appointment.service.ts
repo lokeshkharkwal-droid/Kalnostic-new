@@ -184,6 +184,19 @@ export class AppointmentService {
         changedBy: personId,
       },
     });
+    // Stamp the linked order's check-in time on the FIRST check-in only (guarded
+    // by `checkedInAt: null`, so it is idempotent and a re-check-in / later edit
+    // never moves it). The Billings screen reads this as the bill/appointment
+    // date — a checked-in appointment "behaves like an order" from this moment,
+    // so its billing date is when it was checked in, not when it was created.
+    // Covers both check-in paths (OrderService.update `dto.checkIn` and the
+    // direct PATCH /appointments/:id/status), which both route through here.
+    if (status === AppointmentStatus.CHECKED_IN) {
+      await tx.order.updateMany({
+        where: { appointmentId, tenantId, deletedAt: null, checkedInAt: null },
+        data: { checkedInAt: new Date() },
+      });
+    }
   }
 
   /**
