@@ -3015,6 +3015,11 @@ model LabTestReferenceRange {
   displayOfReferenceRange String?      @map("display_of_reference_range")
   abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
 
+  // Position in the test's whole Reference Range list, set by drag-to-reorder
+  // in the Master Data editor (spans every parameter of the test). 0 = never
+  // reordered; reads tie-break on `createdAt`.
+  sortOrder Int @default(0) @map("sort_order")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -3049,6 +3054,11 @@ model LabTestReferenceValue {
   normalValueText         String       @map("normal_value_text")
   displayOfReferenceRange String?      @map("display_of_reference_range")
   abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  // Position in the test's whole Reference Value list, set by drag-to-reorder
+  // in the Master Data editor (spans every parameter of the test). 0 = never
+  // reordered; reads tie-break on `createdAt`.
+  sortOrder Int @default(0) @map("sort_order")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
