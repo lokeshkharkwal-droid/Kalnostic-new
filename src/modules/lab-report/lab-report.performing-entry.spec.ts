@@ -21,10 +21,17 @@ type Svc = {
   }>;
 };
 
-function service(report: unknown, sourceTemplate: string | null = null): Svc {
+function service(
+  report: unknown,
+  sourceTemplate: string | null = null,
+  memberBranchLabTest: unknown = null,
+): Svc {
   const svc = Object.create(LabReportService.prototype) as { prisma: unknown };
   svc.prisma = {
     labReport: { findFirst: jest.fn().mockResolvedValue(report) },
+    branchLabTest: {
+      findFirst: jest.fn().mockResolvedValue(memberBranchLabTest),
+    },
     labTest: {
       findFirst: jest
         .fn()
@@ -115,6 +122,54 @@ describe('approval signatories follow the holding branch department / category',
     ).resolves.toMatchObject({
       departmentId: null,
       categoryId: 'catB',
+      subCategoryId: null,
+    });
+  });
+
+  it("classifies a panel-member report by the MEMBER test's department, not the panel line's", async () => {
+    // Panel line sits in department A; the member test this report is for sits
+    // in department B — signatories must come from B.
+    const panelLine = {
+      branchLabTest: null,
+      branchLabPanel: { departmentId: 'depA', categoryId: 'catA' },
+    };
+    const s = service(
+      {
+        branchId: 'A',
+        performingEntry: null,
+        memberBranchLabTestId: 'member-blt',
+        departmentId: 'depB',
+        orderItem: panelLine,
+      },
+      null,
+      { departmentId: 'depB', categoryId: 'catB', subCategoryId: 'subB' },
+    );
+    await expect(
+      s.resolveReportClassificationIds('r', 't', 'A'),
+    ).resolves.toMatchObject({
+      departmentId: 'depB',
+      categoryId: 'catB',
+      subCategoryId: 'subB',
+    });
+  });
+
+  it('a grandfathered panel report (no member id) still uses the panel line department', async () => {
+    const panelLine = {
+      branchLabTest: null,
+      branchLabPanel: { departmentId: 'depA', categoryId: 'catA' },
+    };
+    const s = service({
+      branchId: 'A',
+      performingEntry: null,
+      memberBranchLabTestId: null,
+      departmentId: null,
+      orderItem: panelLine,
+    });
+    await expect(
+      s.resolveReportClassificationIds('r', 't', 'A'),
+    ).resolves.toMatchObject({
+      departmentId: 'depA',
+      categoryId: 'catA',
       subCategoryId: null,
     });
   });

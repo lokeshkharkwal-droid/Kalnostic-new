@@ -49,6 +49,7 @@ import { ReferralCreditService } from '../referral-credit/referral-credit.servic
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
 import { PatientService } from '../patient/patient.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -471,6 +472,7 @@ export class OrderService {
     private readonly tenantService: TenantService,
     private readonly referralCredit: ReferralCreditService,
     private readonly patientService: PatientService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
   ) {}
 
   /**
@@ -3430,7 +3432,7 @@ export class OrderService {
     query: ListOrdersDto,
     tenantId: string,
     activeBranchId: string | null,
-    opts?: { classificationCoarse?: boolean },
+    opts?: { classificationCoarse?: boolean; departmentScopeIds?: string[] },
   ): Promise<{
     where: Prisma.OrderWhereInput;
     quotationValidityValue: number | null;
@@ -3449,6 +3451,40 @@ export class OrderService {
 
     // B2B Referral Panel isolation: force the panel filter for B2B sessions.
     applyB2bOrderScope(where, getReferralPanelId());
+
+    // Department visibility scope (Order Console) — mirrors the Accession
+    // In-House (`OrderSampleService.departmentScopeForSamples`) and Technician
+    // Reporting (`LabReportService.buildListWhere`) rule, applied here at the
+    // ORDER level: a staff user assigned to one or more departments sees only
+    // orders that contain at least ONE item whose test/panel is visible to them,
+    // where an item is visible when its department is unassigned (NULL →
+    // everyone) OR one of the caller's departments. An order with multiple items
+    // still appears when a single item matches (`some`). A user with NO
+    // department assignment is UNRESTRICTED (empty `departmentScopeIds` → no
+    // clause added), seeing every order. Opt-in per request via
+    // `scopeByDepartment` so other `GET /orders` consumers (Billing, Quotations,
+    // patient history) are never department-filtered. Pushed before the
+    // `reportStatus` candidate scan so that scan honours the same visible set.
+    const departmentScopeIds = opts?.departmentScopeIds ?? [];
+    if (departmentScopeIds.length > 0) {
+      const deptVisible = {
+        OR: [
+          { departmentId: null },
+          { departmentId: { in: departmentScopeIds } },
+        ],
+      };
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchLabTest: { is: deptVisible } },
+              { branchLabPanel: { is: deptVisible } },
+            ],
+          },
+        },
+      });
+    }
 
     // Quote ID takes precedence over the generic search. A bare `search`
     // matches the order code OR any of the patient's name / mobile / UMID.
@@ -3916,6 +3952,7 @@ export class OrderService {
     tenantId: string,
     activeBranchId: string | null,
     query: ListOrdersDto,
+    personId?: string,
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -3925,12 +3962,24 @@ export class OrderService {
     // branch (their expiry comes from that branch's settings).
     const scopeBranchId =
       query.patientId && !query.isQuotation ? null : activeBranchId;
+    // Order Console department visibility: only resolve the caller's departments
+    // when the screen opts in (`scopeByDepartment`). A user with no department
+    // assignment resolves to an empty set → unrestricted (see `buildOrderWhere`).
+    const departmentScopeIds =
+      query.scopeByDepartment && personId
+        ? await this.userDepartmentScope.resolveDepartmentIds(
+            tenantId,
+            personId,
+          )
+        : [];
     const {
       where,
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId, {
+      departmentScopeIds,
+    });
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -7835,7 +7884,10 @@ export class OrderService {
     }
     // maxTestsRemovable = 0 means "no limit" (a panel that allows partial billing
     // but caps removals at 0 would be unusable), so the cap only bites when > 0.
-    if (panel.maxTestsRemovable > 0 && removed.length > panel.maxTestsRemovable) {
+    if (
+      panel.maxTestsRemovable > 0 &&
+      removed.length > panel.maxTestsRemovable
+    ) {
       throw new InvalidPanelMemberSelectionException(
         'too many tests deselected for this panel',
         {
