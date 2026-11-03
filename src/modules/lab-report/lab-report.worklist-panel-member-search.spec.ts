@@ -197,10 +197,9 @@ describe('LabReportService — worklist: panel members are judged by their own t
       });
     });
 
-    it('a user with no department sees only reports whose own department is unassigned', () => {
+    it('a user with no department is unrestricted: no department condition, only the branch-structure key', () => {
       expect(heldLineRule(build({}, {}, []))).toEqual({
         performingBranchLabTestId: null,
-        departmentId: null,
       });
     });
 
@@ -434,11 +433,11 @@ describe('LabReportService.findByIdForViewer — opening one report (judged by t
     ).rejects.toBeInstanceOf(LabReportNotFoundException);
   });
 
-  it('a user with no department can open only reports that have none', async () => {
-    const hidden = build('bio', []);
+  it('a user with no department is unrestricted: a report that has a department opens too (the worklist lists it for them)', async () => {
+    const m = build('bio', []);
     await expect(
-      hidden.service.findByIdForViewer('r1', 't1', 'b1', 'p1'),
-    ).rejects.toBeInstanceOf(LabReportNotFoundException);
+      m.service.findByIdForViewer('r1', 't1', 'b1', 'p1'),
+    ).resolves.toBe(m.detail);
   });
 
   it("the user's own departments are the ones asked for", async () => {

@@ -54,10 +54,12 @@ describe('department flow - the Department filter and the visibility rule are BO
     expect(text).not.toContain('"Y"');
   });
 
-  it('a user with no department who filters by a department also gets both: only unassigned reports are visible, and none match', () => {
+  it('a user with no department is unrestricted (no visibility condition), so only the Department filter they chose applies', () => {
     const w = build({ departmentId: 'Y' }, []);
     expect(w.departmentId).toBe('Y');
-    expect(JSON.stringify(departmentBlock(w))).toContain('"departmentId":null');
+    expect(JSON.stringify(departmentBlock(w))).not.toContain(
+      '"departmentId":null',
+    );
   });
 
   it('no filter: only the visibility rule is there', () => {
@@ -139,11 +141,11 @@ describe('department flow - the status counts use the same department rule as th
     }
   });
 
-  it('a user with no department is counted against unassigned reports only', async () => {
+  it('a user with no department is unrestricted: no count carries a department condition', async () => {
     const m = build([]);
     await m.run();
     for (const w of m.wheres()) {
-      expect(JSON.stringify(departmentBlock(w))).toContain(
+      expect(JSON.stringify(departmentBlock(w))).not.toContain(
         '"departmentId":null',
       );
     }

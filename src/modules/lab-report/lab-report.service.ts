@@ -2880,7 +2880,9 @@ export class LabReportService {
    * `GET /lab-reports/:id` for a signed-in user: the report as {@link findByIdForApi} returns it, but only when the
    * user may see it by department - the same rule the worklist applies (a row is visible when its department is
    * unassigned or one of the user's departments; the department is the one the row shows - the one stamped on the
-   * report when it was created). A report the user may not see behaves as not found, like one that does not exist.
+   * report when it was created; a user with NO department is unrestricted, like the worklist and Accession In-House,
+   * so every row they are listed can be opened). A report the user may not see behaves as not found, like one that
+   * does not exist.
    * Only this read route checks it: {@link findByIdForApi} also answers every save / submit, which must not fail
    * after the write.
    *
@@ -2901,6 +2903,8 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    // No department assigned = unrestricted (the worklist adds no department condition for such a user).
+    if (scopeIds.length === 0) return detail;
     if (
       detail.departmentId !== null &&
       !scopeIds.includes(detail.departmentId)
