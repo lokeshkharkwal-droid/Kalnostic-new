@@ -154,13 +154,11 @@ export class LabReportController {
   getLabTestOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
-    @CurrentUser('person_id') personId: string,
     @Query() query: LabReportCatalogueOptionsQueryDto,
   ) {
     return this.labReportService.getLabTestOptions(
       tenantId,
       profile.branchId,
-      personId,
       query,
     );
   }
@@ -170,13 +168,11 @@ export class LabReportController {
   getLabPanelOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
-    @CurrentUser('person_id') personId: string,
     @Query() query: LabReportCatalogueOptionsQueryDto,
   ) {
     return this.labReportService.getLabPanelOptions(
       tenantId,
       profile.branchId,
-      personId,
       query,
     );
   }
@@ -351,9 +347,15 @@ export class LabReportController {
   findOne(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
   ) {
-    return this.labReportService.findByIdForApi(id, tenantId, profile.branchId);
+    return this.labReportService.findByIdForViewer(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+    );
   }
 
   /**

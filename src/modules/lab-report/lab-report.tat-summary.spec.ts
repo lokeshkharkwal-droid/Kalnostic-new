@@ -20,7 +20,13 @@ describe('LabReportService.getTatSummary', () => {
       typeof LabReportService
     >),
   );
+  // the panel-member lookup the worklist filters need: no panel member on any report here
+  const prisma = {
+    labReport: { findMany: jest.fn().mockResolvedValue([]) },
+    branchLabTest: { findMany: jest.fn().mockResolvedValue([]) },
+  };
   Object.assign(service, {
+    prisma,
     tatService: { summarize },
     userDepartmentScope: { resolveDepartmentIds },
   });
