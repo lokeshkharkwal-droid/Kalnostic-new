@@ -62,14 +62,14 @@ describe('OrderSampleService department collect guard', () => {
     ).rejects.toBeInstanceOf(SampleDepartmentForbiddenException);
   });
 
-  it('a user mapped to NO department may collect only unassigned samples', async () => {
+  it('a user mapped to NO department is unrestricted (may collect any department)', async () => {
     const svc = makeService([{ id: 's1', departmentId: 'BIOCHEM' }], []);
     await expect(
       svc.assertSamplesInDepartmentScope('t1', 'p1', ['s1']),
-    ).rejects.toBeInstanceOf(SampleDepartmentForbiddenException);
+    ).resolves.toBeUndefined();
   });
 
-  it('a null personId is treated as mapped to no department', async () => {
+  it('a null personId is treated as mapped to no department (unrestricted)', async () => {
     const svc = makeService([{ id: 's1', departmentId: 'BIOCHEM' }], []);
     const resolve = (
       svc as unknown as {
@@ -78,7 +78,7 @@ describe('OrderSampleService department collect guard', () => {
     ).userDepartmentScope.resolveDepartmentIds;
     await expect(
       svc.assertSamplesInDepartmentScope('t1', null, ['s1']),
-    ).rejects.toBeInstanceOf(SampleDepartmentForbiddenException);
+    ).resolves.toBeUndefined();
     // Scope is never resolved for a null caller — they are simply department-less.
     expect(resolve).not.toHaveBeenCalled();
   });
