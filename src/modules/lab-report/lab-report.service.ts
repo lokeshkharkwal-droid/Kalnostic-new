@@ -2500,15 +2500,6 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : {};
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabTest.findMany({
@@ -2569,15 +2560,6 @@ export class LabReportService {
     const activeBranchId = this.requireBranch(branchId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : {};
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabPanel.findMany({
