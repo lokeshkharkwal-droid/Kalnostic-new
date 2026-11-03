@@ -6646,6 +6646,14 @@ model Order {
   appointmentId String?      @unique @map("appointment_id")
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
+  // Set once when an appointment order is checked in (the Create → Confirm
+  // "Check-In" action, `dto.checkIn`, which advances the linked appointment to
+  // CHECKED_IN). A checked-in appointment stays `status = APPOINTMENT` but
+  // behaves like an order; the Billings screen uses this as its bill/appointment
+  // date (when the patient was actually checked in), falling back to `createdAt`
+  // for plain orders. NULL = never checked in.
+  checkedInAt DateTime? @map("checked_in_at")
+
   // Referral & B2B billing (all optional)
   referredByDoctorId String?         @map("referred_by_doctor_id")
   referredByDoctor   ReferralDoctor? @relation(fields: [referredByDoctorId], references: [id])

@@ -188,7 +188,12 @@ export class OrderController {
         query.branchId = profile.branchId;
       }
     }
-    return this.orderService.findAll(tenantId, profile.branchId, query);
+    return this.orderService.findAll(
+      tenantId,
+      profile.branchId,
+      query,
+      personId,
+    );
   }
 
   /**
