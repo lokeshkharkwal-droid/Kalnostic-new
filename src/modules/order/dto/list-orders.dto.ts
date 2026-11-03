@@ -275,6 +275,20 @@ export class ListOrdersDto extends PaginationQueryDto {
   departmentId?: string;
 
   /**
+   * `true` scopes the list to the caller's assigned departments (Order Console):
+   * an order is returned only when it has at least one item whose test/panel
+   * department is unassigned (NULL → visible to everyone) OR one of the caller's
+   * departments. A user with no department assignment is unrestricted (sees all
+   * orders). Opt-in per request so other `GET /orders` consumers (Billing,
+   * Quotations, patient history) are never department-filtered. The scope is
+   * resolved server-side from the JWT `person_id`, never from the client.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  scopeByDepartment?: boolean;
+
+  /**
    * Category filter — matches orders with an item whose test/panel carries this
    * (logical) `categoryId`.
    */

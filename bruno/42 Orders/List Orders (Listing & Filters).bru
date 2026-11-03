@@ -40,6 +40,7 @@ params:query {
   ~dateTo: 2026-07-31
   ~section: DIAGNOSTICS
   ~departmentId: {{departmentId}}
+  ~scopeByDepartment: true
   ~categoryId: {{categoryId}}
   ~subCategoryId: {{subCategoryId}}
   ~branchLabTestId: {{branchLabTestId}}
@@ -160,6 +161,17 @@ docs {
     that section (the order-console Diagnostics tab sends `DIAGNOSTICS`).
   - `departmentId` — matches orders with an item whose test/panel carries this
     (logical) department id.
+  - `scopeByDepartment` — `true` scopes the list to the **caller's** assigned
+    departments (the Order Console sends this). An order is returned only when it
+    has at least one item whose test/panel department is unassigned (`NULL` →
+    visible to everyone) OR one of the caller's departments; an order with
+    multiple items still appears when a single item matches. A user with **no**
+    department assignment is unrestricted (sees every order). The scope is
+    resolved server-side from the JWT `person_id` (the `UserDepartmentAssignment`
+    membership table), never from the client, and mirrors the same department
+    visibility rule already enforced on Accession In-House Orders and the
+    Technician Reporting worklist. Other `GET /orders` consumers (Billing,
+    Quotations, patient history) omit the flag and are never department-filtered.
   - `categoryId` — matches orders with an item whose test/panel carries this
     (logical) category id.
   - `subCategoryId` — matches orders with a lab test carrying this (logical)

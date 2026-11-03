@@ -1716,15 +1716,27 @@ export class LabReportService {
   }
 
   /**
-   * Resolves this report's department/category/sub-category the same way
-   * `toWorklistRow` resolves department
-   * (`branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null`),
-   * generalized to all three classification axes, without needing the
-   * report's full detail payload — used by `getSignatoryCandidatesInternal`.
-   * `BranchLabPanel` has no `subCategoryId` column at all (only `LabTest`/
-   * `BranchLabTest` classify that granularly), so a panel-based report's
-   * `subCategoryId` is always null — a report on a panel item simply has no
-   * sub-category-basis signatories, regardless of configuration.
+   * Resolves this report's department/category/sub-category used to pick the
+   * Approve modal's signatory candidates, without needing the report's full
+   * detail payload — used by `getSignatoryCandidatesInternal`.
+   *
+   * Resolution priority:
+   * 1. `performingEntry` — once the report was sent to another branch, THAT
+   *    branch's Lab Test List entry decides department / category.
+   * 2. `memberBranchLabTestId` — a panel-member report (one `LabReport` per
+   *    member test) classifies by the MEMBER test's own department, NOT the
+   *    panel line's single department. When a panel sits in one department but
+   *    a member test sits in another, the signatories must come from the member
+   *    test's department (the panel is "broken into tests" for reporting). The
+   *    department is read from the denormalized `LabReport.departmentId` — the
+   *    same member-test department the Reporting worklist's visibility scope
+   *    uses — so signatories and visibility always agree; category /
+   *    sub-category have no denormalized column, so they are read live from the
+   *    member's own `BranchLabTest`.
+   * 3. Otherwise the order line's `branchLabTest` (standalone test) or
+   *    `branchLabPanel` (a grandfathered pre-breakdown panel report, whose
+   *    `memberBranchLabTestId` is null). `BranchLabPanel` has no `subCategoryId`
+   *    column, so such a panel report's `subCategoryId` is always null.
    */
   private async resolveReportClassificationIds(
     id: string,
@@ -1740,6 +1752,11 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
       select: {
         branchId: true,
+        // which panel member test this report is for (null = non-panel or an
+        // old-style grandfathered panel report) and that member's denormalized
+        // department
+        memberBranchLabTestId: true,
+        departmentId: true,
         // the entry the holding branch works the test with (null = the order line's)
         performingEntry: {
           select: {
@@ -1772,6 +1789,29 @@ export class LabReportService {
         departmentId: report.performingEntry.departmentId,
         categoryId: report.performingEntry.categoryId,
         subCategoryId: report.performingEntry.subCategoryId,
+        report: { branchId: report.branchId },
+      };
+    }
+    // Panel-member report: classify by the member test, not the panel line, so
+    // a panel and its member tests belonging to different departments each pick
+    // signatories from their own department.
+    if (report.memberBranchLabTestId) {
+      const member = await this.prisma.branchLabTest.findFirst({
+        where: {
+          id: report.memberBranchLabTestId,
+          tenantId,
+          deletedAt: null,
+        },
+        select: { departmentId: true, categoryId: true, subCategoryId: true },
+      });
+      return {
+        // prefer the denormalized member-test department (branch-entry-first
+        // with source-test fallback, resolved at report creation); fall back to
+        // the member's live department if, for an older report, it was never
+        // stamped.
+        departmentId: report.departmentId ?? member?.departmentId ?? null,
+        categoryId: member?.categoryId ?? null,
+        subCategoryId: member?.subCategoryId ?? null,
         report: { branchId: report.branchId },
       };
     }
