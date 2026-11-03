@@ -32,11 +32,8 @@ import {
   formatReportDateTime,
   formatOrderPrintDate,
   formatOrderPrintDateTime,
-  buildEvaluationOrder,
-  evaluateFormula,
-  formatCalculatedValue,
-  type FormulaParam,
 } from '../../common/utils';
+import { recomputeCalculatedValues } from './utils/recompute-calculated-values';
 import { TenantService } from '../tenant/tenant.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
@@ -3831,17 +3828,10 @@ export class LabReportService {
   }
 
   /**
-   * Re-derive every dynamic/calculated parameter of a report from its formula
-   * and persist the result with `source = CALCULATED`. Runs inside the caller's
-   * tenant transaction, AFTER the incoming (measured/override) values are saved,
-   * so it evaluates against the report's freshest values.
-   *
-   * Evaluation is in dependency order (a calculated parameter may reference
-   * another calculated parameter). A parameter listed in `overriddenParamIds` is
-   * left untouched (its manual override "sticks") but still feeds downstream
-   * formulas. A formula that cannot be computed yet (a blank/non-numeric input,
-   * or division by zero) blanks the slot rather than failing the save, so
-   * partial result entry stays allowed.
+   * Re-derive every dynamic/calculated parameter of a report from its formula and persist the result with
+   * `source = CALCULATED`. Runs inside the caller's tenant transaction, AFTER the incoming (measured/override) values
+   * are saved. The logic lives in `recomputeCalculatedValues` (utils/recompute-calculated-values.ts) so a machine's
+   * result (`EmiService.submitResult`) recalculates in exactly the same way; this keeps the method the save calls.
    *
    * @param tx the active tenant-scoped Prisma transaction client.
    * @param labReportId the report whose values are being (re)computed.
@@ -3860,89 +3850,15 @@ export class LabReportService {
     actorId: string,
     now: Date,
   ): Promise<void> {
-    const params = await tx.labTestResultParam.findMany({
-      where: { labTestId, deletedAt: null },
-      select: {
-        id: true,
-        parameterCode: true,
-        parameterType: true,
-        resultType: true,
-        calculationFormula: true,
-        decimalPlaces: true,
-      },
-    });
-
-    const formulaParams: FormulaParam[] = params.map((p) => ({
-      code: p.parameterCode,
-      isCalculated:
-        p.parameterType === 'CALCULATED' || !!p.calculationFormula?.trim(),
-      formula: p.calculationFormula,
-    }));
-    const ordered = buildEvaluationOrder(formulaParams);
-    // A cycle should have been rejected at config time; skip defensively.
-    if (!ordered.ok || ordered.order.length === 0) return;
-
-    const paramByCode = new Map(params.map((p) => [p.parameterCode, p]));
-
-    // Seed the value map from the report's current stored values (measured +
-    // any already-computed values), keyed by parameter code.
-    const existing = await tx.labReportResultValue.findMany({
-      where: { labReportId, tenantId, deletedAt: null },
-      select: { resultParamId: true, observed1: true },
-    });
-    const existingByParamId = new Map(
-      existing.map((v) => [v.resultParamId, v]),
+    await recomputeCalculatedValues(
+      tx,
+      labReportId,
+      tenantId,
+      labTestId,
+      overriddenParamIds,
+      actorId,
+      now,
     );
-    const paramCodeById = new Map(params.map((p) => [p.id, p.parameterCode]));
-    const values: Record<string, number | null> = {};
-    for (const p of params) values[p.parameterCode] = null;
-    for (const v of existing) {
-      const code = paramCodeById.get(v.resultParamId);
-      if (!code) continue;
-      const raw = v.observed1?.trim();
-      const num = raw ? Number(raw) : NaN;
-      values[code] = Number.isFinite(num) ? num : null;
-    }
-
-    for (const code of ordered.order) {
-      const param = paramByCode.get(code);
-      if (!param || !param.calculationFormula) continue;
-      // Respect a manual override: keep the stored value and let it feed
-      // downstream formulas (its numeric value is already in `values`).
-      if (overriddenParamIds.has(param.id)) continue;
-
-      const result = evaluateFormula(param.calculationFormula, values);
-      const computed = result.ok
-        ? formatCalculatedValue(result.value, param.decimalPlaces)
-        : null;
-      values[code] = result.ok ? result.value : null;
-
-      // Skip creating an empty row that never existed — only blank an existing
-      // slot (e.g. a source value was cleared) so partial entry stays clean.
-      if (computed === null && !existingByParamId.has(param.id)) continue;
-
-      await tx.labReportResultValue.upsert({
-        where: {
-          labReportId_resultParamId: { labReportId, resultParamId: param.id },
-        },
-        create: {
-          tenantId,
-          labReportId,
-          resultParamId: param.id,
-          observed1: computed ?? undefined,
-          source: ResultValueSource.CALCULATED,
-          enteredAt: now,
-          enteredBy: actorId,
-        },
-        update: {
-          observed1: computed,
-          source: ResultValueSource.CALCULATED,
-          enteredAt: now,
-          enteredBy: actorId,
-          deletedAt: null,
-        },
-      });
-    }
   }
 
   /**
