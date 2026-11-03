@@ -86,4 +86,15 @@ export class LabTestReferenceRangeDto {
   @IsEnum(AbnormalFlag)
   @IsOptional()
   abnormalFlagLogic?: AbnormalFlag;
+
+  /**
+   * Position of this row in the test's whole Reference Range list (the
+   * Master Data editor's drag-to-reorder order, which spans every parameter).
+   * Optional: a client that omits it leaves a kept row's order unchanged and
+   * gives a new row 0 (ordered by creation).
+   */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  sortOrder?: number;
 }
