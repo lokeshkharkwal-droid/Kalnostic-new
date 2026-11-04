@@ -92,10 +92,10 @@ docs {
   - `RESULTS` — testName, testCode, departmentName, isActive + nested
     `resultParams[]` (parameterName, method, resultType, units, isNabl, isCap).
   - `REFERENCE_RANGE` — testName, testCode + nested `referenceRanges[]`
-    (parameterName, method, gender, ageFrom, ageTo, lowerLimit, upperLimit,
+    (parameterName, method, gender, ageFrom, ageFromUnit, ageTo, ageToUnit, lowerLimit, upperLimit,
     displayOfReferenceRange, flag).
   - `REFERENCE_VALUE` — testName, testCode + nested `referenceValues[]`
-    (parameterName, method, gender, ageFrom, ageTo, displayValue, flag).
+    (parameterName, method, gender, ageFrom, ageFromUnit, ageTo, ageToUnit, displayValue, flag).
   - `NOTES` — usefulFor, interpretationOfResults, limitations, remarks, references.
   - `VERSION_CONTROL` — testName + currentVersion/effectiveFrom/modifiedBy
     (the open entry, else the highest) + the full `versionHistory`.

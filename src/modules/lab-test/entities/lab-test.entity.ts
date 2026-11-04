@@ -1,5 +1,6 @@
 import {
   AbnormalFlag,
+  AgeUnit,
   ApprovalWorkflow,
   ContainerType,
   LabTest,
@@ -212,7 +213,10 @@ export interface LabTestRefRangeRow {
   method: string | null;
   gender: ReferenceGender;
   ageFrom: number;
+  /** Unit of `ageFrom` (DAYS | MONTHS | YEARS) — the number alone is meaningless without it. */
+  ageFromUnit: AgeUnit;
   ageTo: number;
+  ageToUnit: AgeUnit;
   lowerLimit: Prisma.Decimal | null;
   upperLimit: Prisma.Decimal | null;
   displayOfReferenceRange: string | null;
@@ -236,7 +240,10 @@ export interface LabTestRefValueRow {
   method: string | null;
   gender: ReferenceGender;
   ageFrom: number;
+  /** Unit of `ageFrom` (DAYS | MONTHS | YEARS) — the number alone is meaningless without it. */
+  ageFromUnit: AgeUnit;
   ageTo: number;
+  ageToUnit: AgeUnit;
   displayValue: string;
   flag: AbnormalFlag;
 }

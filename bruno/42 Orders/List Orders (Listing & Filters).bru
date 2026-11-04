@@ -159,8 +159,10 @@ docs {
   - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
   - `section` — `DIAGNOSTICS` | `OPD` | `RADIOLOGY`; keeps only orders that carry
     that section (the order-console Diagnostics tab sends `DIAGNOSTICS`).
-  - `departmentId` — matches orders with an item whose test/panel carries this
-    (logical) department id.
+  - `departmentId` — matches orders with a test whose department is this one (its
+    own branch value, else its master test's), or a panel with at least one such
+    test among the tests ordered (a partially ordered panel counts only the tests
+    actually ordered). A panel's own department label is not used.
   - `scopeByDepartment` — `true` scopes the list to the **caller's** assigned
     departments (the Order Console sends this). An order is returned only when it
     has at least one item whose test/panel department is unassigned (`NULL` →
@@ -176,7 +178,13 @@ docs {
     (logical) category id.
   - `subCategoryId` — matches orders with a lab test carrying this (logical)
     sub-category id (panels have no sub-category).
-  - `branchLabTestId` / `branchLabPanelId` — matches orders containing that item.
+  - `branchLabTestId` — matches orders where that test was ordered on its own, or is
+    one of the tests ordered inside a panel on the order (a partially ordered panel
+    counts only the tests actually ordered; pricing-list copies of the test match too).
+  - `branchLabPanelId` — matches orders containing that panel.
+  - Each row also carries `itemDetails`: the same entries as `itemNames`, in the same
+    order, as `{ name, isPanel, panelTests }`. `isPanel` is true for a lab panel line. `panelTests` lists the ordered member tests of a
+    panel line (all members when ordered in full) and is empty for a test/direct line.
   - `sampleStatus` — `PENDING` (no items collected) | `PARTIAL` (some collected) |
     `COLLECTED` (all collected), derived from each item's `collectedAt`.
   - `reportStatus` — `PENDING` | `PARTIALLY_COMPLETED` | `COMPLETED` | `APPROVED`,

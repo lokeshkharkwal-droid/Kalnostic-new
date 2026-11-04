@@ -300,6 +300,57 @@ export function orderItemNames(
   );
 }
 
+/** One Order Console "Order Item" entry: the display name plus, for a panel line, its ordered tests. */
+export interface OrderItemDetail {
+  name: string;
+  /** True for a lab panel line (even one with no member tests), so the screen can label it. */
+  isPanel: boolean;
+  /** Names of the panel's member tests that were ordered; empty for a test/direct line. */
+  panelTests: string[];
+}
+
+/**
+ * Same entries, in the same order, as {@link orderItemNames}, each with the member tests of a panel
+ * line. A panel ordered in full (no stored subset) lists all of its members; a partially ordered panel
+ * lists only the tests actually ordered (`selectedMemberBranchLabTestIds`).
+ * @param items the order's active items with their resolved test/panel refs
+ * @param membersByPanel each panel's member tests (id + name) in the panel's own order
+ */
+export function orderItemDetails(
+  items: {
+    direct: string | null;
+    selectedMemberBranchLabTestIds?: string[];
+    branchLabTest: { testName: string; isBillOnlyTest?: boolean } | null;
+    branchLabPanel: {
+      id: string;
+      panelName: string;
+      isBillOnlyTest?: boolean;
+    } | null;
+  }[],
+  membersByPanel: Map<string, { id: string; name: string }[]>,
+): OrderItemDetail[] {
+  return items
+    .filter(
+      (it) =>
+        !it.branchLabTest?.isBillOnlyTest && !it.branchLabPanel?.isBillOnlyTest,
+    )
+    .map((it) => {
+      const name =
+        it.branchLabPanel?.panelName ??
+        it.branchLabTest?.testName ??
+        it.direct ??
+        '—';
+      if (!it.branchLabPanel) return { name, isPanel: false, panelTests: [] };
+      const members = membersByPanel.get(it.branchLabPanel.id) ?? [];
+      const ordered = it.selectedMemberBranchLabTestIds ?? [];
+      const shown =
+        ordered.length > 0
+          ? members.filter((m) => ordered.includes(m.id))
+          : members;
+      return { name, isPanel: true, panelTests: shown.map((m) => m.name) };
+    });
+}
+
 /**
  * Prisma `include` for a fully-composed order read: patient ref, the referral
  * refs (referral doctor / panel and internal / external referral records),
@@ -610,6 +661,9 @@ export const ORDER_LIST_INCLUDE = {
       // in both the Billings list and Finance reports (computeBillingTotals).
       unitPrice: true,
       discount: true,
+      // A panel line's ordered subset of member tests (empty = all members) —
+      // lets the Order Console hover list only the tests actually ordered.
+      selectedMemberBranchLabTestIds: true,
       branchLabTest: {
         select: {
           id: true,
@@ -860,6 +914,11 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    * — drives the Order Console's "Order Item" column and its "+N more" tooltip.
    */
   itemNames: string[];
+  /**
+   * The same entries as `itemNames` (same order), each with the ordered member tests of a panel line
+   * ({@link orderItemDetails}) — drives the Order Console's panel hover.
+   */
+  itemDetails: OrderItemDetail[];
   grossAmount: number;
   discountAmount: number;
   netAmount: number;
