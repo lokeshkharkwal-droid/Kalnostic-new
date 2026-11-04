@@ -11,13 +11,19 @@ docs {
   (RLS) + branch-level: the branch is always the caller's ACTIVE branch from the
   JWT, never a body field.
 
-  In the app: Branch Admin sidebar > BRANCH SETTINGS > Technician Settings
-  (`/branch-admin/branch-settings/technician-settings`).
+  In the app: Branch Admin sidebar > BRANCH SETTINGS, with two groups:
+  - Technician Settings (`/branch-admin/branch-settings/technician-settings`)
+  - QR Code Scan Settings (`/branch-admin/branch-settings/qr-code-scan-settings`)
 
-  Today it holds **Report Printing**: whether the technician may choose, per
+  **Report Printing** (Technician Settings): whether the technician may choose, per
   report, which Notes sections print (one switch for a single lab test, one for a
   test that belongs to a lab panel). The values are stored in the branch's
   `technician_settings` row, which the print code reads.
+
+  **QR Code Scan** (QR Code Scan Settings): what a patient may open/print after
+  scanning the QR code on their bill or report — which bill payment statuses are
+  printable, plus the Bill Print and Report Print templates. Stored in the branch's
+  own `qr_code_scan_settings` row.
 
   Permissions (module `branch_admin`, section "Branch Settings"):
   - `branch_admin:branch_settings__view_branch_settings` - read

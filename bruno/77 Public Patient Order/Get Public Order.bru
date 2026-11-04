@@ -1,0 +1,46 @@
+meta {
+  name: Get Public Order
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/public/orders/{{tenantId}}/{{branchId}}/{{orderId}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the safe public projection", function () {
+    const data = res.getBody().data;
+    expect(data.patient).to.be.an("object");
+    expect(data.order.orderCode).to.be.a("string");
+    expect(data.billing).to.have.property("outstanding");
+    expect(data.reports).to.have.property("hasPublishedReports");
+  });
+  test("does NOT leak patient contact / internal fields", function () {
+    const patient = res.getBody().data.patient;
+    expect(patient).to.not.have.property("mobile");
+    expect(patient).to.not.have.property("email");
+    expect(patient).to.not.have.property("addressLine1");
+    expect(patient).to.not.have.property("id");
+  });
+}
+
+docs {
+  The public order page payload — no auth required. Returns the `meta` envelope
+  with `data`:
+
+  - `patient` — `{ name, umId, photoUrl }` only (no mobile/email/address/DOB/id).
+  - `order` — `{ orderCode, externalOrderId, orderDate, orderTime, doctorName,
+    branchName }`.
+  - `items[]` — `{ name, quantity, unitPrice }` (one row per test/panel).
+  - `billing` — `{ billId, status, gross, discount, net, paid, outstanding }`.
+  - `reports` — `{ hasPublishedReports, publishedCount }` (PUBLISHED only).
+
+  Swapping `branchId`/`tenantId`/`orderId` to an unrelated value returns a
+  generic `404 PUBLIC_ORDER_NOT_FOUND`.
+}

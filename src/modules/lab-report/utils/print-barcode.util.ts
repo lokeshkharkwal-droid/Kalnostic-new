@@ -36,6 +36,118 @@ export async function buildReportBarcodeTags(
 }
 
 /**
+ * The public patient-order page QR code (data URI) — encodes the public,
+ * no-login URL `{frontendUrl}/public/{tenantId}/{branchId}/{orderId}`, so
+ * scanning a printed report opens that order's public page. Printed via the
+ * `{public_order_qr_code}` tag on `lab_report` / `lab_all_report` templates.
+ *
+ * Distinct from `{order_id_qr_code}`, which encodes the raw Order ID
+ * (`Order.orderCode`) for internal scanning — this one carries a URL.
+ *
+ * Returns `''` (the tag renders blank) when the frontend base URL or the
+ * branch id is unknown, or when the value cannot be encoded.
+ * @param frontendUrl the tenant-facing frontend base (`exchange.frontendUrl`)
+ * @param tenantId the order's tenant
+ * @param branchId the order's branch (public URLs are branch-scoped)
+ * @param orderId the order's id
+ */
+export async function publicOrderQrCode(
+  frontendUrl: string | null | undefined,
+  tenantId: string,
+  branchId: string | null | undefined,
+  orderId: string,
+): Promise<string> {
+  if (!frontendUrl || !branchId) {
+    return '';
+  }
+  const base = frontendUrl.replace(/\/+$/, '');
+  return qrCodeDataUri(`${base}/public/${tenantId}/${branchId}/${orderId}`);
+}
+
+/**
+ * QR code (data URI) for a public **document-download** endpoint — encodes a
+ * no-login URL `{frontendUrl}/public/orders/{tenantId}/{branchId}/{orderId}/{suffix}`
+ * where `suffix` is the backend streaming route (`bill.pdf` / `report.pdf`). The
+ * `?download=1` query makes the endpoint send `Content-Disposition: attachment`,
+ * so scanning on a phone saves the document rather than opening it inline.
+ *
+ * Unlike {@link publicOrderQrCode} (which points at the FE *page* route, served
+ * by the SPA at the origin root), these target the backend `public/orders/*`
+ * API routes, which live under the app's global prefix `api/v1` (see
+ * `setGlobalPrefix` in `main.ts`) — the same origin as the frontend via nginx,
+ * matching how the FE itself reaches these PDFs (`{VITE_API_BASE}/public/...`,
+ * where `VITE_API_BASE` carries the `/api/v1` prefix). The endpoints re-validate
+ * the tenant→branch→order chain and apply the branch's QR Code Scan Settings
+ * (bill printability gate; the configured bill/report print templates), so no
+ * auth or template info rides on the QR.
+ *
+ * Returns `''` (the tag renders blank) when the base URL or branch is unknown,
+ * or the value cannot be encoded.
+ * @param frontendUrl the tenant-facing frontend base (`exchange.frontendUrl`)
+ * @param tenantId the order's tenant
+ * @param branchId the order's branch (public URLs are branch-scoped)
+ * @param orderId the order's id
+ * @param suffix the backend download route under the order (`bill.pdf` / `report.pdf`)
+ */
+async function publicOrderDownloadQrCode(
+  frontendUrl: string | null | undefined,
+  tenantId: string,
+  branchId: string | null | undefined,
+  orderId: string,
+  suffix: 'bill.pdf' | 'report.pdf',
+): Promise<string> {
+  if (!frontendUrl || !branchId) {
+    return '';
+  }
+  const base = frontendUrl.replace(/\/+$/, '');
+  return qrCodeDataUri(
+    `${base}/api/v1/public/orders/${tenantId}/${branchId}/${orderId}/${suffix}?download=1`,
+  );
+}
+
+/**
+ * `{qr_download_bill}` — QR to auto-download the patient **bill** PDF (the
+ * public `bill.pdf` endpoint, `?download=1`). Rendered with the branch's
+ * configured Bill Print template and gated by its printable payment statuses,
+ * server-side. See {@link publicOrderDownloadQrCode}.
+ */
+export function publicBillDownloadQrCode(
+  frontendUrl: string | null | undefined,
+  tenantId: string,
+  branchId: string | null | undefined,
+  orderId: string,
+): Promise<string> {
+  return publicOrderDownloadQrCode(
+    frontendUrl,
+    tenantId,
+    branchId,
+    orderId,
+    'bill.pdf',
+  );
+}
+
+/**
+ * `{qr_download_all_report}` — QR to auto-download the order's merged
+ * **published lab reports** PDF (the public `report.pdf` endpoint,
+ * `?download=1`). Rendered with the branch's configured Report Print template,
+ * server-side. See {@link publicOrderDownloadQrCode}.
+ */
+export function publicReportDownloadQrCode(
+  frontendUrl: string | null | undefined,
+  tenantId: string,
+  branchId: string | null | undefined,
+  orderId: string,
+): Promise<string> {
+  return publicOrderDownloadQrCode(
+    frontendUrl,
+    tenantId,
+    branchId,
+    orderId,
+    'report.pdf',
+  );
+}
+
+/**
  * Pick the sample a lab report prints from its candidate sample links (already
  * scoped to the report's test and ordered oldest first): the first one that
  * carries a barcode, else the first one. A test can span several tubes, and a

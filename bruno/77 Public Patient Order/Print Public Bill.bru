@@ -1,0 +1,28 @@
+meta {
+  name: Print Public Bill
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/public/orders/{{tenantId}}/{{branchId}}/{{orderId}}/bill.pdf
+  body: none
+  auth: none
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a PDF", function () {
+    expect(res.getHeader("content-type")).to.include("application/pdf");
+  });
+}
+
+docs {
+  Streams the patient bill PDF for a public order (`application/pdf`, inline). No
+  auth. Reuses the staff `bill_print` pipeline, so the output is identical and
+  the branch "bill copies only when fully paid" rule still applies. Ownership is
+  re-validated on this call — a mismatched id returns `404
+  PUBLIC_ORDER_NOT_FOUND`.
+}

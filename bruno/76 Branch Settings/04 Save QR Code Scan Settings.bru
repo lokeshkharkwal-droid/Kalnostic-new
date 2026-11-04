@@ -1,0 +1,63 @@
+meta {
+  name: 04 Save QR Code Scan Settings
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/branch-settings/qr-code-scan
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "billPrintablePaymentStatuses": ["PAID", "PARTIALLY_PAID"],
+    "billPrintTemplateId": null,
+    "reportPrintTemplateId": null
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved settings", function () {
+    const d = res.getBody().data;
+    expect(d.billPrintablePaymentStatuses).to.have.members(["PAID", "PARTIALLY_PAID"]);
+    expect(d.billPrintTemplateId).to.equal(null);
+    expect(d.reportPrintTemplateId).to.equal(null);
+  });
+}
+
+docs {
+  Save (partial patch, upsert) the active branch's QR Code Scan settings. Every
+  field is optional: a field left out keeps its current value; a template id sent
+  as `null` clears the selection. The response is the resulting settings object.
+
+  - `billPrintablePaymentStatuses` (string[]) — `PaymentStatus` names
+    (`NOT_PAID` / `PARTIALLY_PAID` / `PAID`). Duplicates and unknown values are
+    rejected with 400. Empty array = no bill printable.
+  - `billPrintTemplateId` (string|null) — a `bill_print` template id in THIS
+    tenant. A missing/other-tenant/wrong-type id is rejected
+    (`QR_SCAN_TEMPLATE_NOT_FOUND`, 422).
+  - `reportPrintTemplateId` (string|null) — a `lab_all_report` template id in
+    THIS tenant (same validation).
+
+  Needs `branch_admin:branch_settings__update_branch_settings` (403 without it).
+  Unknown fields, including `branchId`, are rejected with 400: the branch is always
+  the caller's active branch from the JWT. Audited under
+  `AuditModule.QR_CODE_SCAN_SETTINGS`.
+
+  To list the templates for the two dropdowns:
+  - Bill Print: `GET /pdf-report-templates?type=bill_print&status=ACTIVE`
+  - Report Print: `GET /pdf-report-templates?type=lab_all_report&status=ACTIVE`
+}

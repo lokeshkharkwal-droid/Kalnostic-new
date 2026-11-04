@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
@@ -195,6 +196,9 @@ import {
 import {
   buildReportBarcodeTags,
   pickReportSample,
+  publicOrderQrCode,
+  publicBillDownloadQrCode,
+  publicReportDownloadQrCode,
 } from './utils/print-barcode.util';
 import { code128DataUri } from '../../common/utils/barcode-image.util';
 import { TatService, TatSummary } from './tat.service';
@@ -297,6 +301,7 @@ export class LabReportService {
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly referralCredit: ReferralCreditService,
     private readonly appointmentService: AppointmentService,
+    private readonly config: ConfigService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -4718,6 +4723,32 @@ export class LabReportService {
       order.orderCode,
       sample?.barcode,
     );
+    // `{public_order_qr_code}` — QR to the patient's public order page
+    // (`/public/{tenant}/{branch}/{order}`), so scanning a printed report opens
+    // it. Blank when the frontend base URL (`FRONTEND_URL`) or branch is unknown.
+    const frontendUrl = this.config.get<string>('exchange.frontendUrl');
+    const publicOrderQr = await publicOrderQrCode(
+      frontendUrl,
+      tenantId,
+      order.branchId,
+      order.id,
+    );
+    // `{qr_download_bill}` / `{qr_download_all_report}` — QRs to the public
+    // download endpoints (`?download=1` → save-to-device), gated + templated by
+    // the branch's QR Code Scan Settings server-side. Order-scoped, so every
+    // test on the order prints the same two QRs.
+    const billDownloadQr = await publicBillDownloadQrCode(
+      frontendUrl,
+      tenantId,
+      order.branchId,
+      order.id,
+    );
+    const reportDownloadQr = await publicReportDownloadQrCode(
+      frontendUrl,
+      tenantId,
+      order.branchId,
+      order.id,
+    );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
     // print date, and a raw UTC `now` is still yesterday before 05:30 IST.
     const localNow = toBranchLocalInstant(new Date(), timezone);
@@ -5109,6 +5140,12 @@ export class LabReportService {
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
         sample_id_barcode: barcodeTags.sample_id_barcode,
+        // Public patient-order page QR (URL-valued, not an ID) — see above.
+        public_order_qr_code: publicOrderQr,
+        // Public document-download QRs (URL-valued) — scanning saves the bill /
+        // all-reports PDF to the patient's device. See above.
+        qr_download_bill: billDownloadQr,
+        qr_download_all_report: reportDownloadQr,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
@@ -5137,6 +5174,9 @@ export class LabReportService {
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
         sample_id_barcode: barcodeTags.sample_id_barcode,
+        public_order_qr_code: publicOrderQr,
+        qr_download_bill: billDownloadQr,
+        qr_download_all_report: reportDownloadQr,
       },
       sections: { results },
       signatories,
@@ -5364,6 +5404,7 @@ export class LabReportService {
     branchId: string | null,
     orderItemIds?: string[],
     scope?: WorklistBranchScope,
+    publishedOnly = false,
   ): Promise<{
     latteContext: Record<string, unknown>;
     flatContext: GeneratePdfDto;
@@ -5384,6 +5425,8 @@ export class LabReportService {
       ...(orderItemIds && orderItemIds.length > 0
         ? { orderItemId: { in: orderItemIds } }
         : {}),
+      // Public patient access prints PUBLISHED reports only (see printAllForOrder).
+      ...(publishedOnly ? { status: LabReportStatus.PUBLISHED } : {}),
     };
     if (!allBranches) {
       // Own branch only when no scope is given (the share flows).
@@ -5478,6 +5521,30 @@ export class LabReportService {
       // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
       // `Order.orderCode`; templates use it as `<img src=…>`).
       order_id_barcode: code128DataUri(order.orderCode),
+      // Public patient-order page QR (data URI). Latte has no `{{image:…}}`
+      // token, so all-report templates print it as `<img
+      // src="{public_order_qr_code}">`.
+      public_order_qr_code: await publicOrderQrCode(
+        this.config.get<string>('exchange.frontendUrl'),
+        tenantId,
+        order.branchId,
+        order.id,
+      ),
+      // Public document-download QRs (data URIs) — `<img
+      // src="{$header_fields->qr_download_bill}">` / `qr_download_all_report`.
+      // Scanning saves the bill / all-reports PDF to the patient's device.
+      qr_download_bill: await publicBillDownloadQrCode(
+        this.config.get<string>('exchange.frontendUrl'),
+        tenantId,
+        order.branchId,
+        order.id,
+      ),
+      qr_download_all_report: await publicReportDownloadQrCode(
+        this.config.get<string>('exchange.frontendUrl'),
+        tenantId,
+        order.branchId,
+        order.id,
+      ),
     };
 
     // Per-report body + dates, reusing the single-report context builder.
@@ -5610,6 +5677,13 @@ export class LabReportService {
         // "Order — order code" snippet) resolves in a Latte all-report template
         // too; the flat fallback already carries it via `flatContext.variables`.
         order_code: headerFields.order_code,
+        // Root alias so `<img src="{public_order_qr_code}">` resolves in a Latte
+        // all-report header the same way `order_id_barcode` does.
+        public_order_qr_code: headerFields.public_order_qr_code,
+        // Root aliases so the bare `<img src="{qr_download_bill}">` /
+        // `{qr_download_all_report}` tags resolve in a Latte all-report body too.
+        qr_download_bill: headerFields.qr_download_bill,
+        qr_download_all_report: headerFields.qr_download_all_report,
       },
       flatContext,
     };
@@ -5833,6 +5907,7 @@ export class LabReportService {
     templateId?: string,
     orderItemIds?: string[],
     scope?: WorklistBranchScope,
+    publishedOnly = false,
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
@@ -5859,6 +5934,7 @@ export class LabReportService {
           branchId,
           orderItemIds,
           scope,
+          publishedOnly,
         );
         // `generateLattePdf` picks the engine by the template body's syntax: a
         // Latte all-report template (`{foreach $report_tests->tests}`) uses
@@ -5888,6 +5964,9 @@ export class LabReportService {
       ...(orderItemIds && orderItemIds.length > 0
         ? { orderItemId: { in: orderItemIds } }
         : {}),
+      // Public patient access prints PUBLISHED reports only — an APPROVED but
+      // not-yet-released report must never surface on the public page.
+      ...(publishedOnly ? { status: LabReportStatus.PUBLISHED } : {}),
     };
     if (!allBranches) {
       this.applyBranchScope(

@@ -8,7 +8,9 @@ import { RequirePermission } from '../permissions/decorators/require-permission.
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
 import { BranchSettingsService } from './branch-settings.service';
+import { QrCodeScanSettingsService } from './qr-code-scan-settings.service';
 import { SaveReportPrintingSettingsDto } from './dto/save-report-printing-settings.dto';
+import { SaveQrCodeScanSettingsDto } from './dto/save-qr-code-scan-settings.dto';
 
 /**
  * Branch Admin › Branch Settings. Business-authenticated; tenant from the JWT, the
@@ -18,7 +20,10 @@ import { SaveReportPrintingSettingsDto } from './dto/save-report-printing-settin
 @Controller('branch-settings')
 @UseGuards(PermissionGuard)
 export class BranchSettingsController {
-  constructor(private readonly branchSettings: BranchSettingsService) {}
+  constructor(
+    private readonly branchSettings: BranchSettingsService,
+    private readonly qrCodeScanSettings: QrCodeScanSettingsService,
+  ) {}
 
   /** The active branch's report-printing settings. */
   @Get('report-printing')
@@ -47,6 +52,39 @@ export class BranchSettingsController {
     @Body() dto: SaveReportPrintingSettingsDto,
   ) {
     return this.branchSettings.saveReportPrinting(
+      tenantId,
+      profile.branchId ?? '',
+      dto,
+    );
+  }
+
+  /** The active branch's QR Code Scan settings. */
+  @Get('qr-code-scan')
+  @RequirePermission(PERMISSION_KEYS.BR_SETTINGS_VIEW)
+  getQrCodeScan(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.qrCodeScanSettings.getForBranch(
+      tenantId,
+      profile.branchId ?? '',
+    );
+  }
+
+  /** Save the active branch's QR Code Scan settings. */
+  @Put('qr-code-scan')
+  @RequirePermission(PERMISSION_KEYS.BR_SETTINGS_UPDATE)
+  @Audit({
+    module: AuditModule.QR_CODE_SCAN_SETTINGS,
+    action: AuditAction.UPDATE,
+    description: 'Updated branch QR Code Scan settings',
+  })
+  saveQrCodeScan(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Body() dto: SaveQrCodeScanSettingsDto,
+  ) {
+    return this.qrCodeScanSettings.saveForBranch(
       tenantId,
       profile.branchId ?? '',
       dto,
