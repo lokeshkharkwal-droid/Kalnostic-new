@@ -29,6 +29,10 @@ import {
   BranchLabTestListRow,
   BranchLabTestSyncResult,
 } from './entities/branch-lab-test.entity';
+import {
+  MasterSampleRow,
+  pickSampleHandlingInstructions,
+} from './utils/sample-handling.util';
 
 /** Result of a bulk-edit: the number of branch lab tests updated. */
 export interface BranchLabTestBulkEditResult {
@@ -54,6 +58,17 @@ export interface BranchLabTestOption {
   tatMinUnit: TatUnit | null;
   tatMaxValue: number | null;
   tatMaxUnit: TatUnit | null;
+  /**
+   * Notes → "Useful For" (rich-text HTML). Present only when the caller asks
+   * for `includeSampleInfo` (the Create-Order Diagnostic Items sample popup).
+   */
+  usefulFor?: string | null;
+  /**
+   * "Sample Handling Instructions" of the sample named by `sampleName`, read
+   * live from Master Data (see `resolveSampleHandlingInstructions`);
+   * `includeSampleInfo` only.
+   */
+  sampleHandlingInstructions?: string | null;
 }
 
 /** The scope/actor a source Master Data test is materialized into. */
@@ -696,6 +711,12 @@ export class BranchLabTestService {
    * `includeAka` widens `search` to also match the test's AKA ("also known as")
    * name, so the Create-Order picker finds a test by either name. Opt-in like
    * `preferredOnly`, so the other pickers keep their name-only search.
+   *
+   * `includeSampleInfo` adds `usefulFor` and the shown sample's
+   * `sampleHandlingInstructions` (read live from Master Data — see
+   * `resolveSampleHandlingInstructions`) to every option, for the Create-Order
+   * sample popup. Opt-in so the other pickers keep their lean payload (and skip
+   * the extra lookup).
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
    * @param filters optional search + offset pagination
@@ -711,6 +732,7 @@ export class BranchLabTestService {
       listId?: string;
       preferredOnly?: boolean;
       includeAka?: boolean;
+      includeSampleInfo?: boolean;
     } = {},
   ): Promise<
     Array<BranchLabTestOption> | PaginatedResult<BranchLabTestOption>
@@ -751,23 +773,30 @@ export class BranchLabTestService {
       tatMinUnit: true,
       tatMaxValue: true,
       tatMaxUnit: true,
+      usefulFor: true,
+      sourceLabTestId: true,
     } as const;
     const orderBy = { testName: 'asc' } as const;
-    const toOption = (r: {
-      id: string;
-      testName: string;
-      listPrice: number;
-      isAllowDiscounts: boolean;
-      isBillOnlyTest: boolean;
-      configSnapshot: Prisma.JsonValue;
-      scheduleDays: DayOfWeek[];
-      scheduleFrom: string | null;
-      scheduleTo: string | null;
-      tatMinValue: number | null;
-      tatMinUnit: TatUnit | null;
-      tatMaxValue: number | null;
-      tatMaxUnit: TatUnit | null;
-    }): BranchLabTestOption => {
+    const toOption = (
+      r: {
+        id: string;
+        testName: string;
+        listPrice: number;
+        isAllowDiscounts: boolean;
+        isBillOnlyTest: boolean;
+        configSnapshot: Prisma.JsonValue;
+        scheduleDays: DayOfWeek[];
+        scheduleFrom: string | null;
+        scheduleTo: string | null;
+        tatMinValue: number | null;
+        tatMinUnit: TatUnit | null;
+        tatMaxValue: number | null;
+        tatMaxUnit: TatUnit | null;
+        usefulFor: string | null;
+        sourceLabTestId: string | null;
+      },
+      handling?: Map<string, string | null>,
+    ): BranchLabTestOption => {
       const sample = (
         r.configSnapshot as unknown as BranchLabTestConfigSnapshot
       )?.samples?.[0];
@@ -787,6 +816,10 @@ export class BranchLabTestService {
         tatMinUnit: r.tatMinUnit,
         tatMaxValue: r.tatMaxValue,
         tatMaxUnit: r.tatMaxUnit,
+        ...(filters.includeSampleInfo && {
+          usefulFor: r.usefulFor,
+          sampleHandlingInstructions: handling?.get(r.id) ?? null,
+        }),
       };
     };
 
@@ -796,7 +829,10 @@ export class BranchLabTestService {
         select,
         orderBy,
       });
-      return rows.map(toOption);
+      const handling = filters.includeSampleInfo
+        ? await this.resolveSampleHandlingInstructions(tenantId, rows)
+        : undefined;
+      return rows.map((r) => toOption(r, handling));
     }
 
     const page = filters.page;
@@ -811,7 +847,132 @@ export class BranchLabTestService {
       }),
       this.prisma.branchLabTest.count({ where }),
     ]);
-    return { data: rows.map(toOption), total, page, limit };
+    const handling = filters.includeSampleInfo
+      ? await this.resolveSampleHandlingInstructions(tenantId, rows)
+      : undefined;
+    return {
+      data: rows.map((r) => toOption(r, handling)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
+   * Live "Sample Handling Instructions" for branch Lab Test List copies — the
+   * Create-Order Diagnostic Items sample popup.
+   *
+   * A copy's `configSnapshot` is frozen at its last Sync, so the value is read
+   * live from Master Data instead: the copy's Tenant Master Data test first
+   * (`sourceLabTestId` → Branch Master Data test → `sourceMasterLabTestId`),
+   * then its Branch Master Data test, taking the active sample whose name
+   * matches the row's shown sample (`configSnapshot.samples[0]`). With no
+   * matching live sample the snapshot value is kept. Batched: three queries in
+   * two round trips for the whole page, whatever its size.
+   * @param tenantId tenant scope (from JWT)
+   * @param rows list copies (`id`, `sourceLabTestId`, `configSnapshot`)
+   * @returns copy id → instructions (`null` when none) — an entry for every row
+   */
+  async resolveSampleHandlingInstructions(
+    tenantId: string,
+    rows: Array<{
+      id: string;
+      sourceLabTestId: string | null;
+      configSnapshot: Prisma.JsonValue;
+    }>,
+  ): Promise<Map<string, string | null>> {
+    const result = new Map<string, string | null>();
+    if (rows.length === 0) return result;
+
+    const sourceIds = [
+      ...new Set(
+        rows
+          .map((r) => r.sourceLabTestId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    // Branch Master Data tests the copies were snapshotted from (incl. a
+    // soft-deleted one, so its tenant link is still followed).
+    const branchTests = sourceIds.length
+      ? await this.prisma.labTest.findMany({
+          where: { tenantId, id: { in: sourceIds } },
+          select: { id: true, sourceMasterLabTestId: true, deletedAt: true },
+        })
+      : [];
+    const branchTestById = new Map(branchTests.map((t) => [t.id, t]));
+    const tenantIds = [
+      ...new Set(
+        branchTests
+          .map((t) => t.sourceMasterLabTestId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const candidateIds = [
+      ...new Set([...branchTests.map((t) => t.id), ...tenantIds]),
+    ];
+
+    // `LabTestSample` has no Prisma relation to `LabTest`, so the tenant tests'
+    // liveness is a separate (parallel) query.
+    const [activeTenantTests, samples] = candidateIds.length
+      ? await Promise.all([
+          tenantIds.length
+            ? this.prisma.labTest.findMany({
+                where: { tenantId, id: { in: tenantIds }, deletedAt: null },
+                select: { id: true },
+              })
+            : Promise.resolve([] as Array<{ id: string }>),
+          this.prisma.labTestSample.findMany({
+            where: {
+              tenantId,
+              labTestId: { in: candidateIds },
+              deletedAt: null,
+            },
+            select: {
+              labTestId: true,
+              sampleName: true,
+              sampleHandlingInstructions: true,
+            },
+            // Deterministic pick when a test has two same-named samples.
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+          }),
+        ])
+      : [[] as Array<{ id: string }>, [] as MasterSampleRow[]];
+    const activeTenantIds = new Set(activeTenantTests.map((t) => t.id));
+    const samplesByTestId = new Map<string, MasterSampleRow[]>();
+    for (const sample of samples) {
+      const list = samplesByTestId.get(sample.labTestId) ?? [];
+      list.push(sample);
+      samplesByTestId.set(sample.labTestId, list);
+    }
+
+    for (const r of rows) {
+      const snapshotSample = (
+        r.configSnapshot as unknown as BranchLabTestConfigSnapshot
+      )?.samples?.[0];
+      const branchTest = r.sourceLabTestId
+        ? branchTestById.get(r.sourceLabTestId)
+        : undefined;
+      const candidateTestIds: string[] = [];
+      if (
+        branchTest?.sourceMasterLabTestId &&
+        activeTenantIds.has(branchTest.sourceMasterLabTestId)
+      ) {
+        candidateTestIds.push(branchTest.sourceMasterLabTestId);
+      }
+      if (branchTest && !branchTest.deletedAt) {
+        candidateTestIds.push(branchTest.id);
+      }
+      result.set(
+        r.id,
+        pickSampleHandlingInstructions({
+          sampleName: snapshotSample?.sampleName,
+          snapshotValue: snapshotSample?.sampleHandlingInstructions,
+          candidateTestIds,
+          samplesByTestId,
+        }),
+      );
+    }
+    return result;
   }
 
   /**
