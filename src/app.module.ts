@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ThrottlerModule } from '@nestjs/throttler';
 // Aliased: the project already has a domain `ScheduleModule`
 // (src/modules/schedule) for shift scheduling — this is the @nestjs/schedule
 // background-job scheduler that powers @Cron jobs (e.g. audit-log retention).
@@ -94,6 +95,7 @@ import { SettlementModule } from './modules/settlement/settlement.module';
 import { FinancePaymentsModule } from './modules/finance-payments/finance-payments.module';
 import { CommunicationModule } from './modules/communication/communication.module';
 import { EmiModule } from './modules/emi/emi.module';
+import { PublicModule } from './modules/public/public.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
@@ -118,6 +120,12 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
     // In-process domain events (users.* emitted by UsersService).
     EventEmitterModule.forRoot(),
+
+    // Rate-limiting config + storage for the public (unauthenticated) routes.
+    // No global `ThrottlerGuard` is registered — the public controller applies
+    // it locally, so authenticated routes are unaffected. This base limit is a
+    // backstop; the public routes set their own stricter `@Throttle`.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
 
     // Background-job scheduler (@Cron). Powers the daily audit-log retention
     // purge in AuditService. Aliased import — see top of file.
@@ -209,6 +217,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     RegistrationSettingsModule,
     PermissionsModule,
     EmiModule,
+    PublicModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

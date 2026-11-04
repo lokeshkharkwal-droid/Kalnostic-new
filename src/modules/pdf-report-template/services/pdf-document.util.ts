@@ -166,12 +166,18 @@ export function resolveImageTokens(
  *  - `order_id_barcode` — the Order ID (`Order.orderCode`) barcode.
  *  - `order_id_qr_code` — the Order ID (`Order.orderCode`) QR code.
  *  - `sample_id_barcode` — the Sample ID (`OrderSample.barcode`) barcode.
+ *  - `public_order_qr_code` — QR to the patient's public order page (a URL).
+ *  - `qr_download_bill` — QR to auto-download the patient bill PDF (a URL).
+ *  - `qr_download_all_report` — QR to auto-download the merged reports PDF (a URL).
  * Every other image-valued key (`patient_image`, …) keeps printing its URL.
  */
 export const BARE_IMAGE_TAG_KEYS = new Set([
   'order_id_barcode',
   'order_id_qr_code',
   'sample_id_barcode',
+  'public_order_qr_code',
+  'qr_download_bill',
+  'qr_download_all_report',
 ]);
 
 /** A flat single-brace `{identifier}` tag (same shape as the flat engine's). */
