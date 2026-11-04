@@ -65,21 +65,23 @@ export async function publicOrderQrCode(
 }
 
 /**
- * QR code (data URI) for a public **document-download** endpoint — encodes a
- * no-login URL `{frontendUrl}/public/orders/{tenantId}/{branchId}/{orderId}/{suffix}`
- * where `suffix` is the backend streaming route (`bill.pdf` / `report.pdf`). The
- * `?download=1` query makes the endpoint send `Content-Disposition: attachment`,
- * so scanning on a phone saves the document rather than opening it inline.
+ * QR code (data URI) for a public **document download** — encodes the no-login
+ * FE page URL `{frontendUrl}/public/{tenantId}/{branchId}/{orderId}?download={doc}`
+ * (`doc` = `bill` | `report`). Scanning opens the public order page, which then
+ * fetches that PDF and saves it to the device (a blob download), with a visible
+ * Download button as a fallback.
  *
- * Unlike {@link publicOrderQrCode} (which points at the FE *page* route, served
- * by the SPA at the origin root), these target the backend `public/orders/*`
- * API routes, which live under the app's global prefix `api/v1` (see
- * `setGlobalPrefix` in `main.ts`) — the same origin as the frontend via nginx,
- * matching how the FE itself reaches these PDFs (`{VITE_API_BASE}/public/...`,
- * where `VITE_API_BASE` carries the `/api/v1` prefix). The endpoints re-validate
- * the tenant→branch→order chain and apply the branch's QR Code Scan Settings
- * (bill printability gate; the configured bill/report print templates), so no
- * auth or template info rides on the QR.
+ * Why the page and not the raw PDF: a QR is usually opened in a phone's in-app
+ * webview / mobile browser, which does NOTHING with a forced-`attachment` binary
+ * (no download handler → blank screen = "nothing happens"). Routing through the
+ * SPA page — a normal HTML page every webview can render — lets a `fetch` + blob
+ * + `<a download>` reliably save the file, and degrades to a readable page when
+ * a locked-down webview still blocks the save. The page's own actions honour the
+ * branch's QR Code Scan Settings (bill printability gate; configured templates),
+ * resolved server-side.
+ *
+ * Same FE *page* route as {@link publicOrderQrCode} (served by the SPA at the
+ * origin root — no `/api/v1` prefix), just carrying the `download` query.
  *
  * Returns `''` (the tag renders blank) when the base URL or branch is unknown,
  * or the value cannot be encoded.
@@ -87,29 +89,27 @@ export async function publicOrderQrCode(
  * @param tenantId the order's tenant
  * @param branchId the order's branch (public URLs are branch-scoped)
  * @param orderId the order's id
- * @param suffix the backend download route under the order (`bill.pdf` / `report.pdf`)
+ * @param doc which document the page should auto-download (`bill` / `report`)
  */
 async function publicOrderDownloadQrCode(
   frontendUrl: string | null | undefined,
   tenantId: string,
   branchId: string | null | undefined,
   orderId: string,
-  suffix: 'bill.pdf' | 'report.pdf',
+  doc: 'bill' | 'report',
 ): Promise<string> {
   if (!frontendUrl || !branchId) {
     return '';
   }
   const base = frontendUrl.replace(/\/+$/, '');
   return qrCodeDataUri(
-    `${base}/api/v1/public/orders/${tenantId}/${branchId}/${orderId}/${suffix}?download=1`,
+    `${base}/public/${tenantId}/${branchId}/${orderId}?download=${doc}`,
   );
 }
 
 /**
- * `{qr_download_bill}` — QR to auto-download the patient **bill** PDF (the
- * public `bill.pdf` endpoint, `?download=1`). Rendered with the branch's
- * configured Bill Print template and gated by its printable payment statuses,
- * server-side. See {@link publicOrderDownloadQrCode}.
+ * `{qr_download_bill}` — QR that opens the public order page and auto-downloads
+ * the patient **bill** PDF to the device. See {@link publicOrderDownloadQrCode}.
  */
 export function publicBillDownloadQrCode(
   frontendUrl: string | null | undefined,
@@ -117,20 +117,13 @@ export function publicBillDownloadQrCode(
   branchId: string | null | undefined,
   orderId: string,
 ): Promise<string> {
-  return publicOrderDownloadQrCode(
-    frontendUrl,
-    tenantId,
-    branchId,
-    orderId,
-    'bill.pdf',
-  );
+  return publicOrderDownloadQrCode(frontendUrl, tenantId, branchId, orderId, 'bill');
 }
 
 /**
- * `{qr_download_all_report}` — QR to auto-download the order's merged
- * **published lab reports** PDF (the public `report.pdf` endpoint,
- * `?download=1`). Rendered with the branch's configured Report Print template,
- * server-side. See {@link publicOrderDownloadQrCode}.
+ * `{qr_download_all_report}` — QR that opens the public order page and
+ * auto-downloads the order's merged **published lab reports** PDF to the device.
+ * See {@link publicOrderDownloadQrCode}.
  */
 export function publicReportDownloadQrCode(
   frontendUrl: string | null | undefined,
@@ -138,13 +131,7 @@ export function publicReportDownloadQrCode(
   branchId: string | null | undefined,
   orderId: string,
 ): Promise<string> {
-  return publicOrderDownloadQrCode(
-    frontendUrl,
-    tenantId,
-    branchId,
-    orderId,
-    'report.pdf',
-  );
+  return publicOrderDownloadQrCode(frontendUrl, tenantId, branchId, orderId, 'report');
 }
 
 /**
