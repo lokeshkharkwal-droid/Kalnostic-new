@@ -312,6 +312,7 @@ enum AuditModule {
   SALES_SETTINGS
   REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
+  QR_CODE_SCAN_SETTINGS // Branch Settings: what a patient may open/print from a bill/report QR code
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
   LAB_TEST_FIELD_PERMISSIONS
   OVERALL_RESULT_TEMPLATE
@@ -6656,6 +6657,14 @@ model Order {
   appointmentId String?      @unique @map("appointment_id")
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
+  // Set once when an appointment order is checked in (the Create → Confirm
+  // "Check-In" action, `dto.checkIn`, which advances the linked appointment to
+  // CHECKED_IN). A checked-in appointment stays `status = APPOINTMENT` but
+  // behaves like an order; the Billings screen uses this as its bill/appointment
+  // date (when the patient was actually checked in), falling back to `createdAt`
+  // for plain orders. NULL = never checked in.
+  checkedInAt DateTime? @map("checked_in_at")
+
   // Referral & B2B billing (all optional)
   referredByDoctorId String?         @map("referred_by_doctor_id")
   referredByDoctor   ReferralDoctor? @relation(fields: [referredByDoctorId], references: [id])
@@ -8938,6 +8947,40 @@ model TechnicianSetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("technician_settings")
+}
+
+/// Branch Admin › Branch Settings › QR Code Scan Settings. Decides what a patient
+/// may open/print after scanning the QR code on their bill or report, for THIS
+/// branch (it applies to every patient of the branch). Tenant-scoped + branch-level
+/// (CLAUDE.md §4.6): one row per branch (unique `(tenantId, branchId)`), created on
+/// first read so the frontend always receives a complete object.
+model QrCodeScanSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  /// Which bill payment statuses a patient may print from the bill QR code.
+  /// Empty = the patient may print no bill. The UI's "All" is simply all three
+  /// values selected. Defaults to PAID only (a fully-paid bill is printable).
+  billPrintablePaymentStatuses PaymentStatus[] @default([PAID]) @map("bill_printable_payment_statuses")
+
+  /// The `pdf_report_templates` row (type `bill_print`) used to render the bill a
+  /// patient prints from the QR code. NULL = none chosen yet (print falls back to
+  /// the tenant's normal bill-print resolution).
+  billPrintTemplateId String? @map("bill_print_template_id")
+
+  /// The `pdf_report_templates` row (type `lab_all_report`) used to render the
+  /// consolidated report a patient prints from the QR code. NULL = none chosen yet.
+  reportPrintTemplateId String? @map("report_print_template_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("qr_code_scan_settings")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
