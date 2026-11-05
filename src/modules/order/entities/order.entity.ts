@@ -869,6 +869,13 @@ export type BillingRecordRow = BillingOrder & {
   dateTimeDisplay?: string;
   responsibleUser?: string | null;
   /**
+   * The `Person.id` that {@link responsibleUser} was resolved from (same actor:
+   * order creator / payment collector / refunder / canceller). Keys the
+   * frontend's Userwise PDF grouping so two users sharing a display name are
+   * never merged. Null when no actor was recorded.
+   */
+  responsibleUserId?: string | null;
+  /**
    * The resolved display name of the order's ORIGINAL creator (`Order.createdBy`),
    * attached by `billingRecords` for EVERY report. Distinct from
    * {@link responsibleUser}, which on Collection/Refund/Cancel is the

@@ -25,7 +25,10 @@ docs {
   member carries the per-test display fields (`branchLabTestId`, `name`,
   `sampleName`, `sampleType`, `isFasting`, `samplePriorityType` (ROUTINE/URGENT/STAT),
   `scheduleDays`, `scheduleFrom`, `scheduleTo`, `tatMin*`/`tatMax*`), plus
-  `isRemovable` (from the BranchLabPanelTest junction) and `isBillOnlyTest`.
+  `isRemovable` (from the BranchLabPanelTest junction) and `isBillOnlyTest`, and
+  the sample-popup fields `usefulFor` (Notes → "Useful For", rich-text HTML) and
+  `sampleHandlingInstructions` (of the sample named by `sampleName`, read live
+  from Master Data, same as the lab-test options), both nullable.
   Members are returned in the panel's own `sortOrder`.
 
   The frontend uses this to let a user de-select individual tests of a panel: a

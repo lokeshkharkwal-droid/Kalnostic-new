@@ -36,4 +36,6 @@ docs {
   includes both order-level and per-line-item discounts. For the item-level
   dimensions each row's figures are the sum of that order's allocated matching
   lines. `Σ records === collection-summary` for the same filters.
+  `responsibleUser` / `responsibleUserId` name the payment's collector (falls back
+  to the order creator); the Userwise PDF groups by `responsibleUserId`.
 }

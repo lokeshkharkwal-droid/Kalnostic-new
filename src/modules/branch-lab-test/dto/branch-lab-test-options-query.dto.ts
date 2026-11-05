@@ -26,6 +26,12 @@ import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
  * - `includeAka` — when true, `search` also matches the test's AKA ("also
  *   known as") name, not just `testName`. Opt-in for the same reason as
  *   `preferredOnly`: other pickers keep their name-only search unchanged.
+ * - `includeSampleInfo` — when true, each option also carries the test's
+ *   `usefulFor` (Notes → Useful For, rich-text HTML) and its shown sample's
+ *   `sampleHandlingInstructions` (read live from Master Data, not the list
+ *   copy's Sync snapshot), for the Create-Order Diagnostic Items sample
+ *   popup. Opt-in so the other pickers sharing this endpoint keep their lean
+ *   payload.
  */
 export class BranchLabTestOptionsQueryDto extends PaginationQueryDto {
   @IsOptional()
@@ -48,4 +54,10 @@ export class BranchLabTestOptionsQueryDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   includeAka?: boolean;
+
+  /** Also return `usefulFor` + `sampleHandlingInstructions` per option (Create-Order). */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeSampleInfo?: boolean;
 }
