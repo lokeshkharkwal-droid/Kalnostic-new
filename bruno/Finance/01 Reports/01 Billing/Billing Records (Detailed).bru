@@ -74,7 +74,10 @@ docs {
   Every row also carries display helpers attached server-side: `dateTimeDisplay`
   (localised `"YYYY-MM-DD HH:mm"`), `responsibleUser` (the person the report holds
   responsible — the order creator for Billing/Outstanding, the collector / refunder
-  / canceller for the other reports), and **`orderCreatedByName`** — the order's
+  / canceller for the other reports), **`responsibleUserId`** (that same person's
+  `Person.id`, `null` when none was recorded; the FE keys its Userwise PDF groups
+  on it so two users sharing a display name stay apart), and
+  **`orderCreatedByName`** — the order's
   ORIGINAL creator (`Order.createdBy`), resolved for every report so the FE can show
   a consistent "Order Created By" column regardless of who performed the finance
   action. `null` when no creator was recorded (never a raw UUID).

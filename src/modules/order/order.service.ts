@@ -5623,6 +5623,9 @@ export class OrderService {
       // `resolveActorNames` only maps ids it actually found, so an unresolved id
       // becomes null rather than a raw UUID leaking to the client.
       r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+      // That same actor's Person id, so the FE's Userwise PDF can group by person
+      // (two users sharing a display name stay apart), as it does by `createdBy`.
+      r.responsibleUserId = actorId;
       // The order's ORIGINAL creator — resolved for every report, not just the
       // ones whose responsible actor happens to be the creator — so each Finance
       // page can show a consistent "Order Created By" independent of who performed
