@@ -62,6 +62,12 @@ export interface PublicOrderView {
     name: string;
     quantity: number;
     unitPrice: number;
+    /**
+     * Maximum turnaround time from the test/panel master data ("TAT Maximum"),
+     * formatted for display, e.g. "48 Hours" / "2 Days" / "1 Hour". Null for a
+     * direct (free-text) item or when the catalogue entry has no max TAT.
+     */
+    tat: string | null;
   }>;
   billing: {
     /** The bill reference shown to the patient — the order code. */

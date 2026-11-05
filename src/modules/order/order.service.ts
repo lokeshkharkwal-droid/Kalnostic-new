@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { publicOrderQrCode } from '../lab-report/utils/print-barcode.util';
 import {
   AppointmentStatus,
   AppointmentType,
@@ -474,6 +476,7 @@ export class OrderService {
     private readonly referralCredit: ReferralCreditService,
     private readonly patientService: PatientService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -2746,10 +2749,23 @@ export class OrderService {
     // order) and for the `sections.items` repeat block below.
     const itemRows = await this.itemRowsWithPanelTests(order);
     const panelTestsName = this.panelTestsNameFlat(itemRows);
+    // `{public_order_qr_code}` — QR to the patient's public order page
+    // (`/public/{tenant}/{branch}/{order}`), so scanning the printed bill opens
+    // it. Blank when the frontend base URL (`FRONTEND_URL`) or branch is unknown.
+    const publicOrderQr = await publicOrderQrCode(
+      this.config.get<string>('exchange.frontendUrl'),
+      tenantId,
+      order.branchId,
+      order.id,
+    );
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
+        // Public patient-order page QR (URL-valued). Renders as an image whether
+        // written `{public_order_qr_code}`, `{{image:public_order_qr_code}}` or
+        // `<img src="{public_order_qr_code}">` (see BARE_IMAGE_TAG_KEYS + images).
+        public_order_qr_code: publicOrderQr,
         order_date: formatTenantDate(order.orderDate, dateFormat),
         // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`
         // (distinct from `bill_date_time`, which is when the bill was generated).
@@ -2787,6 +2803,11 @@ export class OrderService {
         effective_paid: effectivePaid,
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
+      },
+      // Backs `{{image:public_order_qr_code}}` and the bare `{public_order_qr_code}`
+      // image tag — image-valued keys resolve against this map, not `variables`.
+      images: {
+        public_order_qr_code: publicOrderQr,
       },
       sections: {
         items: itemRows,

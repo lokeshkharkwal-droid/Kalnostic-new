@@ -65,6 +65,21 @@ function num(value: Prisma.Decimal | number | null | undefined): number {
 }
 
 /**
+ * The "TAT Maximum" from a test/panel's master data as a display string, e.g.
+ * `48 → HOURS` → "48 Hours", `1 → HOURS` → "1 Hour", `2 → DAYS` → "2 Days".
+ * Returns null when either the value or the unit is missing.
+ */
+function formatTat(
+  value: number | null | undefined,
+  unit: string | null | undefined,
+): string | null {
+  if (value == null || !unit) return null;
+  const label = titleCase(unit);
+  const singular = value === 1 ? label.replace(/s$/, '') : label;
+  return `${value} ${singular}`;
+}
+
+/**
  * Public (no-login) order access for the patient-facing order page
  * (`/public/:tenantId/:branchId/:orderId`). Every read re-validates the full
  * tenant → branch → order ownership chain so swapping a URL id can never reach
@@ -375,16 +390,22 @@ export class PublicService {
           .trim() || null
       : null;
 
-    const items = order.items.map((it) => ({
-      name:
-        it.branchLabTest?.testName ??
-        it.branchLabPanel?.panelName ??
-        it.direct ??
-        'Test',
-      // There is no per-line quantity in the schema — each line is one test/panel.
-      quantity: 1,
-      unitPrice: num(it.unitPrice),
-    }));
+    const items = order.items.map((it) => {
+      // "TAT Maximum" comes from whichever catalogue entry backs the line (test
+      // or panel); direct free-text items have no catalogue TAT.
+      const catalogue = it.branchLabTest ?? it.branchLabPanel ?? null;
+      return {
+        name:
+          it.branchLabTest?.testName ??
+          it.branchLabPanel?.panelName ??
+          it.direct ??
+          'Test',
+        // There is no per-line quantity in the schema — each line is one test/panel.
+        quantity: 1,
+        unitPrice: num(it.unitPrice),
+        tat: formatTat(catalogue?.tatMaxValue, catalogue?.tatMaxUnit),
+      };
+    });
 
     const gross = order.grossAmount;
     const discount = order.discountAmount;
