@@ -71,12 +71,17 @@ docs {
 
   ## Filters (toggle the `~` to enable a query param)
 
-  - `search` — matches accession number, barcode **or** order id (e.g. `ORD-00717`), plus patient name / UHID / mobile (case-insensitive).
+  - `search` — Global Search (max 50 characters, trimmed, case-insensitive; `%`, `_` and `\` are matched as typed). Matches
+    accession number, barcode, order id (e.g. `ORD-00717`), patient name (a full name matches in any word order: every word
+    must be found across first / middle / last name), UHID, mobile, referral-panel name, and the test or panel name on the
+    order. The same matching as Technician → Reporting's search plus Accession No / UHID / mobile; the summary (tab counts) and
+    the PDF export follow it identically.
   - `status` — the §A.5 status tab (a `SampleStatus` — the 15-stage lifecycle).
   - `priority` — `ROUTINE` | `URGENT` | `STAT`.
   - `collectionStatus` — order-level **collection progress** `PENDING` | `PARTIAL`
-    | `COLLECTED` (derived from the order's workflow items' `collectedAt`; distinct
-    from `status`). Same rule as the Order Console's `sampleStatus`.
+    | `COLLECTED` (derived from the order's samples' `collectedAt` — cancelled and
+    removed-test samples are left out; distinct from `status`). Same rule as the
+    Order Console's `sampleStatus`.
   - `tatStatus` — derived TAT band (translated to a `createdAt` range server-side).
   - `orderId` / `originBranchId` / `processingBranchId` — scoping filters.
   - `patientId` / `referredByDoctorId` / `referralPanelId` — via the linked order.
