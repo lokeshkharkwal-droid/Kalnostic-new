@@ -17,15 +17,15 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { barcodeGroupKey } from './utils/barcode-group-key';
 import { timestampRange } from '../../common/utils/date-range.util';
 import {
   buildCollectionProgressWhere,
-  deriveCollectionProgress,
-  COLLECTION_WORKFLOW_ITEM_WHERE,
+  collectionProgressByOrder,
 } from '../../common/utils/collection-progress.util';
-import type { CollectionProgress } from '../../common/utils/collection-progress.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
@@ -1372,35 +1372,14 @@ export class OrderSampleService {
           orderBy: { createdAt: 'desc' },
         });
 
-        // Order-level collection progress for the page's orders — one bounded
-        // query over the workflow items' `collectedAt` (bill-only items excluded),
-        // folded into collected/total per order (§A.6 "Collection Status" column).
-        const itemRows =
-          orderIds.length > 0
-            ? await tx.orderItem.findMany({
-                where: {
-                  orderId: { in: orderIds },
-                  tenantId,
-                  deletedAt: null,
-                  ...COLLECTION_WORKFLOW_ITEM_WHERE,
-                },
-                select: { orderId: true, collectedAt: true },
-              })
-            : [];
-        const counts = new Map<string, { collected: number; total: number }>();
-        for (const it of itemRows) {
-          const c = counts.get(it.orderId) ?? { collected: 0, total: 0 };
-          c.total += 1;
-          if (it.collectedAt) c.collected += 1;
-          counts.set(it.orderId, c);
-        }
-        const collectionByOrderId = new Map<string, CollectionProgress>();
-        for (const [orderId, c] of counts) {
-          collectionByOrderId.set(
-            orderId,
-            deriveCollectionProgress(c.collected, c.total),
-          );
-        }
+        // Order-level collection progress for the page's orders, derived from the
+        // orders' samples (§A.6 "Collection Status" column) — the same rule as the
+        // Order Console's "Sample Status" and the `collectionStatus` filter.
+        const collectionByOrderId = await collectionProgressByOrder(
+          tx,
+          tenantId,
+          orderIds,
+        );
 
         return {
           orderIds,
@@ -1488,6 +1467,24 @@ export class OrderSampleService {
     tenantId: string,
     orderId: string,
   ): Promise<InHouseOrderGroup | null> {
+    // B2B Referral Panel isolation: a panel session sees the samples of its own
+    // orders only (this endpoint is open to B2B for the Order Console overview).
+    // An unknown order is refused the same way. A no-op for every other session.
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      const owned = await this.prisma.order.findFirst({
+        where: {
+          id: orderId,
+          tenantId,
+          deletedAt: null,
+          referralPanelId: panelId,
+        },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new ReferralPanelAccessDeniedException('order', orderId);
+      }
+    }
     const nowMs = Date.now();
     // TAT bands are branch-scoped; without the modal's active branch we resolve
     // the tenant default (branchId = null) — good enough for the derived band a
@@ -4904,32 +4901,92 @@ export class OrderSampleService {
     }
 
     const and: Prisma.OrderSampleWhereInput[] = [];
-    if (query.search) {
-      const s = query.search;
+    // Global Search — the same matching as Technician → Reporting's search, plus the
+    // Accession-only keys (Accession No, UHID, Mobile). The text is trimmed (a scanner or
+    // a stray space must not make it match nothing), a blank search is no search, and
+    // `%`, `_` and `\` are matched as typed (Prisma hands `contains` to LIKE as it is, so
+    // an unescaped `%` would match every row).
+    const typedSearch = query.search?.trim();
+    if (typedSearch) {
+      const s = escapeLike(typedSearch);
+      // A full-name search ("Manish kumar", or the words in any order) must find the
+      // patient: every word has to be found somewhere across first / middle / last name.
+      // One word behaves exactly as before.
+      const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
+        AND: typedSearch
+          .split(/\s+/)
+          .filter(Boolean)
+          .map(escapeLike)
+          .map((word) => ({
+            OR: [
+              { firstName: { contains: word, mode: 'insensitive' as const } },
+              { middleName: { contains: word, mode: 'insensitive' as const } },
+              { lastName: { contains: word, mode: 'insensitive' as const } },
+            ],
+          })),
+      };
       and.push({
         OR: [
           { accessionNo: { contains: s, mode: 'insensitive' } },
           { barcode: { contains: s, mode: 'insensitive' } },
-          // The Order ID column (`ORD-00717`): finds every sample of that order.
-          {
-            order: {
-              is: { orderCode: { contains: s, mode: 'insensitive' } },
-            },
-          },
           {
             order: {
               is: {
-                patient: {
-                  is: {
-                    OR: [
-                      { firstName: { contains: s, mode: 'insensitive' } },
-                      { middleName: { contains: s, mode: 'insensitive' } },
-                      { lastName: { contains: s, mode: 'insensitive' } },
-                      { umId: { contains: s, mode: 'insensitive' } },
-                      { mobile: { contains: s, mode: 'insensitive' } },
-                    ],
+                OR: [
+                  // The Order ID column (`ORD-00717`): finds every sample of that order.
+                  { orderCode: { contains: s, mode: 'insensitive' } },
+                  {
+                    patient: {
+                      is: {
+                        OR: [
+                          patientNameMatchesEveryWord,
+                          { umId: { contains: s, mode: 'insensitive' } },
+                          { mobile: { contains: s, mode: 'insensitive' } },
+                        ],
+                      },
+                    },
                   },
-                },
+                  // The Referring Panel column.
+                  {
+                    referralPanel: {
+                      is: { name: { contains: s, mode: 'insensitive' } },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          // The Order Item column: the test this sample carries (a panel's member test
+          // is matched by its own name) or the panel / test that was ordered.
+          {
+            tests: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { testName: { contains: s, mode: 'insensitive' } },
+                  {
+                    orderItem: {
+                      is: {
+                        OR: [
+                          {
+                            branchLabTest: {
+                              is: {
+                                testName: { contains: s, mode: 'insensitive' },
+                              },
+                            },
+                          },
+                          {
+                            branchLabPanel: {
+                              is: {
+                                panelName: { contains: s, mode: 'insensitive' },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
               },
             },
           },

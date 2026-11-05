@@ -69,8 +69,10 @@ docs {
   (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`, so a refunded order's Status folds
   to "Refunded" rather than "Not Paid"), the order's `billStatus` (the single
   Billings Status — see the `billStatus` filter), the
-  active-item count (`itemCount`), the collected-item count (`collectedItemCount`),
-  the order-level `reportStatus`
+  active-item count (`itemCount`), the collected-item count (`collectedItemCount`,
+  item-level and stamped only by the Order Overview's Collect — not used for
+  Sample Status), the order's Sample Status `collectionStatus`
+  (`PENDING | PARTIAL | COLLECTED`, derived from the order's samples), the order-level `reportStatus`
   (`PENDING | PARTIALLY_COMPLETED | COMPLETED | APPROVED`, the Order Console's
   "Order Status", derived per-test from each item's LabReport)
   and the `effectiveQuotationStatus`. Each row also carries `hasInvoice` (boolean)
@@ -185,8 +187,11 @@ docs {
   - Each row also carries `itemDetails`: the same entries as `itemNames`, in the same
     order, as `{ name, isPanel, panelTests }`. `isPanel` is true for a lab panel line. `panelTests` lists the ordered member tests of a
     panel line (all members when ordered in full) and is empty for a test/direct line.
-  - `sampleStatus` — `PENDING` (no items collected) | `PARTIAL` (some collected) |
-    `COLLECTED` (all collected), derived from each item's `collectedAt`.
+  - `sampleStatus` — `PENDING` (no sample collected) | `PARTIAL` (some collected) |
+    `COLLECTED` (all collected), derived from the order's SAMPLES (`OrderSample.collectedAt`),
+    so a sample collected from the Accession screen counts too. Cancelled samples and
+    samples of a removed test are left out. Same rule as the row's `collectionStatus`
+    and the Accession list's `collectionStatus`.
   - `reportStatus` — `PENDING` | `PARTIALLY_COMPLETED` | `COMPLETED` | `APPROVED`,
     the order-level "Order Status" derived per-test from each item's LabReport: a
     test is "reported" once its report reaches `RESULT_DONE` (and "approved" at

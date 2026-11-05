@@ -133,6 +133,7 @@ import {
   LabReportLockedException,
   LabReportPrintOrderCancelledException,
   LabReportPrintItemRemovedException,
+  LabReportPrintNotApprovedForPanelException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportResultsNotEditableException,
@@ -267,6 +268,38 @@ export function applyB2bLabReportScope(
   order.referralPanelId = panelId;
   orderItem.order = order;
   where.orderItem = orderItem;
+}
+
+/**
+ * The report statuses a B2B Referral Panel may print / download: only finished
+ * reports. Matches the Technician Reporting screen's rule for B2B rows.
+ */
+export const B2B_PRINTABLE_REPORT_STATUSES: readonly LabReportStatus[] = [
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+];
+
+/**
+ * Restrict a LabReport `where` to the printable statuses for a B2B session. Added
+ * through `AND`, so it never overwrites a `status` filter already on the query. A
+ * no-op for every non-B2B session.
+ * @param where the Prisma LabReportWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bPrintableReportScope(
+  where: Prisma.LabReportWhereInput,
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  const existing = where.AND
+    ? Array.isArray(where.AND)
+      ? where.AND
+      : [where.AND]
+    : [];
+  where.AND = [
+    ...existing,
+    { status: { in: [...B2B_PRINTABLE_REPORT_STATUSES] } },
+  ];
 }
 
 /**
@@ -2680,6 +2713,79 @@ export class LabReportService {
   }
 
   /** Whether `branchId` owns the order this report belongs to (see {@link canPrintWholeOrder}). */
+  /**
+   * B2B Referral Panel isolation for order-level report actions (Print All, share):
+   * a panel session may only act on an order billed to its own panel. A no-op for
+   * every non-B2B session. An unknown order is refused the same way, so a panel
+   * cannot tell "not mine" from "does not exist".
+   * @param tenantId tenant scope
+   * @param orderId the order whose reports are being printed / shared
+   * @throws ReferralPanelAccessDeniedException when the order is another panel's
+   */
+  private async assertOrderInActivePanel(
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    const panelId = getReferralPanelId();
+    if (!panelId) return;
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: { id: true, referralPanelId: true },
+    });
+    if (!order || order.referralPanelId !== panelId) {
+      throw new ReferralPanelAccessDeniedException('order', orderId);
+    }
+  }
+
+  /**
+   * B2B Referral Panel isolation for single-report actions (Print Report): the
+   * report must trace (orderItem → order) to the session's own panel. A no-op for
+   * every non-B2B session.
+   * @param tenantId tenant scope
+   * @param reportId the report being printed
+   * @throws ReferralPanelAccessDeniedException when the report is another panel's
+   */
+  private async assertReportInActivePanel(
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    const panelId = getReferralPanelId();
+    if (!panelId) return;
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        orderItem: { select: { order: { select: { referralPanelId: true } } } },
+      },
+    });
+    if (!report) {
+      throw new ReferralPanelAccessDeniedException('lab-report', reportId);
+    }
+    assertLabReportPanelOwnership(report, panelId);
+  }
+
+  /**
+   * A B2B Referral Panel prints only finished reports (Approved / Published).
+   * A no-op for every non-B2B session, so lab staff can still print unfinished
+   * reports as "Result pending".
+   * @param tenantId tenant scope
+   * @param reportId the report being printed
+   * @throws LabReportPrintNotApprovedForPanelException for a B2B session when the report is not Approved / Published
+   */
+  private async assertReportPrintableForPanel(
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    if (!getReferralPanelId()) return;
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!report || !B2B_PRINTABLE_REPORT_STATUSES.includes(report.status)) {
+      throw new LabReportPrintNotApprovedForPanelException(reportId);
+    }
+  }
+
   /**
    * Printing a cancelled order's report is refused (see
    * {@link LabReportPrintOrderCancelledException}).
@@ -5206,6 +5312,10 @@ export class LabReportService {
     maskUnfinished = false,
     notesSwitches?: NotesSwitchCache,
   ): Promise<Buffer> {
+    // B2B Referral Panel isolation: a panel prints only its own reports.
+    await this.assertReportInActivePanel(tenantId, id);
+    // ...and only finished (Approved / Published) reports.
+    await this.assertReportPrintableForPanel(tenantId, id);
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     await this.assertReportOrderNotCancelledForPrint(tenantId, id);
@@ -5435,6 +5545,8 @@ export class LabReportService {
         scope ?? { rules: [{ branchId: activeBranchId, statuses: 'ALL' }] },
       );
     }
+    // B2B Referral Panel: only finished reports go into the document.
+    applyB2bPrintableReportScope(reportWhere, getReferralPanelId());
     const reportRows = await this.prisma.labReport.findMany({
       where: reportWhere,
       select: {
@@ -5447,7 +5559,9 @@ export class LabReportService {
       orderBy: { createdAt: 'asc' },
     });
     if (reportRows.length === 0) {
-      throw new OrderReportsNotFoundException(orderId);
+      throw getReferralPanelId()
+        ? new LabReportPrintNotApprovedForPanelException(orderId)
+        : new OrderReportsNotFoundException(orderId);
     }
 
     const { timezone, dateFormat, timeFormat } =
@@ -5910,6 +6024,8 @@ export class LabReportService {
     publishedOnly = false,
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
+    // B2B Referral Panel isolation: a panel prints only its own orders' reports.
+    await this.assertOrderInActivePanel(tenantId, orderId);
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByOrderId(
       tenantId,
@@ -5974,13 +6090,17 @@ export class LabReportService {
         scope ?? { rules: [{ branchId: activeBranchId, statuses: 'ALL' }] },
       );
     }
+    // B2B Referral Panel: only finished reports are printed; others are left out.
+    applyB2bPrintableReportScope(reportWhere, getReferralPanelId());
     const reportRows = await this.prisma.labReport.findMany({
       where: reportWhere,
       select: { id: true, branchId: true },
       orderBy: { createdAt: 'asc' },
     });
     if (reportRows.length === 0) {
-      throw new OrderReportsNotFoundException(orderId);
+      throw getReferralPanelId()
+        ? new LabReportPrintNotApprovedForPanelException(orderId)
+        : new OrderReportsNotFoundException(orderId);
     }
 
     // A report this caller cannot read is skipped, not allowed to fail the whole
@@ -6186,6 +6306,8 @@ export class LabReportService {
 
   /** Order + patient contact for a share, or throws if the order isn't found. */
   private async loadOrderForShare(orderId: string, tenantId: string) {
+    // B2B Referral Panel isolation: a panel shares only its own orders' reports.
+    await this.assertOrderInActivePanel(tenantId, orderId);
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, tenantId, deletedAt: null },
       select: {

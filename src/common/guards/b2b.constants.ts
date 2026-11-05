@@ -19,6 +19,7 @@ export const B2B_ALLOWED_PATH_PREFIXES: readonly string[] = [
   '/finance/payments', // Finance → Payments ledger
   '/lab-reports', //      Technician → Reporting
   '/pdf-report-templates', //             print-template picker + config (bill/trf/report print)
+  '/accession/order-samples/order', //  Order Console overview: an order's samples (own panel only, checked in the service)
   '/accession/order-samples/print-label', //  Print Label (single)
   '/accession/order-samples/print-labels', // Print Labels (bulk)
 ] as const;

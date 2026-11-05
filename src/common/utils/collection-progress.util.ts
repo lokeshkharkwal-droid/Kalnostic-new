@@ -1,16 +1,22 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, SampleStatus } from '@prisma/client';
 
 /**
- * Order-level sample-collection progress, derived (never stored) from the
- * `collectedAt` timestamps of an order's **workflow** items:
- * - `PENDING` — no workflow item collected yet,
- * - `PARTIAL` — some (but not all) workflow items collected,
- * - `COLLECTED` — every workflow item collected.
+ * Order-level sample-collection progress, derived (never stored) from the order's
+ * **samples** (`OrderSample.collectedAt`):
+ * - `PENDING` — no counted sample collected yet,
+ * - `PARTIAL` — some (but not all) counted samples collected,
+ * - `COLLECTED` — every counted sample collected.
  *
  * "Collection Status" on the Accession in-house list and "Sample Status" on the
  * Registration Order Console are the same concept — both resolve to these three
  * values. Keep this helper as the single source of that rule so the displayed
  * value and the list filter can never drift.
+ *
+ * Why samples and not `OrderItem.collectedAt`: the item flag is only stamped by
+ * the Order Overview's own Collect button, so a sample collected from the
+ * Accession screen (or auto-collected at order creation) left the order reading
+ * "Pending" forever. `OrderSample.collectedAt` is set by every collect path, so
+ * reading it needs no write-side change and no backfill.
  */
 export type CollectionProgress = 'PENDING' | 'PARTIAL' | 'COLLECTED';
 
@@ -31,9 +37,39 @@ export const COLLECTION_WORKFLOW_ITEM_WHERE: Prisma.OrderItemWhereInput = {
 };
 
 /**
+ * The samples that count toward an order's collection progress. A sample is left
+ * out when it is:
+ * - soft-deleted,
+ * - `CANCELLED` (it will never be collected), or
+ * - frozen because its test was removed from the order — it still has live test
+ *   links and EVERY one belongs to a removed (soft-deleted) order item. A tube
+ *   shared with a surviving test is kept: that test still needs it. This is the
+ *   same "item-removed" rule as `isAllItemsRemoved` in the accession utils,
+ *   expressed as a Prisma filter so it also works inside `where` clauses.
+ */
+export const COUNTED_SAMPLE_WHERE: Prisma.OrderSampleWhereInput = {
+  deletedAt: null,
+  status: { not: SampleStatus.CANCELLED },
+  OR: [
+    { tests: { none: { deletedAt: null } } },
+    { tests: { some: { deletedAt: null, orderItem: { deletedAt: null } } } },
+  ],
+};
+
+/** A counted sample that has been collected (`collectedAt` stamped). */
+const COLLECTED_SAMPLE_WHERE: Prisma.OrderSampleWhereInput = {
+  AND: [COUNTED_SAMPLE_WHERE, { collectedAt: { not: null } }],
+};
+
+/** A counted sample that has not been collected yet. */
+const UNCOLLECTED_SAMPLE_WHERE: Prisma.OrderSampleWhereInput = {
+  AND: [COUNTED_SAMPLE_WHERE, { collectedAt: null }],
+};
+
+/**
  * Build the Prisma `where` fragment that selects orders in a given collection
- * progress state, expressed over the order's `items` and their `collectedAt`
- * (excluding bill-only items). Returned as a single `{ AND: [...] }`
+ * progress state, expressed over the order's counted samples
+ * ({@link COUNTED_SAMPLE_WHERE}). Returned as a single `{ AND: [...] }`
  * `OrderWhereInput` so it composes cleanly:
  * - the order list pushes it onto its order-level `AND` array, and
  * - the accession list nests it under the sample's to-one `order` relation.
@@ -43,66 +79,88 @@ export const COLLECTION_WORKFLOW_ITEM_WHERE: Prisma.OrderItemWhereInput = {
 export function buildCollectionProgressWhere(
   status: CollectionProgress,
 ): Prisma.OrderWhereInput {
-  const workflowItem = COLLECTION_WORKFLOW_ITEM_WHERE;
   switch (status) {
     case 'PENDING':
-      // Has workflow items, none collected.
+      // Has workflow items and no counted sample is collected yet.
       return {
         AND: [
-          { items: { some: { deletedAt: null, ...workflowItem } } },
           {
             items: {
-              none: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
+              some: { deletedAt: null, ...COLLECTION_WORKFLOW_ITEM_WHERE },
             },
           },
+          { orderSamples: { none: COLLECTED_SAMPLE_WHERE } },
         ],
       };
     case 'COLLECTED':
-      // Has workflow items, none still uncollected.
+      // Has at least one counted sample, and none is still uncollected.
       return {
         AND: [
-          { items: { some: { deletedAt: null, ...workflowItem } } },
-          {
-            items: {
-              none: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          },
+          { orderSamples: { some: COUNTED_SAMPLE_WHERE } },
+          { orderSamples: { none: UNCOLLECTED_SAMPLE_WHERE } },
         ],
       };
     case 'PARTIAL':
-      // At least one workflow item collected and at least one still uncollected.
+      // At least one counted sample collected and at least one still uncollected.
       return {
         AND: [
-          {
-            items: {
-              some: {
-                deletedAt: null,
-                collectedAt: { not: null },
-                ...workflowItem,
-              },
-            },
-          },
-          {
-            items: {
-              some: { deletedAt: null, collectedAt: null, ...workflowItem },
-            },
-          },
+          { orderSamples: { some: COLLECTED_SAMPLE_WHERE } },
+          { orderSamples: { some: UNCOLLECTED_SAMPLE_WHERE } },
         ],
       };
   }
 }
 
 /**
- * Derive the collection progress from an order's workflow-item counts — the
- * display-side twin of {@link buildCollectionProgressWhere} (and of the
- * frontend `deriveSampleStatus`). An order with no workflow items (e.g. all
- * bill-only) reads as `PENDING`.
- * @param collectedWorkflowCount number of workflow items already collected
- * @param totalWorkflowCount total number of workflow items
+ * Collection progress of each given order, derived from its counted samples
+ * ({@link COUNTED_SAMPLE_WHERE}) — the display-side twin of
+ * {@link buildCollectionProgressWhere}. Two grouped counts for the whole page, so
+ * a list pays two small queries rather than one per row. An order with no counted
+ * sample (not generated yet, or all cancelled) reads `PENDING`.
+ * @param db Prisma client or transaction client
+ * @param tenantId tenant scope
+ * @param orderIds the page's order ids (may be empty)
+ * @returns a map orderId → progress; every requested id is present
+ */
+export async function collectionProgressByOrder(
+  db: Pick<Prisma.TransactionClient, 'orderSample'>,
+  tenantId: string,
+  orderIds: string[],
+): Promise<Map<string, CollectionProgress>> {
+  const result = new Map<string, CollectionProgress>();
+  if (orderIds.length === 0) return result;
+  const [totals, collected] = await Promise.all([
+    db.orderSample.groupBy({
+      by: ['orderId'],
+      where: {
+        AND: [COUNTED_SAMPLE_WHERE, { tenantId, orderId: { in: orderIds } }],
+      },
+      _count: { _all: true },
+    }),
+    db.orderSample.groupBy({
+      by: ['orderId'],
+      where: {
+        AND: [COLLECTED_SAMPLE_WHERE, { tenantId, orderId: { in: orderIds } }],
+      },
+      _count: { _all: true },
+    }),
+  ]);
+  const totalBy = new Map(totals.map((r) => [r.orderId, r._count._all]));
+  const collectedBy = new Map(collected.map((r) => [r.orderId, r._count._all]));
+  for (const id of orderIds) {
+    result.set(
+      id,
+      deriveCollectionProgress(collectedBy.get(id) ?? 0, totalBy.get(id) ?? 0),
+    );
+  }
+  return result;
+}
+
+/**
+ * Derive the collection progress from collected / total counts. An order with
+ * nothing to collect (no counted samples) reads as `PENDING`.
+ * @param collectedWorkflowCount number already collected
+ * @param totalWorkflowCount total number that count toward collection
  * @returns the derived collection progress
  */
 export function deriveCollectionProgress(

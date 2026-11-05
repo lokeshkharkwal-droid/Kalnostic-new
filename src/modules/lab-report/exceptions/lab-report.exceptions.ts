@@ -465,6 +465,22 @@ export class AmbiguousPrintTemplateException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a B2B Referral Panel user asked to print a report that is not Approved or
+ * Published yet. A panel only receives finished reports; staff of the lab are not
+ * affected (they may print unfinished reports as "Result pending").
+ */
+export class LabReportPrintNotApprovedForPanelException extends KaltrosException {
+  constructor(id: string) {
+    super(
+      'LAB_REPORT_PRINT_NOT_APPROVED_FOR_PANEL',
+      'Only approved or published reports can be printed.',
+      { id },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 404 — Print All (order-console's "Lab All Report" action) found no lab
  * reports for this order within the tenant/branch — either the order id is
  * wrong, or none of its items have reached ACCEPTED yet (LabReport rows are

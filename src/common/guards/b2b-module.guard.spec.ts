@@ -42,6 +42,12 @@ describe('B2bModuleGuard', () => {
         ctx(b2b, '/api/v1/accession/order-samples/print-labels'),
       ),
     ).toBe(true);
+    // Order Console overview: an order's samples (own panel only, checked in the service).
+    expect(
+      guard.canActivate(
+        ctx(b2b, '/api/v1/accession/order-samples/order/o1/grouped'),
+      ),
+    ).toBe(true);
   });
 
   it('rejects B2B users on non-allow-listed paths', () => {
@@ -54,6 +60,13 @@ describe('B2bModuleGuard', () => {
     // The label print path must not open the rest of the accession module.
     expect(() =>
       guard.canActivate(ctx(b2b, '/api/v1/accession/inhouse-orders')),
+    ).toThrow(ForbiddenException);
+    // ...and the order-samples prefix opens only the per-order samples route.
+    expect(() =>
+      guard.canActivate(ctx(b2b, '/api/v1/accession/order-samples')),
+    ).toThrow(ForbiddenException);
+    expect(() =>
+      guard.canActivate(ctx(b2b, '/api/v1/accession/order-samples/s1/collect')),
     ).toThrow(ForbiddenException);
   });
 });

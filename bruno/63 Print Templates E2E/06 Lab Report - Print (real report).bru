@@ -75,4 +75,15 @@ docs {
   header, body or footer to show a block only for panel tests. A Latte template
   uses `{if $test->is_lab_panel}...{else}...{/if}` (a real boolean). Nothing is
   stored: the tags are read from the report's order line when it is printed.
+
+  ## B2B Referral Panel sessions
+
+  A referral panel (B2B) login prints only its own, FINISHED reports. Lab staff are
+  not affected: they can still print an unfinished report as "Result pending".
+  - 403 `REFERRAL_PANEL_ACCESS_DENIED` — the report belongs to another panel (or to
+    no panel).
+  - 409 `LAB_REPORT_PRINT_NOT_APPROVED_FOR_PANEL` — the report is not Approved or
+    Published yet ("Only approved or published reports can be printed."). The
+    Technician Reporting and Order Console screens only offer Print for those two
+    statuses; this makes the server enforce the same rule.
 }
