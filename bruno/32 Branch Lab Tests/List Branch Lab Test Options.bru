@@ -17,6 +17,7 @@ params:query {
   ~listId:
   ~preferredOnly: true
   ~includeAka: true
+  ~includeSampleInfo: true
 }
 
 auth:bearer {
@@ -44,11 +45,17 @@ docs {
   named pricing list (omitted = Walk-in). Omit `page` for the full array; supply
   `page` for a `{ data, total, page, limit }` envelope.
 
-  Optional query flags (both default false, so other pickers are unaffected):
+  Optional query flags (all default false, so other pickers are unaffected):
   - `preferredOnly=true` — when `search` is empty, narrow to `isPreferenceTest`
     tests (Create-Order picker's unsearched view). Ignored once `search` is set.
   - `includeAka=true` — `search` also matches the test's AKA ("also known as")
     name, case-insensitive partial match, e.g. `search=CBC` finds
     "Complete Blood Count" when its AKA is "CBC". Sent by the Create-Order picker.
+  - `includeSampleInfo=true` — each option also carries `usefulFor` (Notes →
+    "Useful For", rich-text HTML) and `sampleHandlingInstructions` (of the sample
+    named by `sampleName`, read live from Master Data — Tenant test first, then
+    the Branch Master Data test — falling back to the list copy's Sync snapshot
+    when no live sample matches), both nullable. Sent by the Create-Order picker
+    for the Diagnostic Items sample-details hover popup; absent otherwise.
   Booleans accept `true`/`1`; any other value is treated as false.
 }
