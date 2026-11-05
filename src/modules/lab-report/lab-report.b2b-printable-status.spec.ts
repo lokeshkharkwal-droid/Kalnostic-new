@@ -32,7 +32,9 @@ describe('B2B panel — only Approved / Published reports can be printed', () =>
   describe('applyB2bPrintableReportScope (report selection for Print All)', () => {
     it('adds the status filter for a panel session', async () => {
       const where: Record<string, unknown> = { tenantId: 't1' };
-      await asPanel(async () => applyB2bPrintableReportScope(where, 'panel-A'));
+      await asPanel(() =>
+        Promise.resolve(applyB2bPrintableReportScope(where, 'panel-A')),
+      );
       expect(where.AND).toEqual([
         { status: { in: ['APPROVED', 'PUBLISHED'] } },
       ]);
@@ -120,7 +122,11 @@ describe('B2B panel — only Approved / Published reports can be printed', () =>
   });
 
   describe('Print All — printAllForOrder / buildAllReportsContext', () => {
-    const prisma = { labReport: { findMany: jest.fn() } };
+    const prisma = {
+      labReport: {
+        findMany: jest.fn<Promise<unknown[]>, [{ where: unknown }]>(),
+      },
+    };
     const service = Object.create(LabReportService.prototype) as Record<
       string,
       unknown
@@ -153,7 +159,7 @@ describe('B2B panel — only Approved / Published reports can be printed', () =>
       await expect(asPanel(() => printAll())).rejects.toBeInstanceOf(
         LabReportPrintNotApprovedForPanelException,
       );
-      const where = prisma.labReport.findMany.mock.calls[0][0].where;
+      const where = prisma.labReport.findMany.mock.calls[0]![0].where;
       expect(JSON.stringify(where)).toContain(
         '"status":{"in":["APPROVED","PUBLISHED"]}',
       );
@@ -163,7 +169,7 @@ describe('B2B panel — only Approved / Published reports can be printed', () =>
       await expect(asPanel(() => printAll('tpl'))).rejects.toBeInstanceOf(
         LabReportPrintNotApprovedForPanelException,
       );
-      const where = prisma.labReport.findMany.mock.calls[0][0].where;
+      const where = prisma.labReport.findMany.mock.calls[0]![0].where;
       expect(JSON.stringify(where)).toContain(
         '"status":{"in":["APPROVED","PUBLISHED"]}',
       );
@@ -173,7 +179,7 @@ describe('B2B panel — only Approved / Published reports can be printed', () =>
       await expect(asStaff(() => printAll())).rejects.toBeInstanceOf(
         OrderReportsNotFoundException,
       );
-      const where = prisma.labReport.findMany.mock.calls[0][0].where;
+      const where = prisma.labReport.findMany.mock.calls[0]![0].where;
       expect(JSON.stringify(where)).not.toContain('APPROVED');
     });
 
@@ -181,7 +187,7 @@ describe('B2B panel — only Approved / Published reports can be printed', () =>
       await expect(asStaff(() => printAll('tpl'))).rejects.toBeInstanceOf(
         OrderReportsNotFoundException,
       );
-      const where = prisma.labReport.findMany.mock.calls[0][0].where;
+      const where = prisma.labReport.findMany.mock.calls[0]![0].where;
       expect(JSON.stringify(where)).not.toContain('APPROVED');
     });
   });

@@ -87,7 +87,7 @@ describe('collectionProgressByOrder', () => {
     collected: Array<{ orderId: string; n: number }>,
   ) => {
     const groupBy = jest
-      .fn()
+      .fn<Promise<unknown[]>, [{ where: unknown }]>()
       .mockResolvedValueOnce(
         total.map((r) => ({ orderId: r.orderId, _count: { _all: r.n } })),
       )
@@ -131,8 +131,8 @@ describe('collectionProgressByOrder', () => {
     const { db, groupBy } = makeDb([], []);
     await collectionProgressByOrder(db, 't1', ['o1']);
     expect(groupBy).toHaveBeenCalledTimes(2);
-    const totalWhere = JSON.stringify(groupBy.mock.calls[0][0].where);
-    const collectedWhere = JSON.stringify(groupBy.mock.calls[1][0].where);
+    const totalWhere = JSON.stringify(groupBy.mock.calls[0]![0].where);
+    const collectedWhere = JSON.stringify(groupBy.mock.calls[1]![0].where);
     for (const w of [totalWhere, collectedWhere]) {
       expect(w).toContain('"tenantId":"t1"');
       expect(w).toContain('"orderId":{"in":["o1"]}');
