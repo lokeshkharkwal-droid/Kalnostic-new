@@ -1,0 +1,30 @@
+meta {
+  name: Print Public Report
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/public/orders/{{tenantId}}/{{branchId}}/{{orderId}}/report.pdf
+  body: none
+  auth: none
+}
+
+tests {
+  test("200 OK when published reports exist", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 404]);
+  });
+  test("a 200 is a PDF", function () {
+    if (res.getStatus() === 200) {
+      expect(res.getHeader("content-type")).to.include("application/pdf");
+    }
+  });
+}
+
+docs {
+  Streams the order's PUBLISHED lab reports merged into one PDF. No auth. Reuses
+  the staff all-reports pipeline with the PUBLISHED-only filter on — an APPROVED
+  but not-yet-released report never surfaces here. Returns `404
+  PUBLIC_ORDER_NOT_FOUND` when the order has no published report yet (so the
+  frontend only shows "Print Report" when `reports.hasPublishedReports` is true).
+}

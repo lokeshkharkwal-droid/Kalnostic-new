@@ -94,6 +94,13 @@ export interface BranchLabPanelMemberTest {
   isRemovable: boolean;
   /** Billed-only member: no sample/report even when selected. */
   isBillOnlyTest: boolean;
+  /** Notes → "Useful For" (rich-text HTML), for the Create-Order sample popup. */
+  usefulFor: string | null;
+  /**
+   * "Sample Handling Instructions" of the sample named by `sampleName`, read
+   * live from Master Data (`BranchLabTestService.resolveSampleHandlingInstructions`).
+   */
+  sampleHandlingInstructions: string | null;
 }
 
 /**
@@ -1047,9 +1054,17 @@ export class BranchLabPanelService {
         tatMinUnit: true,
         tatMaxValue: true,
         tatMaxUnit: true,
+        usefulFor: true,
+        sourceLabTestId: true,
       },
     });
     const testById = new Map(tests.map((t) => [t.id, t]));
+    // Live from Master Data — the list copies' snapshots are frozen at Sync.
+    const handling =
+      await this.branchLabTestService.resolveSampleHandlingInstructions(
+        tenantId,
+        tests,
+      );
 
     // Preserve the panel's own member ordering (the join above has no guaranteed
     // order), skipping any member whose branch test no longer exists.
@@ -1078,6 +1093,8 @@ export class BranchLabPanelService {
         tatMaxUnit: t.tatMaxUnit,
         isRemovable: j.isRemovable,
         isBillOnlyTest: t.isBillOnlyTest,
+        usefulFor: t.usefulFor,
+        sampleHandlingInstructions: handling.get(t.id) ?? null,
       });
     }
 

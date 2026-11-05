@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { publicOrderQrCode } from '../lab-report/utils/print-barcode.util';
 import {
   AppointmentStatus,
   AppointmentType,
@@ -68,6 +70,7 @@ import {
   resolveOrderLocalDateTime,
   classifyOrderDate,
   buildCollectionProgressWhere,
+  collectionProgressByOrder,
   COLLECTION_WORKFLOW_ITEM_WHERE,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -104,6 +107,7 @@ import {
   deriveReportStatus,
   deriveReportStatusCounts,
   orderItemNames,
+  orderItemDetails,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
@@ -473,6 +477,7 @@ export class OrderService {
     private readonly referralCredit: ReferralCreditService,
     private readonly patientService: PatientService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -2423,6 +2428,134 @@ export class OrderService {
   }
 
   /**
+   * Each panel's member tests (id + name, in the panel's own order), for the Order Console's panel hover.
+   * `BranchLabPanelTest` carries raw FKs (no Prisma relation), so the names are batch-resolved with two
+   * queries for the whole page — the same pattern as {@link panelMemberCounts}.
+   */
+  private async panelMemberTests(
+    tenantId: string,
+    panelIds: string[],
+  ): Promise<Map<string, { id: string; name: string }[]>> {
+    const byPanel = new Map<string, { id: string; name: string }[]>();
+    if (panelIds.length === 0) return byPanel;
+    const junctions = await this.prisma.branchLabPanelTest.findMany({
+      where: { tenantId, branchLabPanelId: { in: panelIds }, deletedAt: null },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        id: { in: [...new Set(junctions.map((j) => j.branchLabTestId))] },
+      },
+      select: { id: true, testName: true },
+    });
+    const nameById = new Map(tests.map((t) => [t.id, t.testName]));
+    for (const j of junctions) {
+      const name = nameById.get(j.branchLabTestId);
+      if (!name) continue;
+      const list = byPanel.get(j.branchLabPanelId) ?? [];
+      list.push({ id: j.branchLabTestId, name });
+      byPanel.set(j.branchLabPanelId, list);
+    }
+    return byPanel;
+  }
+
+  /**
+   * An order-item condition matching a PANEL line that includes one of `testIds` among the tests it was
+   * ordered with: a panel ordered in full (empty `selectedMemberBranchLabTestIds`) counts all of its
+   * members, a partially ordered one only the tests actually ordered. `null` when no panel contains any
+   * of the tests (so the caller adds nothing). The junction has no Prisma relation, hence the lookup.
+   */
+  private async panelLineIncludingTests(
+    tenantId: string,
+    testIds: string[],
+  ): Promise<Prisma.OrderItemWhereInput | null> {
+    if (testIds.length === 0) return null;
+    const junctions = await this.prisma.branchLabPanelTest.findMany({
+      where: { tenantId, deletedAt: null, branchLabTestId: { in: testIds } },
+      select: { branchLabPanelId: true },
+      distinct: ['branchLabPanelId'],
+    });
+    if (junctions.length === 0) return null;
+    return {
+      branchLabPanelId: { in: junctions.map((j) => j.branchLabPanelId) },
+      OR: [
+        { selectedMemberBranchLabTestIds: { isEmpty: true } },
+        { selectedMemberBranchLabTestIds: { hasSome: testIds } },
+      ],
+    };
+  }
+
+  /**
+   * The Order Console "Lab Test" filter: an order matches when the chosen test was ordered on its own, or
+   * is among the ordered tests of a panel on the order. The same master test is copied into every pricing
+   * list as its own `BranchLabTest` row, so a panel's member row is matched by the chosen row OR any copy
+   * sharing its `sourceLabTestId`.
+   */
+  private async labTestFilterClause(
+    tenantId: string,
+    branchLabTestId: string,
+  ): Promise<Prisma.OrderItemWhereInput> {
+    const chosen = await this.prisma.branchLabTest.findFirst({
+      where: { id: branchLabTestId, tenantId },
+      select: { sourceLabTestId: true },
+    });
+    const copies = chosen?.sourceLabTestId
+      ? await this.prisma.branchLabTest.findMany({
+          where: { tenantId, sourceLabTestId: chosen.sourceLabTestId },
+          select: { id: true },
+        })
+      : [];
+    const testIds = [...new Set([branchLabTestId, ...copies.map((c) => c.id)])];
+    const viaPanel = await this.panelLineIncludingTests(tenantId, testIds);
+    return viaPanel
+      ? { OR: [{ branchLabTestId }, viaPanel] }
+      : { branchLabTestId };
+  }
+
+  /**
+   * The Order Console "Department" filter: an order matches when it has a test whose department is the
+   * chosen one, or a panel with at least one such test among the tests ordered. A test's department is
+   * its own branch value, else its source master test's (the Accession rule). A panel's own department
+   * label is not used - it is a free field that can disagree with its members.
+   */
+  private async departmentFilterClause(
+    tenantId: string,
+    departmentId: string,
+  ): Promise<Prisma.OrderItemWhereInput> {
+    const masterTests = await this.prisma.labTest.findMany({
+      where: { tenantId, departmentId, deletedAt: null },
+      select: { id: true },
+    });
+    const inDepartment: Prisma.BranchLabTestWhereInput = {
+      OR: [
+        { departmentId },
+        ...(masterTests.length > 0
+          ? [
+              {
+                departmentId: null,
+                sourceLabTestId: { in: masterTests.map((t) => t.id) },
+              },
+            ]
+          : []),
+      ],
+    };
+    const branchTests = await this.prisma.branchLabTest.findMany({
+      where: { tenantId, deletedAt: null, ...inDepartment },
+      select: { id: true },
+    });
+    const viaPanel = await this.panelLineIncludingTests(
+      tenantId,
+      branchTests.map((t) => t.id),
+    );
+    const ownTest: Prisma.OrderItemWhereInput = {
+      branchLabTest: { is: inDepartment },
+    };
+    return viaPanel ? { OR: [ownTest, viaPanel] } : ownTest;
+  }
+
+  /**
    * Each referenced panel's true, current member-test count (`branchLabPanelId`
    * -> count), for {@link deriveReportStatus}'s expected-unit denominator.
    * `BranchLabPanel`/`BranchLabPanelTest` have no Prisma relation (raw FK
@@ -2617,10 +2750,23 @@ export class OrderService {
     // order) and for the `sections.items` repeat block below.
     const itemRows = await this.itemRowsWithPanelTests(order);
     const panelTestsName = this.panelTestsNameFlat(itemRows);
+    // `{public_order_qr_code}` — QR to the patient's public order page
+    // (`/public/{tenant}/{branch}/{order}`), so scanning the printed bill opens
+    // it. Blank when the frontend base URL (`FRONTEND_URL`) or branch is unknown.
+    const publicOrderQr = await publicOrderQrCode(
+      this.config.get<string>('exchange.frontendUrl'),
+      tenantId,
+      order.branchId,
+      order.id,
+    );
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
+        // Public patient-order page QR (URL-valued). Renders as an image whether
+        // written `{public_order_qr_code}`, `{{image:public_order_qr_code}}` or
+        // `<img src="{public_order_qr_code}">` (see BARE_IMAGE_TAG_KEYS + images).
+        public_order_qr_code: publicOrderQr,
         order_date: formatTenantDate(order.orderDate, dateFormat),
         // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`
         // (distinct from `bill_date_time`, which is when the bill was generated).
@@ -2658,6 +2804,11 @@ export class OrderService {
         effective_paid: effectivePaid,
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
+      },
+      // Backs `{{image:public_order_qr_code}}` and the bare `{public_order_qr_code}`
+      // image tag — image-valued keys resolve against this map, not `variables`.
+      images: {
+        public_order_qr_code: publicOrderQr,
       },
       sections: {
         items: itemRows,
@@ -3688,18 +3839,10 @@ export class OrderService {
               items: {
                 some: {
                   deletedAt: null,
-                  OR: [
-                    {
-                      branchLabTest: {
-                        is: { departmentId: query.departmentId },
-                      },
-                    },
-                    {
-                      branchLabPanel: {
-                        is: { departmentId: query.departmentId },
-                      },
-                    },
-                  ],
+                  ...(await this.departmentFilterClause(
+                    tenantId,
+                    query.departmentId,
+                  )),
                 },
               },
             },
@@ -3757,7 +3900,13 @@ export class OrderService {
     if (query.branchLabTestId) {
       and.push({
         items: {
-          some: { deletedAt: null, branchLabTestId: query.branchLabTestId },
+          some: {
+            deletedAt: null,
+            ...(await this.labTestFilterClause(
+              tenantId,
+              query.branchLabTestId,
+            )),
+          },
         },
       });
     }
@@ -4001,11 +4150,14 @@ export class OrderService {
       ),
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
-    const [counts, invoiceCodes, cancelBlocked] = await Promise.all([
-      this.countItemsByOrder(tenantId, orderIds),
-      this.invoicedOrderCodes(tenantId, orderIds),
-      this.cancelBlockedReasons(tenantId, orderIds),
-    ]);
+    const panelMembers = await this.panelMemberTests(tenantId, panelIds);
+    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked] =
+      await Promise.all([
+        this.countItemsByOrder(tenantId, orderIds),
+        collectionProgressByOrder(this.prisma, tenantId, orderIds),
+        this.invoicedOrderCodes(tenantId, orderIds),
+        this.cancelBlockedReasons(tenantId, orderIds),
+      ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
       // derived from the persisted item prices and the persisted order-discount
@@ -4065,6 +4217,9 @@ export class OrderService {
         ...r,
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
+        // Sample Status: derived from the order's SAMPLES (any collect path sets
+        // them), not from the item flag above — see `collection-progress.util`.
+        collectionStatus: collectionByOrderId.get(r.id) ?? 'PENDING',
         // Order-level "Order Status": derived per-test from each item's LabReport.
         reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
         // Per-status report counts (all nine LabReport statuses) + the item
@@ -4074,6 +4229,7 @@ export class OrderService {
         // Bill-only items are excluded (no workflow, no reports).
         reportStatusCounts: deriveReportStatusCounts(workflowItems),
         itemNames: orderItemNames(workflowItems),
+        itemDetails: orderItemDetails(workflowItems, panelMembers),
         grossAmount,
         discountAmount,
         netAmount,
@@ -5473,6 +5629,9 @@ export class OrderService {
       // `resolveActorNames` only maps ids it actually found, so an unresolved id
       // becomes null rather than a raw UUID leaking to the client.
       r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+      // That same actor's Person id, so the FE's Userwise PDF can group by person
+      // (two users sharing a display name stay apart), as it does by `createdBy`.
+      r.responsibleUserId = actorId;
       // The order's ORIGINAL creator — resolved for every report, not just the
       // ones whose responsible actor happens to be the creator — so each Finance
       // page can show a consistent "Order Created By" independent of who performed
