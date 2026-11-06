@@ -14,6 +14,7 @@ import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import type { CollectionProgress } from '../../../common/utils';
 import { TAT_STATUSES } from '../constants/tat.constant';
+import { DEPARTMENT_FILTER_PATTERN } from '../constants/department-filter.constant';
 import type { TatStatus } from '../constants/tat.constant';
 
 /** A calendar day (`YYYY-MM-DD`) — the transfer-date filters match the whole day. */
@@ -115,9 +116,14 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsDateString()
   dateTo?: string;
 
-  /** Filter by department (via the order's items' branch lab test). */
+  /**
+   * Filter by department: a department id, or `none` for samples with no department.
+   * Judged on the SAMPLE's own department (stamped when the sample was created).
+   */
   @IsOptional()
-  @IsUUID()
+  @Matches(DEPARTMENT_FILTER_PATTERN, {
+    message: 'departmentId must be a UUID or "none"',
+  })
   departmentId?: string;
 
   /** Filter to samples whose order includes this branch lab test. */
