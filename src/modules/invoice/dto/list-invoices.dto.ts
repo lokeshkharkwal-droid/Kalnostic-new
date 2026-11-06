@@ -6,12 +6,42 @@ import {
 import {
   IsDateString,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+
+/**
+ * Whitelisted server-side sort columns for the invoice list. Each maps to a
+ * stored `Invoice` column in `InvoiceService.buildInvoiceOrderBy` (all money is
+ * stored as whole-rupee integers, so amount sorts are exact). `branch` is omitted
+ * — the branch name is resolved separately (no `branch` relation on Invoice), so
+ * it is not server-sortable and the UI renders it without a sort affordance.
+ */
+export const INVOICE_SORT_KEYS = [
+  'invoiceId',
+  'dateTime',
+  'type',
+  'customerName',
+  'mobile',
+  'gross',
+  'tdsAmount',
+  'netAmount',
+  'paidInvoice',
+  'paidTds',
+  'outstandingInvoice',
+  'outstandingTds',
+  'invoiceDue',
+  'tdsDue',
+  'status',
+  'overdue',
+] as const;
+
+/** A valid `sortBy` value for the invoice list. */
+export type InvoiceSortKey = (typeof INVOICE_SORT_KEYS)[number];
 
 /**
  * Query parameters for the invoice listing endpoint. Extends the shared pagination
@@ -62,4 +92,15 @@ export class ListInvoicesDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(InvoiceDueStatus)
   dueStatus?: InvoiceDueStatus;
+
+  /** Server-side sort column (whitelisted — see {@link INVOICE_SORT_KEYS});
+   *  defaults to newest-first (`createdAt desc`). */
+  @IsOptional()
+  @IsIn([...INVOICE_SORT_KEYS])
+  sortBy?: InvoiceSortKey;
+
+  /** Sort direction for {@link sortBy} (`asc` | `desc`, default `desc`). */
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 }

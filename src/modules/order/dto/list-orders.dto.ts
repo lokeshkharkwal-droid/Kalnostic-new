@@ -25,6 +25,39 @@ import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 /**
+ * Whitelisted server-side sort columns for the order list. Each maps to a Prisma
+ * `orderBy` in `OrderService.buildOrderListOrderBy` — either a stored column, a
+ * to-one relation name, or one of the denormalized billing-rollup columns. Any
+ * value outside this set is rejected by the DTO (`@IsIn`), so an attacker can't
+ * sort by an arbitrary/relation-free field.
+ */
+export const ORDER_SORT_KEYS = [
+  'orderDate',
+  'createdAt',
+  'checkedInAt',
+  'appointmentAt',
+  'orderCode',
+  'billId',
+  'externalOrderId',
+  'status',
+  'paymentStatus',
+  'billStatus',
+  'refundStatus',
+  'patientName',
+  'referralPanel',
+  'referredBy',
+  'grossAmount',
+  'discountAmount',
+  'netAmount',
+  'paidAmount',
+  'balanceAmount',
+  'refundedAmount',
+] as const;
+
+/** A valid `sortBy` value for the order list (member of {@link ORDER_SORT_KEYS}). */
+export type OrderSortKey = (typeof ORDER_SORT_KEYS)[number];
+
+/**
  * Query parameters for the order listing endpoint. Extends the shared pagination
  * DTO. `search` matches `orderCode` (case-insensitive). `dateFrom`/`dateTo`
  * filter `orderDate` inclusively. `patientName`/`patientMobile` are relation
@@ -123,6 +156,27 @@ export class ListOrdersDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(QuotationStatus)
   quotationStatus?: QuotationStatus;
+
+  /**
+   * Multi-value quotation lifecycle filter (comma-separated, e.g.
+   * `DRAFT,EXPIRED`). Powers the Quotations screen's Draft / Converted / Expired
+   * status checkboxes server-side (an order matches when its effective quotation
+   * status is any of the selected values). Ignored when the single-value
+   * `quotationStatus` is also supplied (that takes precedence). `EXPIRED` uses the
+   * same runtime validity-window derivation as `quotationStatus=EXPIRED`.
+   */
+  @IsOptional()
+  @Transform(({ value }: TransformFnParams): QuotationStatus[] | undefined => {
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean) as QuotationStatus[];
+    }
+    return value as QuotationStatus[] | undefined;
+  })
+  @IsEnum(QuotationStatus, { each: true })
+  quotationStatuses?: QuotationStatus[];
 
   /**
    * `true` scopes the list to quotation-origin records (any non-null
@@ -375,4 +429,21 @@ export class ListOrdersDto extends PaginationQueryDto {
   @ToBoolean()
   @IsBoolean()
   isUrgent?: boolean;
+
+  /**
+   * Server-side sort column (whitelisted — see {@link ORDER_SORT_KEYS}). Covers
+   * the stored/relational columns (date, codes, lifecycle + bill/payment status,
+   * patient/panel/doctor names) and the denormalized billing rollups (gross /
+   * discount / net / paid / balance / refunded). Defaults to newest-first
+   * (`createdAt desc`) when omitted. Every list that renders these columns sends
+   * this so sorting happens in the database, never client-side on one page.
+   */
+  @IsOptional()
+  @IsIn([...ORDER_SORT_KEYS])
+  sortBy?: OrderSortKey;
+
+  /** Sort direction for {@link sortBy} (`asc` | `desc`, default `desc`). */
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 }

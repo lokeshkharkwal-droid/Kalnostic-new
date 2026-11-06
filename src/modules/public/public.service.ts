@@ -233,7 +233,11 @@ export class PublicService {
     const qr = await this.prisma.runWithTenant(tenantId, () =>
       this.readQrSettings(tenantId, branchId),
     );
-    return this.toView(order, branch, patientPhotoUrl, qr);
+    // The tenant's display locale — so the page renders payment timestamps (stored
+    // in UTC) and amounts in the business's own time zone / currency, not the
+    // server's or the patient device's. `getLocale` is platform-level (no RLS).
+    const locale = await this.tenantService.getLocale(tenantId);
+    return this.toView(order, branch, patientPhotoUrl, qr, locale);
   }
 
   /**
@@ -242,14 +246,14 @@ export class PublicService {
    * `billPrintablePaymentStatuses`, and the configured `billPrintTemplateId` is
    * used (falling back to the tenant's resolved bill template). Ownership is
    * re-validated here.
-   * @returns the rendered PDF bytes
+   * @returns the rendered PDF bytes + a patient-friendly download filename
    * @throws PublicBillNotPrintableException when the status is not allowed
    */
   async getBillPdf(
     tenantId: string,
     branchId: string,
     orderId: string,
-  ): Promise<Buffer> {
+  ): Promise<{ pdf: Buffer; fileName: string }> {
     const { order } = await this.loadValidatedOrder(
       tenantId,
       branchId,
@@ -267,12 +271,13 @@ export class PublicService {
         qr.billPrintTemplateId ??
         (await this.resolveTemplateId(tenantId, branchId, 'bill_print')) ??
         undefined;
-      return this.orderService.print(
+      const pdf = await this.orderService.print(
         orderId,
         tenantId,
         'bill_print',
         templateId,
       );
+      return { pdf, fileName: `bill-${order.orderCode}.pdf` };
     });
   }
 
@@ -281,19 +286,23 @@ export class PublicService {
    * all-reports pipeline with the PUBLISHED-only filter on, and the branch's
    * configured `reportPrintTemplateId` when set. Ownership is re-validated here;
    * 404 when the order has no published report yet.
-   * @returns the merged report PDF bytes
+   * @returns the merged report PDF bytes + a patient-friendly download filename
    * @throws PublicOrderNotFoundException when nothing is published
    */
   async getReportPdf(
     tenantId: string,
     branchId: string,
     orderId: string,
-  ): Promise<Buffer> {
-    await this.loadValidatedOrder(tenantId, branchId, orderId);
+  ): Promise<{ pdf: Buffer; fileName: string }> {
+    const { order } = await this.loadValidatedOrder(
+      tenantId,
+      branchId,
+      orderId,
+    );
     try {
       return await this.prisma.runWithTenant(tenantId, async () => {
         const qr = await this.readQrSettings(tenantId, branchId);
-        return this.labReportService.printAllForOrder(
+        const pdf = await this.labReportService.printAllForOrder(
           orderId,
           tenantId,
           branchId,
@@ -302,6 +311,7 @@ export class PublicService {
           undefined,
           true, // publishedOnly
         );
+        return { pdf, fileName: `report-${order.orderCode}.pdf` };
       });
     } catch (err) {
       if (err instanceof PublicOrderNotFoundException) throw err;
@@ -376,6 +386,12 @@ export class PublicService {
     branch: Branch,
     patientPhotoUrl: string | null,
     qr: PublicQrSettings,
+    locale: {
+      timezone: string;
+      currency: string;
+      dateFormat: string;
+      timeFormat: string;
+    },
   ): PublicOrderView {
     const p = order.patient;
     const name = [p.firstName, p.middleName, p.lastName]
@@ -453,6 +469,12 @@ export class PublicService {
         refunded,
       },
       transactions: this.toTransactions(order),
+      locale: {
+        timeZone: locale.timezone,
+        currency: locale.currency,
+        dateFormat: locale.dateFormat,
+        timeFormat: locale.timeFormat,
+      },
       reports: {
         hasPublishedReports,
         publishedCount: publishedReports.length,

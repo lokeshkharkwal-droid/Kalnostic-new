@@ -21,6 +21,8 @@ params:query {
   ~dateFrom: 2026-08-01
   ~dateTo: 2026-08-31
   ~branchId: {{branchId}}
+  ~sortBy: netAmount
+  ~sortOrder: desc
 }
 
 auth:bearer {
@@ -33,4 +35,15 @@ docs {
   `invoiceType`, `paymentStatus` (PENDING/PARTIAL/COMPLETED/CANCELLED), `dueStatus`
   (ON_TIME/OVERDUE), `partyId`, `dateFrom`/`dateTo` (on invoice date), `branchId`.
   Each row includes a `_count.sourceOrders`.
+
+  ## Sorting (server-side)
+
+  `sortBy` (whitelisted; anything else → 400) + `sortOrder` (`asc`|`desc`, default
+  `desc`). Allowed columns — all stored `Invoice` fields, so amount sorts are exact
+  (money is whole-rupee integers): `invoiceId`, `dateTime`, `type`, `customerName`,
+  `mobile`, `gross`, `tdsAmount`, `netAmount`, `paidInvoice`, `paidTds`,
+  `outstandingInvoice`, `outstandingTds`, `invoiceDue`, `tdsDue`, `status`,
+  `overdue`. `branch` is NOT sortable (the branch name is resolved separately — no
+  `branch` relation on Invoice). Omitting `sortBy` keeps newest-first
+  (`createdAt desc`).
 }

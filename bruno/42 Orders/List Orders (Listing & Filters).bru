@@ -24,6 +24,7 @@ params:query {
   ~billStatus: PAID
   ~paymentMode: CASH
   ~quotationStatus: DRAFT
+  ~quotationStatuses: DRAFT,EXPIRED
   ~orderType: WALK_IN
   ~billingType: CASH_CLIENT
   ~patientId: {{patientId}}
@@ -52,6 +53,8 @@ params:query {
   ~isUrgent: false
   ~hideUnpaidAppointments: true
   ~includeCheckedInAppointments: true
+  ~sortBy: netAmount
+  ~sortOrder: desc
 }
 
 auth:bearer {
@@ -135,6 +138,12 @@ docs {
     screen (`isQuotation=true`) `EXPIRED` is derived at query time from the
     branch's current validity window: an open `DRAFT` whose `orderDate` is older
     than (now − validity) counts as expired and is excluded from `DRAFT`.
+  - `quotationStatuses` — comma-separated multi-value form of `quotationStatus`
+    (e.g. `DRAFT,EXPIRED`), powering the Quotations screen's Draft / Converted /
+    Expired status **checkboxes** server-side (an order matches when its effective
+    quotation status is ANY of the selected values; `EXPIRED` uses the same
+    runtime validity-window derivation). Ignored when the single-value
+    `quotationStatus` is also supplied (that takes precedence).
   - `statuses` — comma-separated multi-status filter (e.g. `ORDER,APPOINTMENT,CANCELLED`);
     takes precedence over the single `status`. The Finance → Billing reports send it to
     scope to real bills (every status except `DRAFT`/`QUOTE`) so the metric cards match
@@ -226,4 +235,26 @@ docs {
     pulling in not-yet-checked-in appointments. Implemented as an OR
     (`status IN (statuses)` OR `status = APPOINTMENT AND appointment checked-in`),
     so it never widens the plain `statuses` filter for other screens.
+
+  ## Sorting (server-side)
+
+  The Billings, Quotations, Appointments and Order Console lists sort entirely in
+  the database — never client-side over one fetched page. Send:
+
+  - `sortBy` — one of the whitelisted columns (anything else is rejected 400):
+    `orderDate`, `createdAt`, `checkedInAt`, `appointmentAt`, `orderCode`,
+    `billId`, `externalOrderId`, `status`, `paymentStatus`, `billStatus`,
+    `refundStatus`, `patientName`, `referralPanel`, `referredBy`, and the
+    denormalized billing-rollup columns `grossAmount`, `discountAmount`,
+    `netAmount`, `paidAmount`, `balanceAmount`, `refundedAmount`.
+  - `sortOrder` — `asc` | `desc` (default `desc`).
+
+  `patientName` / `referralPanel` / `referredBy` sort by the related record's
+  name with a stable `createdAt` tie-break. The money columns
+  (`grossAmount`…`refundedAmount`) are **denormalized** onto the order — the exact
+  gross / discount / net / paid / balance (`max(0, net − paid)`) / refunded the
+  Billings row renders — and recomputed in-transaction on every order / payment /
+  cancel / refund write (same pattern as `paymentStatus` / `billStatus`), so a
+  server sort on them is consistent with what each row displays. Omitting `sortBy`
+  preserves the default newest-first (`createdAt desc`) ordering.
 }

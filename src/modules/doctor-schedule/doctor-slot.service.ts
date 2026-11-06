@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { DoctorSlot, Prisma, SlotStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import { DoctorsService } from '../doctors/doctors.service';
 import {
   CalendarDay,
@@ -42,7 +44,16 @@ export class DoctorSlotService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly doctorsService: DoctorsService,
+    private readonly tenantTz: TenantTimeZoneService,
   ) {}
+
+  /** "now" projected to the tenant's business-local wall clock, so the Past /
+   * elapsed check compares like-for-like with slotDate + startTime (both authored
+   * in local time). */
+  private async localNow(tenantId: string): Promise<Date> {
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    return toBranchLocalInstant(new Date(), zone);
+  }
 
   /**
    * Build the 7-day calendar for a doctor starting at `weekStart`, with the
@@ -80,7 +91,7 @@ export class DoctorSlotService {
       byDate.set(key, list);
     }
 
-    const now = new Date();
+    const now = await this.localNow(tenantId);
     const days: CalendarDay[] = [];
     for (let i = 0; i < 7; i++) {
       const date = addDays(start, i);
@@ -121,12 +132,12 @@ export class DoctorSlotService {
     tenantId: string,
     doctorId: string,
   ): Promise<TodaySlot[]> {
-    const today = startOfUtcDay(new Date());
+    const now = await this.localNow(tenantId);
+    const today = startOfUtcDay(now);
     const slots = await this.prisma.doctorSlot.findMany({
       where: { tenantId, doctorId, deletedAt: null, slotDate: today },
       orderBy: { startTime: 'asc' },
     });
-    const now = new Date();
     return slots.map((s) => {
       const status = this.deriveStatus(s, now);
       return {
@@ -172,7 +183,7 @@ export class DoctorSlotService {
     slotId: string,
   ): Promise<DoctorSlot> {
     const slot = await this.loadSlot(tx, tenantId, slotId);
-    if (this.isPast(slot, new Date())) {
+    if (this.isPast(slot, await this.localNow(tenantId))) {
       throw new SlotInPastException(slotId);
     }
     if (slot.bookedPatients >= slot.maxPatients) {
