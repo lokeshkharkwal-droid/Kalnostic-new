@@ -6,6 +6,8 @@ import {
   PhlebotomistSlot,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import {
   DailyCapReachedException,
   PhlebotomistScheduleForStaffNotFoundException,
@@ -37,7 +39,10 @@ import {
  */
 @Injectable()
 export class SlotReservationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tenantTz: TenantTimeZoneService,
+  ) {}
 
   /**
    * Reserve one home-visit opening for `phlebotomistId` at `collectionAt`,
@@ -58,6 +63,12 @@ export class SlotReservationService {
     phlebotomistId: string,
     collectionAt: Date,
   ): Promise<void> {
+    // `collectionAt` is a true UTC instant; slot windows + the daily load date are
+    // authored in the business-local wall clock, so match against the tenant-zone
+    // local projection (same zone the frontend picked/displays with). Resolve the
+    // zone on `tx` so a concurrent reservation never opens an extra pool connection.
+    const zone = await this.tenantTz.getTimeZone(tenantId, tx);
+    const local = toBranchLocalInstant(collectionAt, zone);
     const schedule = await tx.phlebotomistSchedule.findFirst({
       where: {
         tenantId,
@@ -78,7 +89,7 @@ export class SlotReservationService {
       tenantId,
       branchId,
       phlebotomistId,
-      collectionAt,
+      local,
     );
     if (!slot || collectionAt.getTime() < Date.now()) {
       throw new SlotUnavailableException(
@@ -102,7 +113,7 @@ export class SlotReservationService {
 
     // Atomic daily-cap gate. `maxVisitsPerDay <= 0` means "no daily cap".
     if (schedule.maxVisitsPerDay > 0) {
-      const loadDate = startOfUtcDay(collectionAt);
+      const loadDate = startOfUtcDay(local);
       await tx.phlebotomistDayLoad.upsert({
         where: {
           tenantId_phlebotomistId_branchId_loadDate: {
@@ -154,12 +165,14 @@ export class SlotReservationService {
     phlebotomistId: string,
     collectionAt: Date,
   ): Promise<void> {
+    const zone = await this.tenantTz.getTimeZone(tenantId, tx);
+    const local = toBranchLocalInstant(collectionAt, zone);
     const slot = await this.resolveSlot(
       tx,
       tenantId,
       branchId,
       phlebotomistId,
-      collectionAt,
+      local,
     );
     if (slot) {
       await tx.phlebotomistSlot.updateMany({
@@ -167,7 +180,7 @@ export class SlotReservationService {
         data: { bookedCount: { decrement: 1 } },
       });
     }
-    const loadDate = startOfUtcDay(collectionAt);
+    const loadDate = startOfUtcDay(local);
     await tx.phlebotomistDayLoad.updateMany({
       where: {
         tenantId,
@@ -218,14 +231,18 @@ export class SlotReservationService {
       },
       select: { collectionAt: true, appointmentAt: true },
     });
+    const zone = await this.tenantTz.getTimeZone(tenantId, client);
     const minutesByDate = new Map<string, number[]>();
     const countByDate = new Map<string, number>();
     for (const r of rows) {
       const v = r.collectionAt ?? r.appointmentAt;
       if (!v || v < from || v >= to) continue;
-      const key = formatDate(v);
+      // Bucket by the business-local date/minute so counters line up with the
+      // locally-authored slot windows (mirrors resolveSlot).
+      const local = toBranchLocalInstant(v, zone);
+      const key = formatDate(local);
       const list = minutesByDate.get(key) ?? [];
-      list.push(utcMinutesOf(v));
+      list.push(utcMinutesOf(local));
       minutesByDate.set(key, list);
       countByDate.set(key, (countByDate.get(key) ?? 0) + 1);
     }
@@ -276,18 +293,21 @@ export class SlotReservationService {
   }
 
   /**
-   * Find the bookable slot whose `[startTime, endTime)` window contains
-   * `collectionAt`, for the phlebotomist on that date. Returns null when none
+   * Find the bookable slot whose `[startTime, endTime)` window contains the
+   * booking time, for the phlebotomist on that date. Returns null when none
    * matches (off-window / holiday / off-day — such dates generate no slots).
+   * @param localAt the booking time already projected to the business-local wall
+   *   clock (via {@link toBranchLocalInstant}) — its UTC getters read local time,
+   *   matching how `slotDate` / `startTime` are authored.
    */
   private async resolveSlot(
     tx: Prisma.TransactionClient,
     tenantId: string,
     branchId: string,
     phlebotomistId: string,
-    collectionAt: Date,
+    localAt: Date,
   ): Promise<PhlebotomistSlot | null> {
-    const dayStart = startOfUtcDay(collectionAt);
+    const dayStart = startOfUtcDay(localAt);
     const candidates = await tx.phlebotomistSlot.findMany({
       where: {
         tenantId,
@@ -297,7 +317,7 @@ export class SlotReservationService {
         slotDate: { gte: dayStart, lt: addDays(dayStart, 1) },
       },
     });
-    const minute = utcMinutesOf(collectionAt);
+    const minute = utcMinutesOf(localAt);
     return (
       candidates.find(
         (s) =>

@@ -24,6 +24,7 @@ params:query {
   ~billStatus: PAID
   ~paymentMode: CASH
   ~quotationStatus: DRAFT
+  ~quotationStatuses: DRAFT,EXPIRED
   ~orderType: WALK_IN
   ~billingType: CASH_CLIENT
   ~patientId: {{patientId}}
@@ -40,6 +41,7 @@ params:query {
   ~dateTo: 2026-07-31
   ~section: DIAGNOSTICS
   ~departmentId: {{departmentId}}
+  ~scopeByDepartment: true
   ~categoryId: {{categoryId}}
   ~subCategoryId: {{subCategoryId}}
   ~branchLabTestId: {{branchLabTestId}}
@@ -51,6 +53,8 @@ params:query {
   ~isUrgent: false
   ~hideUnpaidAppointments: true
   ~includeCheckedInAppointments: true
+  ~sortBy: netAmount
+  ~sortOrder: desc
 }
 
 auth:bearer {
@@ -68,8 +72,10 @@ docs {
   (`NONE | PARTIALLY_REFUNDED | FULLY_REFUNDED`, so a refunded order's Status folds
   to "Refunded" rather than "Not Paid"), the order's `billStatus` (the single
   Billings Status — see the `billStatus` filter), the
-  active-item count (`itemCount`), the collected-item count (`collectedItemCount`),
-  the order-level `reportStatus`
+  active-item count (`itemCount`), the collected-item count (`collectedItemCount`,
+  item-level and stamped only by the Order Overview's Collect — not used for
+  Sample Status), the order's Sample Status `collectionStatus`
+  (`PENDING | PARTIAL | COLLECTED`, derived from the order's samples), the order-level `reportStatus`
   (`PENDING | PARTIALLY_COMPLETED | COMPLETED | APPROVED`, the Order Console's
   "Order Status", derived per-test from each item's LabReport)
   and the `effectiveQuotationStatus`. Each row also carries `hasInvoice` (boolean)
@@ -132,6 +138,12 @@ docs {
     screen (`isQuotation=true`) `EXPIRED` is derived at query time from the
     branch's current validity window: an open `DRAFT` whose `orderDate` is older
     than (now − validity) counts as expired and is excluded from `DRAFT`.
+  - `quotationStatuses` — comma-separated multi-value form of `quotationStatus`
+    (e.g. `DRAFT,EXPIRED`), powering the Quotations screen's Draft / Converted /
+    Expired status **checkboxes** server-side (an order matches when its effective
+    quotation status is ANY of the selected values; `EXPIRED` uses the same
+    runtime validity-window derivation). Ignored when the single-value
+    `quotationStatus` is also supplied (that takes precedence).
   - `statuses` — comma-separated multi-status filter (e.g. `ORDER,APPOINTMENT,CANCELLED`);
     takes precedence over the single `status`. The Finance → Billing reports send it to
     scope to real bills (every status except `DRAFT`/`QUOTE`) so the metric cards match
@@ -158,15 +170,37 @@ docs {
   - `dateFrom` / `dateTo` — inclusive ISO-8601 date bounds on `orderDate`.
   - `section` — `DIAGNOSTICS` | `OPD` | `RADIOLOGY`; keeps only orders that carry
     that section (the order-console Diagnostics tab sends `DIAGNOSTICS`).
-  - `departmentId` — matches orders with an item whose test/panel carries this
-    (logical) department id.
+  - `departmentId` — matches orders with a test whose department is this one (its
+    own branch value, else its master test's), or a panel with at least one such
+    test among the tests ordered (a partially ordered panel counts only the tests
+    actually ordered). A panel's own department label is not used.
+  - `scopeByDepartment` — `true` scopes the list to the **caller's** assigned
+    departments (the Order Console sends this). An order is returned only when it
+    has at least one item whose test/panel department is unassigned (`NULL` →
+    visible to everyone) OR one of the caller's departments; an order with
+    multiple items still appears when a single item matches. A user with **no**
+    department assignment is unrestricted (sees every order). The scope is
+    resolved server-side from the JWT `person_id` (the `UserDepartmentAssignment`
+    membership table), never from the client, and mirrors the same department
+    visibility rule already enforced on Accession In-House Orders and the
+    Technician Reporting worklist. Other `GET /orders` consumers (Billing,
+    Quotations, patient history) omit the flag and are never department-filtered.
   - `categoryId` — matches orders with an item whose test/panel carries this
     (logical) category id.
   - `subCategoryId` — matches orders with a lab test carrying this (logical)
     sub-category id (panels have no sub-category).
-  - `branchLabTestId` / `branchLabPanelId` — matches orders containing that item.
-  - `sampleStatus` — `PENDING` (no items collected) | `PARTIAL` (some collected) |
-    `COLLECTED` (all collected), derived from each item's `collectedAt`.
+  - `branchLabTestId` — matches orders where that test was ordered on its own, or is
+    one of the tests ordered inside a panel on the order (a partially ordered panel
+    counts only the tests actually ordered; pricing-list copies of the test match too).
+  - `branchLabPanelId` — matches orders containing that panel.
+  - Each row also carries `itemDetails`: the same entries as `itemNames`, in the same
+    order, as `{ name, isPanel, panelTests }`. `isPanel` is true for a lab panel line. `panelTests` lists the ordered member tests of a
+    panel line (all members when ordered in full) and is empty for a test/direct line.
+  - `sampleStatus` — `PENDING` (no sample collected) | `PARTIAL` (some collected) |
+    `COLLECTED` (all collected), derived from the order's SAMPLES (`OrderSample.collectedAt`),
+    so a sample collected from the Accession screen counts too. Cancelled samples and
+    samples of a removed test are left out. Same rule as the row's `collectionStatus`
+    and the Accession list's `collectionStatus`.
   - `reportStatus` — `PENDING` | `PARTIALLY_COMPLETED` | `COMPLETED` | `APPROVED`,
     the order-level "Order Status" derived per-test from each item's LabReport: a
     test is "reported" once its report reaches `RESULT_DONE` (and "approved" at
@@ -201,4 +235,26 @@ docs {
     pulling in not-yet-checked-in appointments. Implemented as an OR
     (`status IN (statuses)` OR `status = APPOINTMENT AND appointment checked-in`),
     so it never widens the plain `statuses` filter for other screens.
+
+  ## Sorting (server-side)
+
+  The Billings, Quotations, Appointments and Order Console lists sort entirely in
+  the database — never client-side over one fetched page. Send:
+
+  - `sortBy` — one of the whitelisted columns (anything else is rejected 400):
+    `orderDate`, `createdAt`, `checkedInAt`, `appointmentAt`, `orderCode`,
+    `billId`, `externalOrderId`, `status`, `paymentStatus`, `billStatus`,
+    `refundStatus`, `patientName`, `referralPanel`, `referredBy`, and the
+    denormalized billing-rollup columns `grossAmount`, `discountAmount`,
+    `netAmount`, `paidAmount`, `balanceAmount`, `refundedAmount`.
+  - `sortOrder` — `asc` | `desc` (default `desc`).
+
+  `patientName` / `referralPanel` / `referredBy` sort by the related record's
+  name with a stable `createdAt` tie-break. The money columns
+  (`grossAmount`…`refundedAmount`) are **denormalized** onto the order — the exact
+  gross / discount / net / paid / balance (`max(0, net − paid)`) / refunded the
+  Billings row renders — and recomputed in-transaction on every order / payment /
+  cancel / refund write (same pattern as `paymentStatus` / `billStatus`), so a
+  server sort on them is consistent with what each row displays. Omitting `sortBy`
+  preserves the default newest-first (`createdAt desc`) ordering.
 }

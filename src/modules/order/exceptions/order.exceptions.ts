@@ -87,6 +87,25 @@ export class OrderBranchLabPanelNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 422 — a panel line's `selectedMemberBranchLabTestIds` is not a valid partial
+ * selection of that panel's member tests. Covers: a selection on a non-panel
+ * line, an id that isn't a member of the panel, an empty selection (at least one
+ * member must remain), dropping a non-removable member, dropping any member when
+ * the panel doesn't allow partial billing, or exceeding the panel's
+ * `maxTestsRemovable`. `reason` carries the specific cause (logged, not returned).
+ */
+export class InvalidPanelMemberSelectionException extends KaltrosException {
+  constructor(reason: string, context: Record<string, unknown> = {}) {
+    super(
+      'INVALID_PANEL_MEMBER_SELECTION',
+      'The selected tests for this lab panel are not a valid selection',
+      { reason, ...context },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
 /** 422 — the referenced diagnostic panel does not exist in the caller's tenant. */
 export class OrderDiagnosticPanelNotFoundException extends KaltrosException {
   constructor(diagnosticPanelId: string) {

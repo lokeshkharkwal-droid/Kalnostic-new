@@ -8,6 +8,8 @@ import {
   SlotStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import { PhlebotomistDirectoryService } from './phlebotomist-directory.service';
 import { ServiceZoneService } from './service-zone.service';
 import { CreatePhlebotomistScheduleDto } from './dto/create-phlebotomist-schedule.dto';
@@ -74,7 +76,16 @@ export class PhlebotomistScheduleService {
     private readonly prisma: PrismaService,
     private readonly directory: PhlebotomistDirectoryService,
     private readonly serviceZoneService: ServiceZoneService,
+    private readonly tenantTz: TenantTimeZoneService,
   ) {}
+
+  /** Business-local "today" (midnight) for the tenant — the anchor for slot
+   * generation + the future-slot boundary, so horizons and recurrence weekdays
+   * are evaluated in the business calendar, not UTC. */
+  private async localToday(tenantId: string): Promise<Date> {
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    return startOfUtcDay(toBranchLocalInstant(new Date(), zone));
+  }
 
   /**
    * Create a phlebotomist schedule and generate its future slots (when ACTIVE),
@@ -361,7 +372,7 @@ export class PhlebotomistScheduleService {
     branchId: string,
   ): Promise<PhlebotomistScheduleDetail> {
     const schedule = await this.findById(id, tenantId, branchId);
-    const today = startOfUtcDay(new Date());
+    const today = await this.localToday(tenantId);
     const horizonEnd = addDays(today, DEFAULT_HORIZON_WEEKS * 7);
 
     const futureSlots = await this.prisma.phlebotomistSlot.findMany({
@@ -568,7 +579,7 @@ export class PhlebotomistScheduleService {
     overrides: ScheduleOverrideDto[],
     horizonWeeks: number,
   ): Promise<void> {
-    const today = startOfUtcDay(new Date());
+    const today = await this.localToday(tenantId);
     const horizonEnd = addDays(today, horizonWeeks * 7);
 
     // Retain future slots that contain a visit; soft-delete the unbooked rest.
@@ -674,7 +685,7 @@ export class PhlebotomistScheduleService {
     scheduleId: string,
     phlebotomistId: string,
   ): Promise<void> {
-    const today = startOfUtcDay(new Date());
+    const today = await this.localToday(tenantId);
     const horizonEnd = addDays(today, DEFAULT_HORIZON_WEEKS * 7);
     const future = await tx.phlebotomistSlot.findMany({
       where: {

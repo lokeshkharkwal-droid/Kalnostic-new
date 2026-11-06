@@ -400,12 +400,16 @@ export class LabTestService {
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       }),
     ]);
+    // Ranges/values come back in the Master Data editor's drag-to-reorder
+    // order (`sortOrder`); `createdAt` tie-breaks rows never reordered (0).
     const [ranges, values] = await Promise.all([
       this.prisma.labTestReferenceRange.findMany({
         where: { labTestId, tenantId, deletedAt: null },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       }),
       this.prisma.labTestReferenceValue.findMany({
         where: { labTestId, tenantId, deletedAt: null },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       }),
     ]);
     return {
@@ -961,7 +965,9 @@ export class LabTestService {
                   method: r.method ?? param?.method ?? null,
                   gender: r.gender,
                   ageFrom: r.ageFrom,
+                  ageFromUnit: r.ageFromUnit,
                   ageTo: r.ageTo,
+                  ageToUnit: r.ageToUnit,
                   lowerLimit: r.lowerLimit,
                   upperLimit: r.upperLimit,
                   displayOfReferenceRange: r.displayOfReferenceRange,
@@ -994,7 +1000,9 @@ export class LabTestService {
                   method: v.method ?? param?.method ?? null,
                   gender: v.gender,
                   ageFrom: v.ageFrom,
+                  ageFromUnit: v.ageFromUnit,
                   ageTo: v.ageTo,
+                  ageToUnit: v.ageToUnit,
                   displayValue: v.normalValueText,
                   flag: v.abnormalFlagLogic,
                 };
@@ -1172,6 +1180,8 @@ export class LabTestService {
   ): Promise<Map<string, LabTestReferenceRange[]>> {
     const rows = await this.prisma.labTestReferenceRange.findMany({
       where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+      // Same order as the Master Data editor (see `composeWithChildren`).
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     return this.groupByKey(rows, (r) => r.labTestId);
   }
@@ -1183,6 +1193,8 @@ export class LabTestService {
   ): Promise<Map<string, LabTestReferenceValue[]>> {
     const rows = await this.prisma.labTestReferenceValue.findMany({
       where: { labTestId: { in: ids }, tenantId, deletedAt: null },
+      // Same order as the Master Data editor (see `composeWithChildren`).
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     return this.groupByKey(rows, (r) => r.labTestId);
   }
@@ -5182,10 +5194,12 @@ export class LabTestService {
    * reports that used it). Each live row is matched at most once, so duplicates in
    * the payload can never share one row.
    *
-   * Only two things on a kept row are patched in place — the Default flag and the
-   * Display text — because neither takes part in judging a result (print shows the
-   * Display text saved on the result value, and Default only decides which range
-   * the technician screen pre-selects).
+   * Only three things on a kept row are patched in place — the Default flag, the
+   * Display text and its list position (`sortOrder`, when the client sends one) —
+   * because none takes part in judging a result (print shows the Display text saved
+   * on the result value, Default only decides which range the technician screen
+   * pre-selects, and the position is only the Master Data editor's display order).
+   * So reordering ranges never replaces a row or changes its id.
    *
    * @param tx caller's transaction client (already in `withTenant`)
    * @param scope tenant / branch / test / parameter the ranges belong to
@@ -5225,13 +5239,16 @@ export class LabTestService {
       }
       const isDefault = r.isDefault ?? false;
       const display = r.displayOfReferenceRange ?? null;
+      // An omitted `sortOrder` (an older client) keeps the row's current position.
+      const sortOrder = r.sortOrder ?? kept.sortOrder;
       if (
         kept.isDefault !== isDefault ||
-        (kept.displayOfReferenceRange ?? null) !== display
+        (kept.displayOfReferenceRange ?? null) !== display ||
+        kept.sortOrder !== sortOrder
       ) {
         await tx.labTestReferenceRange.update({
           where: { id: kept.id },
-          data: { isDefault, displayOfReferenceRange: display },
+          data: { isDefault, displayOfReferenceRange: display, sortOrder },
         });
       }
     }

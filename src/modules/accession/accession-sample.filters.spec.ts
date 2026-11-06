@@ -129,10 +129,13 @@ describe('OrderSampleService — referral / outsource / transfer-date filters', 
     expect(or).toContainEqual({
       barcode: { contains: 'ord-007', mode: 'insensitive' },
     });
-    expect(or).toContainEqual({
-      order: {
-        is: { orderCode: { contains: 'ord-007', mode: 'insensitive' } },
-      },
+    // The order-level keys now sit together under one `order` clause (order id,
+    // patient, referral panel) — the order id is still one of them.
+    const orderClause = (
+      or as Array<{ order?: { is: { OR: unknown[] } } }>
+    ).find((c) => c.order)!.order!.is.OR;
+    expect(orderClause).toContainEqual({
+      orderCode: { contains: 'ord-007', mode: 'insensitive' },
     });
     expect(JSON.stringify(or)).toContain('umId');
   });

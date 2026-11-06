@@ -1,0 +1,58 @@
+meta {
+  name: Start Sync Job
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/branch-lab-tests/sync/jobs
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "listId": "{{branchLabTestListId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.id) bru.setEnvVar("branchLabTestSyncJobId", data.id);
+}
+
+tests {
+  test("202 Accepted, job RUNNING", function () {
+    expect(res.getStatus()).to.equal(202);
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("id");
+    expect(data.kind).to.equal("LAB_TEST");
+    expect(data.status).to.equal("RUNNING");
+  });
+}
+
+docs {
+  Start a **background "Sync from Master Data"** job for the active branch's Lab
+  Test List and return `202` with the job straight away; poll
+  `GET /branch-lab-tests/sync/jobs/:jobId` ("Get Sync Job") for live progress
+  (update + delete in batches — adding is "Import from Master Data") and the result.
+
+  Body: `listId` (optional) picks the pricing list to reconcile — omit for the
+  branch's Walk-in list. The tenant + active branch come from the JWT.
+
+  Same reconcile as the synchronous `POST /branch-lab-tests/sync`, but run as a
+  job so the dialog can show progress without holding one long request open. The
+  reconcile is NON-ATOMIC: it commits per batch and a failing batch is counted
+  (`failed`) and skipped. `409 BRANCH_LIST_SYNC_ALREADY_RUNNING` if a test-list
+  sync is already running for this branch (attach via "Get Active Sync Job").
+
+  Result once SUCCEEDED: `{ created, updated, deleted, failed }`.
+}

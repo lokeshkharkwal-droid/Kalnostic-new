@@ -1816,6 +1816,14 @@ CREATE POLICY technician_settings_tenant_isolation ON technician_settings
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── qr_code_scan_settings ────────────────────────────────────────────────────
+ALTER TABLE qr_code_scan_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qr_code_scan_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS qr_code_scan_settings_tenant_isolation ON qr_code_scan_settings;
+CREATE POLICY qr_code_scan_settings_tenant_isolation ON qr_code_scan_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- Platform-level tables (tenants, persons, person_credentials, siteadmin_users,
 -- refresh_tokens, person_tenant_enrollments, test_groups, test_group_mappings,
 -- equipment, equipment_lab_tests, support_infos) are intentionally NOT covered —
@@ -2188,3 +2196,17 @@ CREATE POLICY master_data_import_jobs_tenant_isolation ON master_data_import_job
 -- At most one RUNNING import per tenant (imports run one at a time to keep DB load bounded).
 CREATE UNIQUE INDEX IF NOT EXISTS master_data_import_jobs_one_running_per_tenant
   ON master_data_import_jobs (tenant_id) WHERE status = 'RUNNING';
+
+-- ── branch_list_sync_jobs ─────────────────────────────────────────────────────
+-- Background "Sync from Master Data" runs for a branch's Lab Test / Lab Panel
+-- List. Never global, so plain tenant isolation.
+ALTER TABLE branch_list_sync_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE branch_list_sync_jobs FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS branch_list_sync_jobs_tenant_isolation ON branch_list_sync_jobs;
+CREATE POLICY branch_list_sync_jobs_tenant_isolation ON branch_list_sync_jobs
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+-- At most one RUNNING sync per branch per list kind (a test-list and a panel-list
+-- sync may run together; two of the same kind on one branch may not).
+CREATE UNIQUE INDEX IF NOT EXISTS branch_list_sync_jobs_one_running_per_branch_kind
+  ON branch_list_sync_jobs (tenant_id, branch_id, kind) WHERE status = 'RUNNING';

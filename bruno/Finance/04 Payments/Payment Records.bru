@@ -25,6 +25,8 @@ params:query {
   ~internalReferralId: {{internalReferralId}}
   ~externalReferralId: {{externalReferralId}}
   ~userId: {{personId}}
+  ~sortBy: dateTime
+  ~sortOrder: asc
 }
 
 auth:bearer {
@@ -93,4 +95,13 @@ docs {
 
   Pagination merges the top `page*limit` of each source and slices; `total` is the
   exact sum of per-source counts. Run **Business Auth → Login** first.
+
+  ## Sorting (server-side)
+
+  Because the list merges two sources with a stable `createdAt`/`id` prefix-merge,
+  only **`dateTime`** (= `createdAt`, the shared payment timestamp) can be sorted
+  consistently across both. `sortBy=dateTime` + `sortOrder` (`asc`|`desc`, default
+  `desc`) applies the direction to BOTH source reads and the in-memory merge so the
+  page prefix stays a valid total order. All other columns are source-specific or
+  derived and are not server-sortable (the UI renders them without a sort arrow).
 }

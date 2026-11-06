@@ -9,6 +9,7 @@ import { TenantController } from './tenant.controller';
 import { TenantLocaleController } from './tenant-locale.controller';
 import { TenantAccessionSettingsController } from './tenant-accession-settings.controller';
 import { TenantService } from './tenant.service';
+import { TenantTimeZoneModule } from './tenant-timezone.module';
 import { ExchangeTenantIdService } from './exchange-tenant-id.service';
 
 /**
@@ -26,6 +27,7 @@ import { ExchangeTenantIdService } from './exchange-tenant-id.service';
     BranchModule,
     LocationModule,
     ExchangeModule,
+    TenantTimeZoneModule,
   ],
   controllers: [
     TenantController,
@@ -33,6 +35,6 @@ import { ExchangeTenantIdService } from './exchange-tenant-id.service';
     TenantAccessionSettingsController,
   ],
   providers: [TenantService, ExchangeTenantIdService],
-  exports: [TenantService, ExchangeTenantIdService],
+  exports: [TenantService, ExchangeTenantIdService, TenantTimeZoneModule],
 })
 export class TenantModule {}

@@ -8,6 +8,8 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { fromBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import { SlotReservationService } from '../phlebotomist-schedule/slot-reservation.service';
 import { OrderSampleService } from '../accession/accession-sample.service';
 import { nextSampleStatus } from '../accession/constants/sample-transitions.constant';
@@ -56,6 +58,7 @@ export class PhlebotomistCollectionService {
     private readonly slotReservation: SlotReservationService,
     private readonly orderSamples: OrderSampleService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly tenantTz: TenantTimeZoneService,
   ) {}
 
   // ── Creation hook (order → collection) ─────────────────────────────────────
@@ -140,6 +143,92 @@ export class PhlebotomistCollectionService {
     });
   }
 
+  /**
+   * Cancel the home-visit collection linked to an order inside an existing
+   * (already tenant-scoped) transaction — WITHOUT releasing the phlebotomist slot
+   * (the caller, `OrderService.cancel`, releases it exactly once). A no-op when
+   * there is no live collection or it is already cancelled, so it is safe to call
+   * unconditionally on order cancel. Without this a cancelled order's visit keeps
+   * showing on the Collection Schedule as still pending, and a later collection-
+   * side cancel would free the shared slot counter a second time (CLAUDE.md
+   * rule #3 — invoked via DI from `OrderService`, never imported).
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param personId acting person id (changed/updated by)
+   * @param orderId the cancelled order
+   * @param notes cancellation reason recorded on the collection + history
+   */
+  async cancelForOrderInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    personId: string | null,
+    orderId: string,
+    notes?: string,
+  ): Promise<void> {
+    const collection = await tx.homeVisitCollection.findFirst({
+      where: { orderId, tenantId, deletedAt: null },
+      select: { id: true, status: true, branchId: true },
+    });
+    if (!collection || collection.status === CollectionStatus.CANCELLED) return;
+    await tx.homeVisitCollection.update({
+      where: { id: collection.id },
+      data: {
+        status: CollectionStatus.CANCELLED,
+        previousStatus: collection.status,
+        reasonForCancellation: notes ?? 'Order cancelled',
+        updatedBy: personId,
+      },
+    });
+    await tx.homeVisitStatusHistory.create({
+      data: {
+        tenantId,
+        branchId: collection.branchId,
+        collectionId: collection.id,
+        status: CollectionStatus.CANCELLED,
+        fromStatus: collection.status,
+        notes: notes ?? 'Order cancelled',
+        changedBy: personId,
+      },
+    });
+  }
+
+  /**
+   * Keep the home-visit collection's denormalized schedule
+   * (`scheduledCollectionAt` + `phlebotomistId`) in step with its order after the
+   * order's booking is edited (reschedule / phlebotomist swap) inside an existing
+   * transaction. A no-op when there is no live collection, and it never moves a
+   * terminal (completed/cancelled) one. Without this the collection card — and a
+   * later collection-side cancel/reschedule, which releases the slot at the
+   * collection's STORED time — would act on a stale time and free the wrong slot.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param orderId the rescheduled order
+   * @param scheduledCollectionAt the new collection time
+   * @param phlebotomistId the (possibly reassigned) phlebotomist
+   */
+  async syncScheduleForOrderInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderId: string,
+    scheduledCollectionAt: Date,
+    phlebotomistId: string | null,
+  ): Promise<void> {
+    await tx.homeVisitCollection.updateMany({
+      where: {
+        orderId,
+        tenantId,
+        deletedAt: null,
+        status: {
+          notIn: [
+            ...CANCELLED_COLLECTION_STATUSES,
+            ...COMPLETED_COLLECTION_STATUSES,
+          ],
+        },
+      },
+      data: { scheduledCollectionAt, phlebotomistId },
+    });
+  }
+
   // ── Reads ──────────────────────────────────────────────────────────────────
 
   /**
@@ -159,7 +248,7 @@ export class PhlebotomistCollectionService {
   ): Promise<PaginatedResult<CollectionListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const where = this.buildListWhere(tenantId, activeBranchId, query);
+    const where = await this.buildListWhere(tenantId, activeBranchId, query);
 
     // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
     // both queries — array-form bypasses the per-op RLS extension and returns
@@ -368,8 +457,17 @@ export class PhlebotomistCollectionService {
         });
       }
 
-      // Cancelling frees the phlebotomist slot the booking held.
-      if (target === CollectionStatus.CANCELLED && reservation) {
+      // Cancelling frees the phlebotomist slot the booking held — but ONLY on the
+      // transition INTO cancelled from a live state. Re-cancelling an already
+      // cancelled collection (or one whose slot was already freed when its order
+      // was cancelled) must not decrement the shared slot/day counter a second
+      // time, which would steal capacity from an unrelated booking in that window.
+      if (
+        target === CollectionStatus.CANCELLED &&
+        collection.status !== CollectionStatus.CANCELLED &&
+        collection.order?.appointment?.status !== AppointmentStatus.CANCELLED &&
+        reservation
+      ) {
         await this.slotReservation.releaseInTx(
           tx,
           tenantId,
@@ -408,10 +506,12 @@ export class PhlebotomistCollectionService {
     const branchId = collection.branchId;
     const newAt = new Date(dto.collectionAt);
     const newPhlebId = dto.phlebotomistId ?? collection.phlebotomistId;
-    // A cancelled collection already released its slot at cancel time — releasing
-    // again would double-decrement the booking counter, so skip it here.
+    // A cancelled collection (or one whose linked appointment was already
+    // cancelled) already released its slot — releasing again would
+    // double-decrement the shared booking counter, so skip it here.
     const oldReservation =
-      collection.status === CollectionStatus.CANCELLED
+      collection.status === CollectionStatus.CANCELLED ||
+      collection.order?.appointment?.status === AppointmentStatus.CANCELLED
         ? null
         : this.reservationOf(collection);
     const order = collection.order;
@@ -532,7 +632,7 @@ export class PhlebotomistCollectionService {
     activeBranchId: string | null,
     query: CollectionSummaryQueryDto,
   ): Promise<CollectionSummary> {
-    const where = this.buildSummaryWhere(tenantId, activeBranchId, query);
+    const where = await this.buildSummaryWhere(tenantId, activeBranchId, query);
 
     const grouped = await this.prisma.homeVisitCollection.groupBy({
       by: ['status'],
@@ -737,12 +837,42 @@ export class PhlebotomistCollectionService {
     }
   }
 
+  /**
+   * Build an inclusive `scheduledCollectionAt` range from business-local date-only
+   * bounds. `scheduledCollectionAt` is a true UTC instant, so the local day
+   * boundaries (`dateFrom 00:00` … `dateTo 23:59:59.999` in the tenant zone) are
+   * converted to their UTC equivalents before filtering — otherwise a "today →
+   * today" filter would be offset by the tenant's UTC offset (and a date-only
+   * `dateTo` would exclude everything after 00:00 UTC).
+   */
+  private scheduledCollectionAtFilter(
+    zone: string,
+    dateFrom?: string,
+    dateTo?: string,
+  ): { gte?: Date; lte?: Date } | undefined {
+    if (!dateFrom && !dateTo) return undefined;
+    const filter: { gte?: Date; lte?: Date } = {};
+    if (dateFrom) {
+      filter.gte = fromBranchLocalInstant(
+        new Date(`${dateFrom.slice(0, 10)}T00:00:00.000Z`),
+        zone,
+      );
+    }
+    if (dateTo) {
+      filter.lte = fromBranchLocalInstant(
+        new Date(`${dateTo.slice(0, 10)}T23:59:59.999Z`),
+        zone,
+      );
+    }
+    return filter;
+  }
+
   /** Build the tenant/branch-scoped `where` for the Collection Schedule list. */
-  private buildListWhere(
+  private async buildListWhere(
     tenantId: string,
     activeBranchId: string | null,
     query: ListCollectionsDto,
-  ): Prisma.HomeVisitCollectionWhereInput {
+  ): Promise<Prisma.HomeVisitCollectionWhereInput> {
     const where: Prisma.HomeVisitCollectionWhereInput = {
       tenantId,
       deletedAt: null,
@@ -757,12 +887,13 @@ export class PhlebotomistCollectionService {
     if (query.priority) where.priority = query.priority;
     if (query.phlebotomistId) where.phlebotomistId = query.phlebotomistId;
 
-    if (query.dateFrom || query.dateTo) {
-      where.scheduledCollectionAt = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-      };
-    }
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    const listRange = this.scheduledCollectionAtFilter(
+      zone,
+      query.dateFrom,
+      query.dateTo,
+    );
+    if (listRange) where.scheduledCollectionAt = listRange;
 
     // Order-relation filters (payment status / referral panel).
     const order: Prisma.OrderWhereInput = {};
@@ -803,11 +934,11 @@ export class PhlebotomistCollectionService {
   }
 
   /** Build the tenant/branch-scoped `where` for the summary + phleb-wise report. */
-  private buildSummaryWhere(
+  private async buildSummaryWhere(
     tenantId: string,
     activeBranchId: string | null,
     query: CollectionSummaryQueryDto,
-  ): Prisma.HomeVisitCollectionWhereInput {
+  ): Promise<Prisma.HomeVisitCollectionWhereInput> {
     const where: Prisma.HomeVisitCollectionWhereInput = {
       tenantId,
       deletedAt: null,
@@ -815,12 +946,13 @@ export class PhlebotomistCollectionService {
     const branchId = query.branchId ?? activeBranchId;
     if (branchId) where.branchId = branchId;
     if (query.phlebotomistId) where.phlebotomistId = query.phlebotomistId;
-    if (query.dateFrom || query.dateTo) {
-      where.scheduledCollectionAt = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-      };
-    }
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    const summaryRange = this.scheduledCollectionAtFilter(
+      zone,
+      query.dateFrom,
+      query.dateTo,
+    );
+    if (summaryRange) where.scheduledCollectionAt = summaryRange;
     return where;
   }
 

@@ -43,9 +43,11 @@ export function reportKindOfItem(item: {
 }
 
 /**
- * Whether the technician may choose which Notes sections print for this kind of
+ * Whether the Notes sections are selected to print BY DEFAULT for this kind of
  * report: the Lab Panel switch for a report on a panel line, the Lab Test switch
- * for a single test. A free-text line has no Notes at all, so no switch applies.
+ * for a single test (ON = all selected, OFF = none selected). The checkboxes show
+ * either way and the technician can change the selection. A free-text line has no
+ * Notes at all, so no switch applies.
  */
 export function notesSelectableFor(
   kind: ReportKind,
@@ -69,15 +71,22 @@ export function normaliseNoteSections(
 }
 
 /**
- * The sections to leave out of the printed report. While the matching switch is
- * off, nothing is left out (every section prints, as before), whatever choice
- * was saved earlier on the report.
+ * The sections to leave out of the printed report. Once a choice was made
+ * (`hasChosen`) it is the stored list. Until then the branch's setting decides:
+ * selected by default (ON) leaves nothing out, not selected by default (OFF)
+ * leaves every section out.
+ *
+ * @param selectedByDefault the matching Lab Test / Lab Panel setting (see {@link notesSelectableFor})
+ * @param hasChosen the technician (or the approval) has settled the choice on this report
+ * @param stored the sections left out, meaningful only when `hasChosen`
  */
 export function excludedSectionsToApply(
-  selectable: boolean,
+  selectedByDefault: boolean,
+  hasChosen: boolean,
   stored: readonly string[] | null | undefined,
 ): Set<NoteSectionKey> {
-  return selectable
-    ? new Set(normaliseNoteSections(stored))
-    : new Set<NoteSectionKey>();
+  if (hasChosen) return new Set(normaliseNoteSections(stored));
+  return selectedByDefault
+    ? new Set<NoteSectionKey>()
+    : new Set<NoteSectionKey>(NOTE_SECTION_KEYS);
 }

@@ -16,18 +16,18 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
+import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { barcodeGroupKey } from './utils/barcode-group-key';
-import {
-  deriveCollectionProgress,
-  COLLECTION_WORKFLOW_ITEM_WHERE,
-} from '../../common/utils/collection-progress.util';
-import type { CollectionProgress } from '../../common/utils/collection-progress.util';
+import { escapeLike } from './utils/like-escape.util';
+import { NO_DEPARTMENT_FILTER } from './constants/department-filter.constant';
+import { collectionProgressByOrder } from '../../common/utils/collection-progress.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantTime,
-  patientSingleUnitAgeDisplay,
+  patientPrintAgeDisplay,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { AppointmentService } from '../appointment/appointment.service';
@@ -108,6 +108,7 @@ import {
 import {
   AccessionNumberConflictException,
   OrderSampleNotFoundException,
+  SampleDepartmentForbiddenException,
   InvalidSampleTransitionException,
   RetrieveBlockedException,
   TransferWrongBranchException,
@@ -281,6 +282,20 @@ function transferKindOutFor(status: SampleStatus): TransferKind | null {
  * has a single-item and a bulk (`ids[]`) variant looping inside one transaction
  * (PDF §A.11). Reads always filter `{ tenantId, deletedAt: null }`.
  */
+/**
+ * What `buildSampleWhere` needs to know from the database before it can build the
+ * Department / Lab Test / Lab Panel filters. Resolved once per request by
+ * `resolveSampleFilterContext`; empty (and free) when none of those filters is set.
+ */
+interface SampleFilterContext {
+  /** The tenant's grouping mode - only read when a Department filter is set. */
+  groupingMode?: AccessionGroupingMode;
+  /** The Lab Test filter's master (source) test id. */
+  labTestSourceId?: string;
+  /** Every price-list copy of the Lab Panel filter's panel (its own id included). */
+  labPanelIds?: string[];
+}
+
 @Injectable()
 export class OrderSampleService {
   private readonly logger = new Logger(OrderSampleService.name);
@@ -404,10 +419,16 @@ export class OrderSampleService {
       } else if (item.branchLabPanel) {
         // The panel's own Sample Flow governs all its member-test samples.
         const panelSampleFlow = item.branchLabPanel.isSampleFlow;
+        // Partial panel ordering: when the line selected only a subset of the
+        // panel's member tests (`selectedMemberBranchLabTestIds` non-empty), only
+        // those members are expanded into samples here — so only they flow on to
+        // collection / acceptance / reporting. An empty array = all members (the
+        // default + every line created before partial ordering shipped).
         const tests = await this.panelConstituentTests(
           tx,
           tenantId,
           item.branchLabPanel.id,
+          item.selectedMemberBranchLabTestIds,
         );
         for (const test of tests) {
           await this.collectTestUnits(
@@ -1375,35 +1396,14 @@ export class OrderSampleService {
           orderBy: { createdAt: 'desc' },
         });
 
-        // Order-level collection progress for the page's orders — one bounded
-        // query over the workflow items' `collectedAt` (bill-only items excluded),
-        // folded into collected/total per order (§A.6 "Collection Status" column).
-        const itemRows =
-          orderIds.length > 0
-            ? await tx.orderItem.findMany({
-                where: {
-                  orderId: { in: orderIds },
-                  tenantId,
-                  deletedAt: null,
-                  ...COLLECTION_WORKFLOW_ITEM_WHERE,
-                },
-                select: { orderId: true, collectedAt: true },
-              })
-            : [];
-        const counts = new Map<string, { collected: number; total: number }>();
-        for (const it of itemRows) {
-          const c = counts.get(it.orderId) ?? { collected: 0, total: 0 };
-          c.total += 1;
-          if (it.collectedAt) c.collected += 1;
-          counts.set(it.orderId, c);
-        }
-        const collectionByOrderId = new Map<string, CollectionProgress>();
-        for (const [orderId, c] of counts) {
-          collectionByOrderId.set(
-            orderId,
-            deriveCollectionProgress(c.collected, c.total),
-          );
-        }
+        // Order-level collection progress for the page's orders, derived from the
+        // orders' samples (§A.6 "Collection Status" column) — the same rule as the
+        // Order Console's "Sample Status" and the `collectionStatus` filter.
+        const collectionByOrderId = await collectionProgressByOrder(
+          tx,
+          tenantId,
+          orderIds,
+        );
 
         return {
           orderIds,
@@ -1494,6 +1494,24 @@ export class OrderSampleService {
     tenantId: string,
     orderId: string,
   ): Promise<InHouseOrderGroup | null> {
+    // B2B Referral Panel isolation: a panel session sees the samples of its own
+    // orders only (this endpoint is open to B2B for the Order Console overview).
+    // An unknown order is refused the same way. A no-op for every other session.
+    const panelId = getReferralPanelId();
+    if (panelId) {
+      const owned = await this.prisma.order.findFirst({
+        where: {
+          id: orderId,
+          tenantId,
+          deletedAt: null,
+          referralPanelId: panelId,
+        },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new ReferralPanelAccessDeniedException('order', orderId);
+      }
+    }
     const nowMs = Date.now();
     // TAT bands are branch-scoped; without the modal's active branch we resolve
     // the tenant default (branchId = null) — good enough for the derived band a
@@ -2259,12 +2277,12 @@ export class OrderSampleService {
             .filter(Boolean)
             .join(' ')
         : '',
-      // Single-unit age ("25 Years" / "6 Months" / "15 Days") from DOB, unit
-      // picked by the registration Age Type rule; stored age/ageType when DOB
-      // is unknown. Labels deliberately skip the full "Y Years, M Months,
-      // D Days" breakdown the order documents print. `now` is the branch-local
-      // date so the age doesn't lag a day between local and UTC midnight.
-      patient_age: patientSingleUnitAgeDisplay(
+      // Single leading-unit age ("25 Years" / "6 Months" / "15 Days") via the
+      // shared `patientPrintAgeDisplay` rule (Years ≥12 months, Months 1–11
+      // months, Days under a month) — identical to the bill/TRF/report tag;
+      // stored age/ageType when DOB is unknown. `now` is the branch-local date
+      // so the age doesn't lag a day between local and UTC midnight.
+      patient_age: patientPrintAgeDisplay(
         patient?.dateOfBirth ?? null,
         patient?.age ?? null,
         patient?.ageType ?? null,
@@ -2362,12 +2380,86 @@ export class OrderSampleService {
    * each collected sample that lacks one (`assignBarcodesOnCollectInTx`), in the
    * same transaction.
    */
+  /**
+   * Enforce the department-visibility rule on a COLLECT action: a caller mapped
+   * to one or more departments may collect a sample only when its department is
+   * unassigned (NULL → everyone) or one of theirs (resolved via
+   * `UserDepartmentScopeService`). A caller mapped to NO department is
+   * UNRESTRICTED (mirrors the read-side {@link departmentScopeForSamples}, which
+   * now shows such a caller every sample on the Accession In-House workflow) — a
+   * sample the caller can see there must stay collectable by id. It is the single
+   * enforcement point for every user-initiated collect path (the Accession
+   * worklist {@link collect}, the Order Overview per-item and group collect). The
+   * internal order-creation / check-in bridges never pass through here.
+   * @param tenantId tenant scope (from JWT)
+   * @param personId the acting user (null → treated as mapped to no department → unrestricted)
+   * @param sampleIds the accession samples about to be collected
+   * @throws SampleDepartmentForbiddenException if any sample is out of scope
+   */
+  async assertSamplesInDepartmentScope(
+    tenantId: string,
+    personId: string | null,
+    sampleIds: string[],
+  ): Promise<void> {
+    if (sampleIds.length === 0) return;
+    const scopeIds = personId
+      ? await this.userDepartmentScope.resolveDepartmentIds(tenantId, personId)
+      : [];
+    // A caller mapped to no department is unrestricted (same rule as the In-House
+    // listing): there is nothing to enforce. Only a caller WITH departments is
+    // held to them.
+    if (scopeIds.length === 0) return;
+    const samples = await this.prisma.orderSample.findMany({
+      where: { id: { in: sampleIds }, tenantId, deletedAt: null },
+      select: { id: true, departmentId: true },
+    });
+    const forbidden = samples
+      .filter(
+        (s) => !(s.departmentId === null || scopeIds.includes(s.departmentId)),
+      )
+      .map((s) => s.id);
+    if (forbidden.length > 0) {
+      throw new SampleDepartmentForbiddenException(forbidden);
+    }
+  }
+
+  /**
+   * Department guard for the per-order-item collect (the Order Overview modal's
+   * per-test Collect / Collect & Print): resolve the item's accession sample ids,
+   * then apply {@link assertSamplesInDepartmentScope}. Covers both a standalone
+   * test and a panel member — each has its own samples carrying their own
+   * `departmentId`.
+   * @throws SampleDepartmentForbiddenException if any of the item's samples is out of scope
+   */
+  async assertOrderItemSamplesInDepartmentScope(
+    tenantId: string,
+    personId: string | null,
+    orderItemId: string,
+  ): Promise<void> {
+    const samples = await this.prisma.orderSample.findMany({
+      where: {
+        tenantId,
+        deletedAt: null,
+        tests: { some: { orderItemId, tenantId, deletedAt: null } },
+      },
+      select: { id: true },
+    });
+    await this.assertSamplesInDepartmentScope(
+      tenantId,
+      personId,
+      samples.map((s) => s.id),
+    );
+  }
+
   async collect(
     ids: string[],
     tenantId: string,
     personId: string | null,
     dto: CollectSampleDto,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    // Department restriction (same rule as the In-House listing): refuse any
+    // sample outside the caller's department scope before transitioning.
+    await this.assertSamplesInDepartmentScope(tenantId, personId, ids);
     return this.transitionIds(
       ids,
       tenantId,
@@ -4995,6 +5087,11 @@ export class OrderSampleService {
     scopeIds: string[],
   ): Promise<Prisma.OrderSampleWhereInput> {
     const resolved = await this.resolveAsyncFilters(tenantId, branchId, query);
+    const filterCtx = await this.resolveSampleFilterContext(
+      tenantId,
+      branchId,
+      query,
+    );
     return this.buildSampleWhere(
       tenantId,
       branchId,
@@ -5003,6 +5100,7 @@ export class OrderSampleService {
       nowMs,
       scopeIds,
       resolved,
+      filterCtx,
     );
   }
 
@@ -5025,11 +5123,79 @@ export class OrderSampleService {
   }
 
   /**
+   * Look up what the Department / Lab Test / Lab Panel filters depend on:
+   *  - the grouping mode (ORDER keeps a qualifying order whole; the other modes match the sample),
+   *  - the Lab Test dropdown row's master test id (the dropdown sends a branch test id),
+   *  - every price-list copy of the Lab Panel dropdown row's panel.
+   * No filter set = no query. An id that is not found is read as the master id itself.
+   */
+  private async resolveSampleFilterContext(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<SampleFilterContext> {
+    if (
+      !query.departmentId &&
+      !query.branchLabTestId &&
+      !query.branchLabPanelId
+    ) {
+      return {};
+    }
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const ctx: SampleFilterContext = {};
+      if (query.departmentId) {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { groupingMode: true },
+        });
+        ctx.groupingMode =
+          tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+      }
+      if (query.branchLabTestId) {
+        const row = await tx.branchLabTest.findFirst({
+          where: { id: query.branchLabTestId, tenantId },
+          select: { sourceLabTestId: true },
+        });
+        ctx.labTestSourceId = row?.sourceLabTestId ?? query.branchLabTestId;
+      }
+      if (query.branchLabPanelId) {
+        const row = await tx.branchLabPanel.findFirst({
+          where: { id: query.branchLabPanelId, tenantId },
+          select: { sourceLabPanelId: true },
+        });
+        const sourceLabPanelId = row
+          ? row.sourceLabPanelId
+          : query.branchLabPanelId;
+        const copies = sourceLabPanelId
+          ? await tx.branchLabPanel.findMany({
+              where: {
+                tenantId,
+                ...(branchId ? { branchId } : {}),
+                sourceLabPanelId,
+                deletedAt: null,
+              },
+              select: { id: true },
+            })
+          : [];
+        ctx.labPanelIds = [
+          ...new Set([query.branchLabPanelId, ...copies.map((c) => c.id)]),
+        ];
+      }
+      return ctx;
+    });
+  }
+
+  /**
    * Build the tenant/branch-scoped `where` for the sample list: the user-chosen
    * filters (see {@link buildSampleFilterConditions}, shared with other lists) plus
    * the mandatory SCOPE - tenant, active branch, not deleted and the caller's
    * department visibility. `AND` holds the composite conditions so they never
    * clobber each other; the department scope is pushed last.
+   *
+   * Three things are In-House-only and are applied HERE instead of in the shared
+   * builder, so the transfer queues (which use the shared builder) keep their own
+   * matching: the sample-level Department / Lab Test / Lab Panel filters (see
+   * {@link SampleFilterContext}) and the Global Search.
    */
   private buildSampleWhere(
     tenantId: string,
@@ -5039,9 +5205,19 @@ export class OrderSampleService {
     nowMs: number,
     scopeIds: string[],
     resolved: ResolvedSampleFilters = {},
+    filterCtx: SampleFilterContext = {},
   ): Prisma.OrderSampleWhereInput {
+    // The In-House-only filters (Department / Lab Test / Lab Panel and the Global
+    // Search) are left out of the shared builder - they are applied below. The transfer
+    // queues call the shared builder with these set and keep their own matching.
     const { sample, order, and } = buildSampleFilterConditions(
-      query,
+      {
+        ...query,
+        search: undefined,
+        departmentId: undefined,
+        branchLabTestId: undefined,
+        branchLabPanelId: undefined,
+      },
       tat,
       nowMs,
       resolved,
@@ -5052,6 +5228,206 @@ export class OrderSampleService {
       deletedAt: null,
       ...sample,
     };
+    // Department / Lab Test / Lab Panel are INDEPENDENT filters: an order qualifies
+    // when it satisfies each one that is set (they need not be satisfied by the same
+    // line or sample). Collected here and ANDed onto the order below.
+    const orderAnd: Prisma.OrderWhereInput[] = [];
+    if (query.departmentId) {
+      // Judged on the SAMPLE's own (stamped) department, not on the ordered test.
+      const sampleDepartmentId =
+        query.departmentId === NO_DEPARTMENT_FILTER ? null : query.departmentId;
+      if (filterCtx.groupingMode === AccessionGroupingMode.ORDER) {
+        // ORDER grouping: the order qualifies when at least one of its samples is in
+        // the department, and the whole order is then shown.
+        orderAnd.push({
+          orderSamples: {
+            some: {
+              deletedAt: null,
+              branchId,
+              departmentId: sampleDepartmentId,
+              // only samples the caller may see count, so a restricted user cannot
+              // learn (or filter on) a department outside their scope
+              AND: [this.departmentScopeForSamples(scopeIds)],
+            },
+          },
+        });
+      } else {
+        // Every other grouping: a group's samples share one department (or are a
+        // single sample), so matching the sample keeps each qualifying group whole.
+        where.departmentId = sampleDepartmentId;
+      }
+    }
+    if (query.branchLabTestId) {
+      // Ordered directly - in ANY price list's copy of the test (the dropdown shows only
+      // the default list's copy, but an order priced from another list holds that list's
+      // copy) - OR served by one of the order's samples, which also finds a test that
+      // arrived through a panel.
+      const sourceLabTestId = filterCtx.labTestSourceId;
+      orderAnd.push({
+        OR: [
+          {
+            items: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { branchLabTestId: query.branchLabTestId },
+                  ...(sourceLabTestId
+                    ? [{ branchLabTest: { is: { sourceLabTestId } } }]
+                    : []),
+                ],
+              },
+            },
+          },
+          ...(sourceLabTestId
+            ? [
+                {
+                  orderSamples: {
+                    some: {
+                      deletedAt: null,
+                      OR: [
+                        {
+                          tests: {
+                            some: {
+                              deletedAt: null,
+                              labTestId: sourceLabTestId,
+                              orderItem: { deletedAt: null },
+                            },
+                          },
+                        },
+                        // a sample with no test links (older data) is read by its own test
+                        {
+                          labTestId: sourceLabTestId,
+                          tests: { none: { deletedAt: null } },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
+    }
+    if (query.branchLabPanelId) {
+      // The dropdown shows the default price list's copy of a panel; an order priced
+      // from another list holds that list's copy, so match every copy of the panel.
+      orderAnd.push({
+        items: {
+          some: {
+            deletedAt: null,
+            branchLabPanelId: {
+              in: filterCtx.labPanelIds?.length
+                ? filterCtx.labPanelIds
+                : [query.branchLabPanelId],
+            },
+          },
+        },
+      });
+    }
+    if (orderAnd.length > 0) {
+      // The shared builder may already have put the collection-status rule on `order.AND`.
+      order.AND = [
+        ...(Array.isArray(order.AND)
+          ? order.AND
+          : order.AND
+            ? [order.AND]
+            : []),
+        ...orderAnd,
+      ];
+    }
+
+    // Global Search - the same matching as Technician → Reporting's search (patient name,
+    // Order ID, barcode, test / panel name, referral panel) plus UHID and Mobile. The
+    // Accession No is deliberately NOT searched. The text is trimmed (a scanner or a stray
+    // space must not make it match nothing), a blank search is no search, and `%`, `_` and
+    // `\` are matched as typed (Prisma hands `contains` to LIKE as it is, so an unescaped
+    // `%` would match every row).
+    const typedSearch = query.search?.trim();
+    if (typedSearch) {
+      const s = escapeLike(typedSearch);
+      // A full-name search ("Manish kumar", or the words in any order) must find the
+      // patient: every word has to be found somewhere across first / middle / last name.
+      // One word behaves exactly as before.
+      const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
+        AND: typedSearch
+          .split(/\s+/)
+          .filter(Boolean)
+          .map(escapeLike)
+          .map((word) => ({
+            OR: [
+              { firstName: { contains: word, mode: 'insensitive' as const } },
+              { middleName: { contains: word, mode: 'insensitive' as const } },
+              { lastName: { contains: word, mode: 'insensitive' as const } },
+            ],
+          })),
+      };
+      and.push({
+        OR: [
+          { barcode: { contains: s, mode: 'insensitive' } },
+          {
+            order: {
+              is: {
+                OR: [
+                  // The Order ID column (`ORD-00717`): finds every sample of that order.
+                  { orderCode: { contains: s, mode: 'insensitive' } },
+                  {
+                    patient: {
+                      is: {
+                        OR: [
+                          patientNameMatchesEveryWord,
+                          { umId: { contains: s, mode: 'insensitive' } },
+                          { mobile: { contains: s, mode: 'insensitive' } },
+                        ],
+                      },
+                    },
+                  },
+                  // The Referring Panel column.
+                  {
+                    referralPanel: {
+                      is: { name: { contains: s, mode: 'insensitive' } },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          // The Order Item column: the test this sample carries (a panel's member test
+          // is matched by its own name) or the panel / test that was ordered.
+          {
+            tests: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { testName: { contains: s, mode: 'insensitive' } },
+                  {
+                    orderItem: {
+                      is: {
+                        OR: [
+                          {
+                            branchLabTest: {
+                              is: {
+                                testName: { contains: s, mode: 'insensitive' },
+                              },
+                            },
+                          },
+                          {
+                            branchLabPanel: {
+                              is: {
+                                panelName: { contains: s, mode: 'insensitive' },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+    }
 
     // Department visibility scope (mandatory, not a user filter): a sample is
     // visible when its department is unassigned (NULL -> everyone) or one of the
@@ -5219,8 +5595,13 @@ export class OrderSampleService {
 
   /**
    * The department-visibility condition for `OrderSample.departmentId` (a
-   * denormalized, indexed snapshot): unassigned rows (NULL) are visible to all;
-   * an empty scope (user with no department) therefore sees only unassigned rows.
+   * denormalized, indexed snapshot). A caller mapped to one or more departments
+   * sees a sample only when its department is unassigned (NULL → everyone) or one
+   * of theirs. A caller mapped to NO department is UNRESTRICTED on the Accession
+   * In-House workflow — they see every sample regardless of department, so an
+   * empty scope contributes no constraint (an empty `{}` fragment matches all).
+   * (This is the Accession In-House rule only; Technician Reporting keeps the
+   * stricter "no mapping → only unassigned" — see `LabReportService`.)
    * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
    */
   private departmentScopeForSamples(
@@ -5228,7 +5609,7 @@ export class OrderSampleService {
   ): Prisma.OrderSampleWhereInput {
     return scopeIds.length > 0
       ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-      : { departmentId: null };
+      : {};
   }
 
   /**
@@ -5358,11 +5739,19 @@ export class OrderSampleService {
    * junction — a logical ref, so the tests are fetched separately), carrying the
    * fields needed to resolve each one's samples + department. A panel order item
    * has no `branchLabTest` of its own, so this is how it's expanded into tests.
+   *
+   * `selectedBranchLabTestIds` (from the order line's
+   * `OrderItem.selectedMemberBranchLabTestIds`) optionally narrows the expansion
+   * to a chosen subset of the panel's members: a non-empty list keeps only those
+   * members, while an empty/omitted list expands ALL members (the default +
+   * backward-compatible behaviour). Any id in the list that is not actually a
+   * member of this panel is ignored (the junction query is the source of truth).
    */
   private async panelConstituentTests(
     tx: Prisma.TransactionClient,
     tenantId: string,
     branchLabPanelId: string,
+    selectedBranchLabTestIds?: string[],
   ): Promise<
     {
       testName: string | null;
@@ -5372,7 +5761,14 @@ export class OrderSampleService {
     }[]
   > {
     const panelTests = await tx.branchLabPanelTest.findMany({
-      where: { tenantId, branchLabPanelId, deletedAt: null },
+      where: {
+        tenantId,
+        branchLabPanelId,
+        deletedAt: null,
+        ...(selectedBranchLabTestIds?.length
+          ? { branchLabTestId: { in: selectedBranchLabTestIds } }
+          : {}),
+      },
       select: { branchLabTestId: true },
     });
     if (panelTests.length === 0) return [];

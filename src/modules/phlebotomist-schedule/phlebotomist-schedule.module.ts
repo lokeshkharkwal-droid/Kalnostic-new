@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { UsersModule } from '../users/users.module';
 import { BranchModule } from '../branch/branch.module';
+import { TenantTimeZoneModule } from '../tenant/tenant-timezone.module';
 import { PhlebotomistScheduleController } from './phlebotomist-schedule.controller';
 import { PhlebotomistListController } from './phlebotomist-list.controller';
 import { PhlebotomistScheduleOptionsController } from './phlebotomist-schedule-options.controller';
@@ -25,7 +26,7 @@ import { ServiceZoneService } from './service-zone.service';
  * schedule controller's `:id` route.
  */
 @Module({
-  imports: [PrismaModule, UsersModule, BranchModule],
+  imports: [PrismaModule, UsersModule, BranchModule, TenantTimeZoneModule],
   controllers: [
     PhlebotomistScheduleOptionsController,
     ServiceZoneController,

@@ -6,7 +6,10 @@ import {
   QuotationStatus,
   RefundStatus,
 } from '@prisma/client';
-import { roundToTwoDecimalPlaces } from '../../../common/utils';
+import {
+  roundToTwoDecimalPlaces,
+  type CollectionProgress,
+} from '../../../common/utils';
 import type { OrderReportStatus } from '../../../common/utils/derive-report-status.util';
 
 /**
@@ -186,6 +189,57 @@ export function orderItemNames(
           '—',
       )
   );
+}
+
+/** One Order Console "Order Item" entry: the display name plus, for a panel line, its ordered tests. */
+export interface OrderItemDetail {
+  name: string;
+  /** True for a lab panel line (even one with no member tests), so the screen can label it. */
+  isPanel: boolean;
+  /** Names of the panel's member tests that were ordered; empty for a test/direct line. */
+  panelTests: string[];
+}
+
+/**
+ * Same entries, in the same order, as {@link orderItemNames}, each with the member tests of a panel
+ * line. A panel ordered in full (no stored subset) lists all of its members; a partially ordered panel
+ * lists only the tests actually ordered (`selectedMemberBranchLabTestIds`).
+ * @param items the order's active items with their resolved test/panel refs
+ * @param membersByPanel each panel's member tests (id + name) in the panel's own order
+ */
+export function orderItemDetails(
+  items: {
+    direct: string | null;
+    selectedMemberBranchLabTestIds?: string[];
+    branchLabTest: { testName: string; isBillOnlyTest?: boolean } | null;
+    branchLabPanel: {
+      id: string;
+      panelName: string;
+      isBillOnlyTest?: boolean;
+    } | null;
+  }[],
+  membersByPanel: Map<string, { id: string; name: string }[]>,
+): OrderItemDetail[] {
+  return items
+    .filter(
+      (it) =>
+        !it.branchLabTest?.isBillOnlyTest && !it.branchLabPanel?.isBillOnlyTest,
+    )
+    .map((it) => {
+      const name =
+        it.branchLabPanel?.panelName ??
+        it.branchLabTest?.testName ??
+        it.direct ??
+        '—';
+      if (!it.branchLabPanel) return { name, isPanel: false, panelTests: [] };
+      const members = membersByPanel.get(it.branchLabPanel.id) ?? [];
+      const ordered = it.selectedMemberBranchLabTestIds ?? [];
+      const shown =
+        ordered.length > 0
+          ? members.filter((m) => ordered.includes(m.id))
+          : members;
+      return { name, isPanel: true, panelTests: shown.map((m) => m.name) };
+    });
 }
 
 /**
@@ -498,6 +552,9 @@ export const ORDER_LIST_INCLUDE = {
       // in both the Billings list and Finance reports (computeBillingTotals).
       unitPrice: true,
       discount: true,
+      // A panel line's ordered subset of member tests (empty = all members) —
+      // lets the Order Console hover list only the tests actually ordered.
+      selectedMemberBranchLabTestIds: true,
       branchLabTest: {
         select: {
           id: true,
@@ -700,6 +757,13 @@ export type BillingRecordRow = BillingOrder & {
   dateTimeDisplay?: string;
   responsibleUser?: string | null;
   /**
+   * The `Person.id` that {@link responsibleUser} was resolved from (same actor:
+   * order creator / payment collector / refunder / canceller). Keys the
+   * frontend's Userwise PDF grouping so two users sharing a display name are
+   * never merged. Null when no actor was recorded.
+   */
+  responsibleUserId?: string | null;
+  /**
    * The resolved display name of the order's ORIGINAL creator (`Order.createdBy`),
    * attached by `billingRecords` for EVERY report. Distinct from
    * {@link responsibleUser}, which on Collection/Refund/Cancel is the
@@ -729,8 +793,19 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   include: typeof ORDER_LIST_INCLUDE;
 }> & {
   itemCount: number;
-  /** Count of the order's active items with a `collectedAt` timestamp. */
+  /**
+   * Count of the order's active items with a `collectedAt` timestamp. Only the
+   * Order Overview's Collect stamps it, so do NOT use it for "Sample Status" —
+   * use {@link OrderListRow.collectionStatus}.
+   */
   collectedItemCount: number;
+  /**
+   * Sample Status: `PENDING` / `PARTIAL` / `COLLECTED`, derived from the order's
+   * samples (`OrderSample.collectedAt`, cancelled and removed-test samples left
+   * out) so every collect path counts. Same rule as the Accession list's
+   * `collectionStatus` and the `sampleStatus` filter.
+   */
+  collectionStatus: CollectionProgress;
   /**
    * Order-level reporting progress, derived per-test from each item's LabReport
    * ({@link deriveReportStatus}). This is the Order Console's "Order Status".
@@ -748,6 +823,11 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    * — drives the Order Console's "Order Item" column and its "+N more" tooltip.
    */
   itemNames: string[];
+  /**
+   * The same entries as `itemNames` (same order), each with the ordered member tests of a panel line
+   * ({@link orderItemDetails}) — drives the Order Console's panel hover.
+   */
+  itemDetails: OrderItemDetail[];
   grossAmount: number;
   discountAmount: number;
   netAmount: number;

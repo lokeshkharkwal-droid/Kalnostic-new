@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
 import { TAT_STATUSES } from '../constants/tat.constant';
+import { DEPARTMENT_FILTER_PATTERN } from '../constants/department-filter.constant';
 import type { TatStatus } from '../constants/tat.constant';
 import { SampleFilterFieldsDto } from './sample-filter-fields.dto';
 
@@ -31,17 +32,19 @@ export type OrderMode = (typeof ORDER_MODES)[number];
 /**
  * Query parameters for the accession sample listing (`GET /accession/samples`) —
  * the §A.3 filter panel, §A.5 status tabs and §A.4 TAT bar. Extends the filters shared
- * with the transfer queues (`SampleFilterFieldsDto`). `search` matches the barcode, order id, patient name
- * (first/middle/last, independently — not a concatenated full-name match),
- * patient UHID (`umId`) or patient mobile number (case-insensitive). `tatStatus`
+ * with the transfer queues (`SampleFilterFieldsDto`). `search` is the Global Search
+ * (see the field below: barcode, order id, patient name / UHID / mobile, referral panel
+ * and test / panel name; case-insensitive). `tatStatus`
  * filters by the derived TAT band (translated to a `createdAt` range in the
  * service). All filters are scoped to the caller's tenant + active branch.
  * Validated by `class-validator` only.
  */
 export class ListSamplesDto extends SampleFilterFieldsDto {
   /**
-   * Case-insensitive match against the accession number, barcode, order id
-   * (`orderCode`), patient name, patient UHID, or patient mobile number.
+   * Global Search: case-insensitive match against the barcode, order id
+   * (`orderCode`), patient name (every word, in any order), patient UHID, patient
+   * mobile number, referral panel name, or the test / panel name on the order.
+   * The accession number is not searched.
    */
   @IsOptional()
   @IsString()
@@ -92,6 +95,21 @@ export class ListSamplesDto extends SampleFilterFieldsDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  /**
+   * Filter by department: a department id, or `none` for samples with no department.
+   * Judged on the SAMPLE's own department (stamped when the sample was created).
+   * Redeclared here on purpose: this REPLACES the parent's UUID-only check, so `none`
+   * is accepted on the In-House list only. The transfer queues share the parent
+   * (`SampleFilterFieldsDto`) and keep rejecting `none`. The `= undefined` initializer
+   * is only there because TypeScript requires one when a subclass redeclares a base
+   * property; it changes nothing at runtime.
+   */
+  @IsOptional()
+  @Matches(DEPARTMENT_FILTER_PATTERN, {
+    message: 'departmentId must be a UUID or "none"',
+  })
+  departmentId?: string = undefined;
 
   /** Order mode (Walk-in / Home Visit / Referral / Outsource / Emergency). */
   @IsOptional()

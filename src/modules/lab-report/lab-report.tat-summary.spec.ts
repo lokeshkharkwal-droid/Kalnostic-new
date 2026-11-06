@@ -20,7 +20,13 @@ describe('LabReportService.getTatSummary', () => {
       typeof LabReportService
     >),
   );
+  // the panel-member lookup the worklist filters need: no panel member on any report here
+  const prisma = {
+    labReport: { findMany: jest.fn().mockResolvedValue([]) },
+    branchLabTest: { findMany: jest.fn().mockResolvedValue([]) },
+  };
   Object.assign(service, {
+    prisma,
     tatService: { summarize },
     userDepartmentScope: { resolveDepartmentIds },
   });
@@ -42,16 +48,17 @@ describe('LabReportService.getTatSummary', () => {
       dateTo: '2026-10-09',
       departmentId: 'd9',
     })) as {
-      orderItem: {
-        order: { orderDate: unknown };
-        branchLabTest: { departmentId: string };
-      };
+      orderItem: { order: { orderDate: unknown } };
+      departmentId: string;
     };
     expect(where.orderItem.order.orderDate).toEqual({
       gte: new Date('2026-10-06T00:00:00.000Z'),
       lte: new Date('2026-10-09T00:00:00.000Z'),
     });
-    expect(where.orderItem.branchLabTest.departmentId).toBe('d9');
+    // The explicit Department filter now matches the report's OWN denormalized
+    // department directly (so it works for panel members too), not a join through
+    // orderItem.branchLabTest.departmentId (null for panel order items).
+    expect(where.departmentId).toBe('d9');
   });
 
   it('keeps the tenant, branch scope and department scope of the tab counts', async () => {

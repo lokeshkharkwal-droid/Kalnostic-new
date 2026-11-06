@@ -289,11 +289,12 @@ export interface LabReportWorklistRow {
   branchId: string | null;
   branch: { id: string; name: string } | null;
 
-  /** From `orderItem.branchLabTest.departmentId` / `orderItem.branchLabPanel.
-   * departmentId` — whichever the order item actually used. Same logical-ref,
-   * batched-lookup treatment as `branchId`/`branch` above (no Prisma relation
-   * exists for `departmentId` anywhere in this codebase either). Null for a
-   * `direct`/free-text order item, which has no catalogue department. */
+  /** The department stamped on the report when it was created (`LabReport.departmentId`: the test's own department,
+   * a panel member's own test, never the panel's) - the same value the worklist's visibility rule and Department
+   * filter use, so the column always agrees with why the row is listed. A report sent to another branch shows the
+   * receiving branch's entry department instead. Same logical-ref, batched-lookup treatment as `branchId`/`branch`
+   * above (no Prisma relation exists for `departmentId`). Null = unassigned (and legacy reports of a panel line that
+   * was never split into member tests). */
   departmentId: string | null;
   department: { id: string; name: string } | null;
 
@@ -558,10 +559,14 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
 
     // The department of the setup the HOLDING branch works the test with: its own
     // entry once the report was sent to it (even when that entry has no department),
-    // otherwise the order line's.
+    // otherwise the report's OWN denormalized department. That column is stamped
+    // per test at creation — the panel MEMBER test's department for a panel-member
+    // report, the standalone test's otherwise — so it is the source of truth here.
+    // The old `branchLabPanel.departmentId` fallback wrongly showed a panel
+    // member the PARENT panel's department instead of its own.
     departmentId: row.performingEntry
       ? row.performingEntry.departmentId
-      : (branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null),
+      : (row.departmentId ?? null),
     department: null,
 
     labTestId: row.labTestId,

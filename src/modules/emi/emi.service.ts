@@ -38,6 +38,7 @@ import {
 } from './util/emi-format';
 import { REPORTABLE_SAMPLE_STATUSES } from '../accession/constants/sample-transitions.constant';
 import { isReportSentOut } from '../lab-report/utils/sent-out-report.util';
+import { recomputeAfterMachineValues } from '../lab-report/utils/recompute-calculated-values';
 
 /** Report statuses that may still be (re)filled by a machine. */
 const FILLABLE_STATUSES: ReadonlySet<LabReportStatus> = new Set([
@@ -814,6 +815,21 @@ export class EmiService {
                   enteredBy: adapter.id,
                   deletedAt: null,
                 },
+              });
+            }
+
+            // A value the machine just sent may be an input of a calculated parameter (e.g. P3 = P1 * P2 + 500): re-derive
+            // it now, in the same transaction, so the stored value, the report view, print and approval never show the
+            // number it had before the machine's new result. (Before, only a technician's Save recalculated.) A calculated
+            // value the technician overrode by hand, or one this machine sent itself, is left as it is.
+            if (report.labTestId) {
+              await recomputeAfterMachineValues(tx, {
+                labReportId: report.id,
+                tenantId: adapter.tenantId,
+                labTestId: report.labTestId,
+                adapterId: adapter.id,
+                sentParamIds: new Set(matches.map((m) => m.resultParamId)),
+                now,
               });
             }
 

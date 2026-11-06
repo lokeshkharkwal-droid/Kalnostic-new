@@ -19,6 +19,14 @@ docs {
   (LABORATORY.docx §4.1), result values, notes (4 categories), attachments,
   and multi-step process if assigned.
 
+  Department access: the report opens only when the caller may see it by
+  department, the same rule as the worklist (the row's `departmentId` is
+  unassigned or one of the caller's departments; a test inside a lab panel is
+  judged by its own department; the department stamped on the report when it was created). A caller with NO department
+  is unrestricted, as in the worklist: every report they are listed opens. Otherwise it answers 404, as if it did not
+  exist. Only this read route checks it: saving, submitting and the other actions
+  are unchanged.
+
   Response also includes `contentSections` (§4.5) — `{ usefulFor,
   interpretation, limitations, remarks, references }`. Each field resolves as
   this REPORT's own saved override (if a technician has ever set one via
@@ -45,12 +53,15 @@ docs {
   again.
 
   Response also includes `notesPrint` - `{ enabled, isPanelMember, excludedSections }`:
-  which Notes sections print on this report. `enabled` is the effective
-  Branch Setting (Branch Admin > Branch Settings > Technician Settings > Report Printing: the Lab Panel switch when the report's order line is a panel,
-  the Lab Test switch otherwise, read from the branch that holds the report; while
-  it is off every section prints and no checkboxes should show). `isPanelMember`
+  which Notes sections print on this report. `enabled` is true for every test or
+  panel report: the Print checkboxes always show, whether the Branch Setting is ON or
+  OFF. It is false only for a free-text line, which has no Notes. `isPanelMember`
   is true for a report on a panel order line (including reports made before the
   per-member split). `excludedSections` lists the section keys
   (`useful_for`, `interpretation`, `limitations`, `remarks`, `references`) left out
-  of the printed version. Change it with `PATCH .../note-print-sections`.
+  of the printed version. Until someone chooses, the Branch Setting (Branch Admin >
+  Branch Settings > Technician Settings > Report Printing: the Lab Panel switch when the
+  report's order line is a panel, the Lab Test switch otherwise, read from the branch that
+  holds the report) only sets the DEFAULT: ON = nothing left out (all selected), OFF = all
+  five left out (none selected). Change it with `PATCH .../note-print-sections`.
 }

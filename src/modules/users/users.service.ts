@@ -228,6 +228,13 @@ export interface MyPermissions extends GroupedPermissions {
   role: ResolvedRole | null;
   /** The modules enabled for the branch. */
   branchModules: BranchModuleSummary[];
+  /**
+   * The user's Default Module at this branch (`UserBranchProfile.defaultModuleId`,
+   * a module key) - where the app opens after login. `null` when none is set or the
+   * user has no role here. It is not checked against access: the frontend only lands
+   * on it when the module is actually visible to the user.
+   */
+  defaultModule: string | null;
 }
 
 // ── SiteAdmin: Registered Users (cross-portal, platform-level) ────────────────
@@ -2145,6 +2152,7 @@ export class UsersService {
     return {
       role,
       branchModules,
+      defaultModule: activeProfile?.defaultModuleId ?? null,
       modules: grouped.modules,
       allowed: grouped.allowed,
     };

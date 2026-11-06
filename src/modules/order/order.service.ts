@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { publicOrderQrCode } from '../lab-report/utils/print-barcode.util';
 import {
   AppointmentStatus,
   AppointmentType,
   BillStatus,
   BranchStatus,
+  CollectionStatus,
   DiscountMode,
   DoctorType,
   ExternalIdFormat,
@@ -49,6 +52,7 @@ import { ReferralCreditService } from '../referral-credit/referral-credit.servic
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
 import { PatientService } from '../patient/patient.service';
+import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
 import {
@@ -59,19 +63,21 @@ import {
   amountInWords,
   genderLabel,
   salutationLabel,
-  patientFullAgeDisplay,
+  patientPrintAgeDisplay,
   toBranchLocalInstant,
+  fromBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
   formatOrderDateTime,
   resolveOrderLocalDateTime,
   classifyOrderDate,
   buildCollectionProgressWhere,
+  collectionProgressByOrder,
   COLLECTION_WORKFLOW_ITEM_WHERE,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { ListOrdersDto } from './dto/list-orders.dto';
+import { ListOrdersDto, type OrderSortKey } from './dto/list-orders.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
@@ -103,6 +109,7 @@ import {
   deriveReportStatus,
   deriveReportStatusCounts,
   orderItemNames,
+  orderItemDetails,
 } from './entities/order.entity';
 import { computeBillingTotals } from './utils/billing-totals';
 import {
@@ -203,6 +210,7 @@ import {
   OrderHomeVisitPhlebotomistRequiredException,
   OrderHomeVisitSlotRequiredException,
   InvalidOrderItemException,
+  InvalidPanelMemberSelectionException,
   OrderItemNotFoundException,
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
@@ -470,6 +478,8 @@ export class OrderService {
     private readonly tenantService: TenantService,
     private readonly referralCredit: ReferralCreditService,
     private readonly patientService: PatientService,
+    private readonly userDepartmentScope: UserDepartmentScopeService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -895,6 +905,12 @@ export class OrderService {
               branchLabTestId: i.branchLabTestId ?? null,
               branchLabPanelId: i.branchLabPanelId ?? null,
               direct: i.direct ?? null,
+              // Partial panel selection (empty = all members; always empty on a
+              // test/direct line). Only the listed members flow into accession/
+              // technician downstream — the panel price is unaffected.
+              selectedMemberBranchLabTestIds: i.branchLabPanelId
+                ? (i.selectedMemberBranchLabTestIds ?? [])
+                : [],
               unitPrice: i.direct
                 ? (i.unitPrice ?? 0)
                 : (itemPrices.get(
@@ -2274,11 +2290,12 @@ export class OrderService {
       // documents. Kept as a distinct key so authors of pre-existing templates
       // that used `{client_salutation}` don't have to re-author them.
       client_salutation: salutationLabel(p.salutation),
-      // Full age (Years, Months, Days) from DOB when known; single-unit
-      // (age/ageType) fallback otherwise. Shared by every order-document type
-      // (bill, TRF, quotation, order slip, …) so `{patient_age}` reads the same
-      // everywhere.
-      patient_age: patientFullAgeDisplay(
+      // Single leading-unit age from DOB — Years at ≥12 months, Months at
+      // 1–11 months, Days under a month; stored age/ageType fallback otherwise.
+      // The one shared `patientPrintAgeDisplay` rule every print template uses,
+      // so `{patient_age}` reads the same on the bill, TRF, quotation, order
+      // slip, sample label and lab report.
+      patient_age: patientPrintAgeDisplay(
         p.dateOfBirth ?? null,
         p.age,
         p.ageType,
@@ -2410,6 +2427,134 @@ export class OrderService {
           : '',
       };
     });
+  }
+
+  /**
+   * Each panel's member tests (id + name, in the panel's own order), for the Order Console's panel hover.
+   * `BranchLabPanelTest` carries raw FKs (no Prisma relation), so the names are batch-resolved with two
+   * queries for the whole page — the same pattern as {@link panelMemberCounts}.
+   */
+  private async panelMemberTests(
+    tenantId: string,
+    panelIds: string[],
+  ): Promise<Map<string, { id: string; name: string }[]>> {
+    const byPanel = new Map<string, { id: string; name: string }[]>();
+    if (panelIds.length === 0) return byPanel;
+    const junctions = await this.prisma.branchLabPanelTest.findMany({
+      where: { tenantId, branchLabPanelId: { in: panelIds }, deletedAt: null },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        id: { in: [...new Set(junctions.map((j) => j.branchLabTestId))] },
+      },
+      select: { id: true, testName: true },
+    });
+    const nameById = new Map(tests.map((t) => [t.id, t.testName]));
+    for (const j of junctions) {
+      const name = nameById.get(j.branchLabTestId);
+      if (!name) continue;
+      const list = byPanel.get(j.branchLabPanelId) ?? [];
+      list.push({ id: j.branchLabTestId, name });
+      byPanel.set(j.branchLabPanelId, list);
+    }
+    return byPanel;
+  }
+
+  /**
+   * An order-item condition matching a PANEL line that includes one of `testIds` among the tests it was
+   * ordered with: a panel ordered in full (empty `selectedMemberBranchLabTestIds`) counts all of its
+   * members, a partially ordered one only the tests actually ordered. `null` when no panel contains any
+   * of the tests (so the caller adds nothing). The junction has no Prisma relation, hence the lookup.
+   */
+  private async panelLineIncludingTests(
+    tenantId: string,
+    testIds: string[],
+  ): Promise<Prisma.OrderItemWhereInput | null> {
+    if (testIds.length === 0) return null;
+    const junctions = await this.prisma.branchLabPanelTest.findMany({
+      where: { tenantId, deletedAt: null, branchLabTestId: { in: testIds } },
+      select: { branchLabPanelId: true },
+      distinct: ['branchLabPanelId'],
+    });
+    if (junctions.length === 0) return null;
+    return {
+      branchLabPanelId: { in: junctions.map((j) => j.branchLabPanelId) },
+      OR: [
+        { selectedMemberBranchLabTestIds: { isEmpty: true } },
+        { selectedMemberBranchLabTestIds: { hasSome: testIds } },
+      ],
+    };
+  }
+
+  /**
+   * The Order Console "Lab Test" filter: an order matches when the chosen test was ordered on its own, or
+   * is among the ordered tests of a panel on the order. The same master test is copied into every pricing
+   * list as its own `BranchLabTest` row, so a panel's member row is matched by the chosen row OR any copy
+   * sharing its `sourceLabTestId`.
+   */
+  private async labTestFilterClause(
+    tenantId: string,
+    branchLabTestId: string,
+  ): Promise<Prisma.OrderItemWhereInput> {
+    const chosen = await this.prisma.branchLabTest.findFirst({
+      where: { id: branchLabTestId, tenantId },
+      select: { sourceLabTestId: true },
+    });
+    const copies = chosen?.sourceLabTestId
+      ? await this.prisma.branchLabTest.findMany({
+          where: { tenantId, sourceLabTestId: chosen.sourceLabTestId },
+          select: { id: true },
+        })
+      : [];
+    const testIds = [...new Set([branchLabTestId, ...copies.map((c) => c.id)])];
+    const viaPanel = await this.panelLineIncludingTests(tenantId, testIds);
+    return viaPanel
+      ? { OR: [{ branchLabTestId }, viaPanel] }
+      : { branchLabTestId };
+  }
+
+  /**
+   * The Order Console "Department" filter: an order matches when it has a test whose department is the
+   * chosen one, or a panel with at least one such test among the tests ordered. A test's department is
+   * its own branch value, else its source master test's (the Accession rule). A panel's own department
+   * label is not used - it is a free field that can disagree with its members.
+   */
+  private async departmentFilterClause(
+    tenantId: string,
+    departmentId: string,
+  ): Promise<Prisma.OrderItemWhereInput> {
+    const masterTests = await this.prisma.labTest.findMany({
+      where: { tenantId, departmentId, deletedAt: null },
+      select: { id: true },
+    });
+    const inDepartment: Prisma.BranchLabTestWhereInput = {
+      OR: [
+        { departmentId },
+        ...(masterTests.length > 0
+          ? [
+              {
+                departmentId: null,
+                sourceLabTestId: { in: masterTests.map((t) => t.id) },
+              },
+            ]
+          : []),
+      ],
+    };
+    const branchTests = await this.prisma.branchLabTest.findMany({
+      where: { tenantId, deletedAt: null, ...inDepartment },
+      select: { id: true },
+    });
+    const viaPanel = await this.panelLineIncludingTests(
+      tenantId,
+      branchTests.map((t) => t.id),
+    );
+    const ownTest: Prisma.OrderItemWhereInput = {
+      branchLabTest: { is: inDepartment },
+    };
+    return viaPanel ? { OR: [ownTest, viaPanel] } : ownTest;
   }
 
   /**
@@ -2607,10 +2752,23 @@ export class OrderService {
     // order) and for the `sections.items` repeat block below.
     const itemRows = await this.itemRowsWithPanelTests(order);
     const panelTestsName = this.panelTestsNameFlat(itemRows);
+    // `{public_order_qr_code}` — QR to the patient's public order page
+    // (`/public/{tenant}/{branch}/{order}`), so scanning the printed bill opens
+    // it. Blank when the frontend base URL (`FRONTEND_URL`) or branch is unknown.
+    const publicOrderQr = await publicOrderQrCode(
+      this.config.get<string>('exchange.frontendUrl'),
+      tenantId,
+      order.branchId,
+      order.id,
+    );
     return {
       variables: {
         bill_id: order.billId ?? order.orderCode,
         order_code: order.orderCode,
+        // Public patient-order page QR (URL-valued). Renders as an image whether
+        // written `{public_order_qr_code}`, `{{image:public_order_qr_code}}` or
+        // `<img src="{public_order_qr_code}">` (see BARE_IMAGE_TAG_KEYS + images).
+        public_order_qr_code: publicOrderQr,
         order_date: formatTenantDate(order.orderDate, dateFormat),
         // Order date + operator-entered order time, e.g. `21/09/2026 01:30 PM`
         // (distinct from `bill_date_time`, which is when the bill was generated).
@@ -2648,6 +2806,11 @@ export class OrderService {
         effective_paid: effectivePaid,
         ...this.patientVariables(order, dateFormat),
         ...this.referralVariables(order),
+      },
+      // Backs `{{image:public_order_qr_code}}` and the bare `{public_order_qr_code}`
+      // image tag — image-valued keys resolve against this map, not `variables`.
+      images: {
+        public_order_qr_code: publicOrderQr,
       },
       sections: {
         items: itemRows,
@@ -3422,7 +3585,7 @@ export class OrderService {
     query: ListOrdersDto,
     tenantId: string,
     activeBranchId: string | null,
-    opts?: { classificationCoarse?: boolean },
+    opts?: { classificationCoarse?: boolean; departmentScopeIds?: string[] },
   ): Promise<{
     where: Prisma.OrderWhereInput;
     quotationValidityValue: number | null;
@@ -3441,6 +3604,40 @@ export class OrderService {
 
     // B2B Referral Panel isolation: force the panel filter for B2B sessions.
     applyB2bOrderScope(where, getReferralPanelId());
+
+    // Department visibility scope (Order Console) — mirrors the Accession
+    // In-House (`OrderSampleService.departmentScopeForSamples`) and Technician
+    // Reporting (`LabReportService.buildListWhere`) rule, applied here at the
+    // ORDER level: a staff user assigned to one or more departments sees only
+    // orders that contain at least ONE item whose test/panel is visible to them,
+    // where an item is visible when its department is unassigned (NULL →
+    // everyone) OR one of the caller's departments. An order with multiple items
+    // still appears when a single item matches (`some`). A user with NO
+    // department assignment is UNRESTRICTED (empty `departmentScopeIds` → no
+    // clause added), seeing every order. Opt-in per request via
+    // `scopeByDepartment` so other `GET /orders` consumers (Billing, Quotations,
+    // patient history) are never department-filtered. Pushed before the
+    // `reportStatus` candidate scan so that scan honours the same visible set.
+    const departmentScopeIds = opts?.departmentScopeIds ?? [];
+    if (departmentScopeIds.length > 0) {
+      const deptVisible = {
+        OR: [
+          { departmentId: null },
+          { departmentId: { in: departmentScopeIds } },
+        ],
+      };
+      and.push({
+        items: {
+          some: {
+            deletedAt: null,
+            OR: [
+              { branchLabTest: { is: deptVisible } },
+              { branchLabPanel: { is: deptVisible } },
+            ],
+          },
+        },
+      });
+    }
 
     // Quote ID takes precedence over the generic search. A bare `search`
     // matches the order code OR any of the patient's name / mobile / UMID.
@@ -3584,15 +3781,25 @@ export class OrderService {
     // Appointment-date range (filters `appointmentAt`, which carries a time, so
     // the upper bound is stretched to the end of that day to stay inclusive).
     if (query.appointmentDateFrom || query.appointmentDateTo) {
-      where.appointmentAt = {};
+      // `appointmentAt` is a true UTC instant; the filter bounds are business-local
+      // calendar days, so convert each day boundary (local 00:00 … 23:59:59.999)
+      // to its UTC equivalent via the tenant zone — otherwise a "today" filter is
+      // offset by the tenant's UTC offset.
+      const { timezone } = await this.tenantService.getLocale(tenantId);
+      const appointmentAt: Prisma.DateTimeFilter = {};
       if (query.appointmentDateFrom) {
-        where.appointmentAt.gte = new Date(query.appointmentDateFrom);
+        appointmentAt.gte = fromBranchLocalInstant(
+          new Date(`${query.appointmentDateFrom.slice(0, 10)}T00:00:00.000Z`),
+          timezone,
+        );
       }
       if (query.appointmentDateTo) {
-        const end = new Date(query.appointmentDateTo);
-        end.setUTCHours(23, 59, 59, 999);
-        where.appointmentAt.lte = end;
+        appointmentAt.lte = fromBranchLocalInstant(
+          new Date(`${query.appointmentDateTo.slice(0, 10)}T23:59:59.999Z`),
+          timezone,
+        );
       }
+      where.appointmentAt = appointmentAt;
     }
 
     // Section scope + diagnostics-only flags collapse into one relation filter
@@ -3644,18 +3851,10 @@ export class OrderService {
               items: {
                 some: {
                   deletedAt: null,
-                  OR: [
-                    {
-                      branchLabTest: {
-                        is: { departmentId: query.departmentId },
-                      },
-                    },
-                    {
-                      branchLabPanel: {
-                        is: { departmentId: query.departmentId },
-                      },
-                    },
-                  ],
+                  ...(await this.departmentFilterClause(
+                    tenantId,
+                    query.departmentId,
+                  )),
                 },
               },
             },
@@ -3713,7 +3912,13 @@ export class OrderService {
     if (query.branchLabTestId) {
       and.push({
         items: {
-          some: { deletedAt: null, branchLabTestId: query.branchLabTestId },
+          some: {
+            deletedAt: null,
+            ...(await this.labTestFilterClause(
+              tenantId,
+              query.branchLabTestId,
+            )),
+          },
         },
       });
     }
@@ -3882,6 +4087,45 @@ export class OrderService {
           }
           break;
       }
+    } else if (query.quotationStatuses?.length) {
+      // Multi-value checkbox filter (Quotations screen): an order matches when
+      // its effective quotation status is ANY of the selected values. Each value
+      // reuses the same runtime derivation as the single-value filter above
+      // (EXPIRED folds in DRAFTs past the validity cutoff; DRAFT excludes them).
+      const statusOrs: Prisma.OrderWhereInput[] = [];
+      for (const st of query.quotationStatuses) {
+        switch (st) {
+          case QuotationStatus.CONVERTED:
+            statusOrs.push({ quotationStatus: QuotationStatus.CONVERTED });
+            break;
+          case QuotationStatus.EXPIRED:
+            statusOrs.push({
+              OR: [
+                { quotationStatus: QuotationStatus.EXPIRED },
+                ...(quotationExpiryCutoff
+                  ? [
+                      {
+                        quotationStatus: QuotationStatus.DRAFT,
+                        orderDate: { lt: quotationExpiryCutoff },
+                      },
+                    ]
+                  : []),
+              ],
+            });
+            break;
+          case QuotationStatus.DRAFT:
+            statusOrs.push(
+              quotationExpiryCutoff
+                ? {
+                    quotationStatus: QuotationStatus.DRAFT,
+                    orderDate: { gte: quotationExpiryCutoff },
+                  }
+                : { quotationStatus: QuotationStatus.DRAFT },
+            );
+            break;
+        }
+      }
+      if (statusOrs.length) and.push({ OR: statusOrs });
     }
 
     if (and.length) where.AND = and;
@@ -3892,6 +4136,77 @@ export class OrderService {
       quotationValidityUnit,
       quotationExpiryCutoff,
     };
+  }
+
+  /**
+   * Build the Prisma `orderBy` for the order list from the whitelisted
+   * `sortBy`/`sortOrder` (see {@link ORDER_SORT_KEYS}). Maps each key to a stored
+   * column, a to-one relation, or a denormalized billing-rollup column. Relation
+   * and name sorts add a stable `createdAt` tie-break. Defaults to newest-first
+   * (`createdAt desc`) when no sort is requested, preserving the previous
+   * behaviour. All sorting happens in the database — never client-side.
+   * @param sortBy whitelisted sort column (undefined → default)
+   * @param sortOrder `asc` | `desc` (undefined → `desc`)
+   */
+  private buildOrderListOrderBy(
+    sortBy: OrderSortKey | undefined,
+    sortOrder: 'asc' | 'desc' | undefined,
+  ):
+    | Prisma.OrderOrderByWithRelationInput
+    | Prisma.OrderOrderByWithRelationInput[] {
+    const dir: Prisma.SortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+    switch (sortBy) {
+      case 'orderDate':
+        return [{ orderDate: dir }, { createdAt: dir }];
+      case 'createdAt':
+        return { createdAt: dir };
+      case 'checkedInAt':
+        return [{ checkedInAt: dir }, { createdAt: dir }];
+      case 'appointmentAt':
+        return [{ appointmentAt: dir }, { createdAt: dir }];
+      case 'orderCode':
+        return { orderCode: dir };
+      case 'billId':
+        return [{ billId: dir }, { createdAt: dir }];
+      case 'externalOrderId':
+        return [{ externalOrderId: dir }, { createdAt: dir }];
+      case 'status':
+        return [{ status: dir }, { createdAt: 'desc' }];
+      case 'paymentStatus':
+        return [{ paymentStatus: dir }, { createdAt: 'desc' }];
+      case 'billStatus':
+        return [{ billStatus: dir }, { createdAt: 'desc' }];
+      case 'refundStatus':
+        return [{ refundStatus: dir }, { createdAt: 'desc' }];
+      case 'patientName':
+        return [
+          { patient: { firstName: dir } },
+          { patient: { lastName: dir } },
+          { createdAt: 'desc' },
+        ];
+      case 'referralPanel':
+        return [{ referralPanel: { name: dir } }, { createdAt: 'desc' }];
+      case 'referredBy':
+        return [
+          { referredByDoctor: { firstName: dir } },
+          { referredByDoctor: { lastName: dir } },
+          { createdAt: 'desc' },
+        ];
+      case 'grossAmount':
+        return [{ grossAmount: dir }, { createdAt: 'desc' }];
+      case 'discountAmount':
+        return [{ discountAmount: dir }, { createdAt: 'desc' }];
+      case 'netAmount':
+        return [{ netAmount: dir }, { createdAt: 'desc' }];
+      case 'paidAmount':
+        return [{ paidAmount: dir }, { createdAt: 'desc' }];
+      case 'balanceAmount':
+        return [{ balanceAmount: dir }, { createdAt: 'desc' }];
+      case 'refundedAmount':
+        return [{ refundedAmount: dir }, { createdAt: 'desc' }];
+      default:
+        return { createdAt: 'desc' };
+    }
   }
 
   /**
@@ -3908,6 +4223,7 @@ export class OrderService {
     tenantId: string,
     activeBranchId: string | null,
     query: ListOrdersDto,
+    personId?: string,
   ): Promise<PaginatedResult<OrderListRow>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -3917,12 +4233,24 @@ export class OrderService {
     // branch (their expiry comes from that branch's settings).
     const scopeBranchId =
       query.patientId && !query.isQuotation ? null : activeBranchId;
+    // Order Console department visibility: only resolve the caller's departments
+    // when the screen opts in (`scopeByDepartment`). A user with no department
+    // assignment resolves to an empty set → unrestricted (see `buildOrderWhere`).
+    const departmentScopeIds =
+      query.scopeByDepartment && personId
+        ? await this.userDepartmentScope.resolveDepartmentIds(
+            tenantId,
+            personId,
+          )
+        : [];
     const {
       where,
       quotationValidityValue,
       quotationValidityUnit,
       quotationExpiryCutoff,
-    } = await this.buildOrderWhere(query, tenantId, scopeBranchId);
+    } = await this.buildOrderWhere(query, tenantId, scopeBranchId, {
+      departmentScopeIds,
+    });
 
     const [rows, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -3930,7 +4258,7 @@ export class OrderService {
         include: ORDER_LIST_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: this.buildOrderListOrderBy(query.sortBy, query.sortOrder),
       }),
       this.prisma.order.count({ where }),
     ]);
@@ -3944,11 +4272,14 @@ export class OrderService {
       ),
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
-    const [counts, invoiceCodes, cancelBlocked] = await Promise.all([
-      this.countItemsByOrder(tenantId, orderIds),
-      this.invoicedOrderCodes(tenantId, orderIds),
-      this.cancelBlockedReasons(tenantId, orderIds),
-    ]);
+    const panelMembers = await this.panelMemberTests(tenantId, panelIds);
+    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked] =
+      await Promise.all([
+        this.countItemsByOrder(tenantId, orderIds),
+        collectionProgressByOrder(this.prisma, tenantId, orderIds),
+        this.invoicedOrderCodes(tenantId, orderIds),
+        this.cancelBlockedReasons(tenantId, orderIds),
+      ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
       // derived from the persisted item prices and the persisted order-discount
@@ -4008,6 +4339,9 @@ export class OrderService {
         ...r,
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
+        // Sample Status: derived from the order's SAMPLES (any collect path sets
+        // them), not from the item flag above — see `collection-progress.util`.
+        collectionStatus: collectionByOrderId.get(r.id) ?? 'PENDING',
         // Order-level "Order Status": derived per-test from each item's LabReport.
         reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
         // Per-status report counts (all nine LabReport statuses) + the item
@@ -4017,6 +4351,7 @@ export class OrderService {
         // Bill-only items are excluded (no workflow, no reports).
         reportStatusCounts: deriveReportStatusCounts(workflowItems),
         itemNames: orderItemNames(workflowItems),
+        itemDetails: orderItemDetails(workflowItems, panelMembers),
         grossAmount,
         discountAmount,
         netAmount,
@@ -5416,6 +5751,9 @@ export class OrderService {
       // `resolveActorNames` only maps ids it actually found, so an unresolved id
       // becomes null rather than a raw UUID leaking to the client.
       r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+      // That same actor's Person id, so the FE's Userwise PDF can group by person
+      // (two users sharing a display name stay apart), as it does by `createdBy`.
+      r.responsibleUserId = actorId;
       // The order's ORIGINAL creator — resolved for every report, not just the
       // ones whose responsible actor happens to be the creator — so each Finance
       // page can show a consistent "Order Created By" independent of who performed
@@ -6508,6 +6846,12 @@ export class OrderService {
                 branchLabTestId: i.branchLabTestId ?? null,
                 branchLabPanelId: i.branchLabPanelId ?? null,
                 direct: i.direct ?? null,
+                // Partial panel selection for a newly-added line (empty = all;
+                // always empty on a test/direct line). Kept lines keep their
+                // stored selection — member selection isn't edited post-creation.
+                selectedMemberBranchLabTestIds: i.branchLabPanelId
+                  ? (i.selectedMemberBranchLabTestIds ?? [])
+                  : [],
                 unitPrice: i.direct
                   ? (i.unitPrice ?? 0)
                   : (addPrices.get(
@@ -6797,6 +7141,16 @@ export class OrderService {
             newReservation.phlebotomistId,
             newReservation.at,
           );
+          // Keep the existing collection's denormalized time/phlebotomist in step
+          // with the rescheduled order, so a later collection-side action releases
+          // the correct slot (no-op when no live collection exists).
+          await this.homeVisitCollections.syncScheduleForOrderInTx(
+            tx,
+            tenantId,
+            id,
+            newReservation.at,
+            newReservation.phlebotomistId,
+          );
         }
       }
 
@@ -6966,6 +7320,15 @@ export class OrderService {
     if (!item) {
       throw new OrderItemNotFoundException(orderId, itemId);
     }
+    // Department restriction: a user may collect only samples in their department
+    // scope (or unassigned) — the same rule that scopes the Accession In-House /
+    // Technician Reporting listings. Enforced here (not in the shared InTx bridge)
+    // so only this user-initiated collect is gated, not internal auto-collect.
+    await this.orderSamples.assertOrderItemSamplesInDepartmentScope(
+      tenantId,
+      actorId,
+      itemId,
+    );
     await this.prisma.withTenant(tenantId, async (tx) => {
       // Guard only the order-item stamp; the accession bridge runs regardless
       // (its own status filter is idempotent), otherwise a sample shared with an
@@ -7019,6 +7382,13 @@ export class OrderService {
     } = {},
   ): Promise<OrderWithRelations> {
     await this.findById(orderId, tenantId);
+    // Department restriction (same rule as the In-House listing): refuse any
+    // sample in the group that is outside the caller's department scope.
+    await this.orderSamples.assertSamplesInDepartmentScope(
+      tenantId,
+      actorId,
+      sampleIds,
+    );
     await this.prisma.withTenant(tenantId, (tx) =>
       this.orderSamples.collectSamplesInTx(tx, tenantId, actorId, sampleIds, {
         print: !!opts.print,
@@ -7120,11 +7490,20 @@ export class OrderService {
         },
       },
     });
-    // The slot held by this booking (null if its appointment already released it).
-    // Computed from the pre-cancel state; released below whether or not an
-    // appointment is linked (a walk-in ORDER holds a slot with no appointment).
+    // The home-visit collection linked to this order (if any). A collection whose
+    // slot was already freed when IT was cancelled first must not trigger a second
+    // release here — the shared slot/day counter would be double-decremented.
+    const bookingCollection = await this.prisma.homeVisitCollection.findFirst({
+      where: { orderId: id, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    // The slot held by this booking (null if its appointment or its collection
+    // already released it). Computed from the pre-cancel state; released below
+    // whether or not an appointment is linked (a walk-in ORDER holds a slot with
+    // no appointment).
     const reservation =
-      booking?.appointment?.status === AppointmentStatus.CANCELLED
+      booking?.appointment?.status === AppointmentStatus.CANCELLED ||
+      bookingCollection?.status === CollectionStatus.CANCELLED
         ? null
         : this.homeVisitReservation(
             booking?.status,
@@ -7264,6 +7643,17 @@ export class OrderService {
           },
         });
       }
+      // Cancel the linked home-visit collection too (+ history) so a cancelled
+      // order's visit no longer shows as pending on the Collection Schedule, and a
+      // later collection-side cancel becomes a guarded no-op (no double release).
+      // This does NOT release the slot — that happens exactly once below.
+      await this.homeVisitCollections.cancelForOrderInTx(
+        tx,
+        tenantId,
+        actorId,
+        id,
+        'Order cancelled',
+      );
       // Release the phlebotomist slot the (now-cancelled) order held.
       if (reservation) {
         await this.slotReservation.releaseInTx(
@@ -7671,6 +8061,17 @@ export class OrderService {
       if (item.branchLabTestId) testIds.push(item.branchLabTestId);
       if (item.branchLabPanelId) panelIds.push(item.branchLabPanelId);
 
+      // A partial member selection is only meaningful for a panel line — a
+      // test/direct line has no member tests to select from.
+      if (
+        item.selectedMemberBranchLabTestIds?.length &&
+        !item.branchLabPanelId
+      ) {
+        throw new InvalidPanelMemberSelectionException(
+          'selectedMemberBranchLabTestIds may only be sent on a lab panel line',
+        );
+      }
+
       // `unitPrice` is only meaningful for a free-text direct line — a
       // catalogue line's price is always resolved server-side from the
       // active pricing list, never trusted from the client, so a payload
@@ -7711,6 +8112,102 @@ export class OrderService {
         .filter((item) => item.outsourceCenterId)
         .map((item) => this.assertOutsourceCenter(tenantId, item)),
     );
+    await Promise.all(
+      items
+        .filter((item) => item.selectedMemberBranchLabTestIds?.length)
+        .map((item) => this.assertPanelMemberSelection(tenantId, item)),
+    );
+  }
+
+  /**
+   * Validate a panel line's partial member selection
+   * (`selectedMemberBranchLabTestIds`). Only called for a panel line that
+   * carries a non-empty selection (empty/omitted = all members, nothing to
+   * check). Enforces the partial-billing gate (CLAUDE.md feature decision):
+   * every selected id must be a member of this panel; dropping a member requires
+   * both the panel's `isAllowPartialBilling` and that member's
+   * `BranchLabPanelTest.isRemovable`, capped at `maxTestsRemovable` removals; and
+   * at least one member must remain. Selecting every member is always allowed.
+   * @throws InvalidPanelMemberSelectionException on any violation
+   */
+  private async assertPanelMemberSelection(
+    tenantId: string,
+    item: OrderItemDto,
+  ): Promise<void> {
+    const panelId = item.branchLabPanelId!;
+    const selected = [...new Set(item.selectedMemberBranchLabTestIds ?? [])];
+    const [panel, members] = await Promise.all([
+      this.prisma.branchLabPanel.findFirst({
+        where: { id: panelId, tenantId, deletedAt: null },
+        select: { isAllowPartialBilling: true, maxTestsRemovable: true },
+      }),
+      this.prisma.branchLabPanelTest.findMany({
+        where: { branchLabPanelId: panelId, tenantId, deletedAt: null },
+        select: { branchLabTestId: true, isRemovable: true },
+      }),
+    ]);
+    if (!panel) {
+      // assertBranchLabPanels already guards existence, but keep this defensive.
+      throw new OrderBranchLabPanelNotFoundException([panelId]);
+    }
+    const memberById = new Map(members.map((m) => [m.branchLabTestId, m]));
+
+    // Every selected id must be a real member of this panel.
+    const foreign = selected.filter((id) => !memberById.has(id));
+    if (foreign.length) {
+      throw new InvalidPanelMemberSelectionException(
+        'one or more selected tests are not members of this panel',
+        { panelId, foreign },
+      );
+    }
+
+    // At least one member must remain on the order.
+    if (selected.length === 0) {
+      throw new InvalidPanelMemberSelectionException(
+        'at least one member test must be selected',
+        { panelId },
+      );
+    }
+
+    // Selecting every member is always allowed — no removal, no gating.
+    if (selected.length === members.length) {
+      return;
+    }
+
+    // Partial selection: a strict subset. Validate the dropped members against
+    // the panel's partial-billing controls.
+    const selectedSet = new Set(selected);
+    const removed = members.filter((m) => !selectedSet.has(m.branchLabTestId));
+    if (!panel.isAllowPartialBilling) {
+      throw new InvalidPanelMemberSelectionException(
+        'this panel does not allow partial billing (all member tests must be selected)',
+        { panelId },
+      );
+    }
+    const nonRemovable = removed
+      .filter((m) => !m.isRemovable)
+      .map((m) => m.branchLabTestId);
+    if (nonRemovable.length) {
+      throw new InvalidPanelMemberSelectionException(
+        'one or more deselected tests are not removable',
+        { panelId, nonRemovable },
+      );
+    }
+    // maxTestsRemovable = 0 means "no limit" (a panel that allows partial billing
+    // but caps removals at 0 would be unusable), so the cap only bites when > 0.
+    if (
+      panel.maxTestsRemovable > 0 &&
+      removed.length > panel.maxTestsRemovable
+    ) {
+      throw new InvalidPanelMemberSelectionException(
+        'too many tests deselected for this panel',
+        {
+          panelId,
+          removed: removed.length,
+          maxTestsRemovable: panel.maxTestsRemovable,
+        },
+      );
+    }
   }
 
   /**

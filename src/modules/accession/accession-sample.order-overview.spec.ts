@@ -142,7 +142,9 @@ describe('OrderSampleService.findOrderOverview', () => {
       branchId: 'b1',
       orderId: 'o1',
       deletedAt: null,
-      AND: [{ departmentId: null }], // a user with no department sees only unassigned rows
+      // a user mapped to no department is UNRESTRICTED on the In-House list (same rule as
+      // `departmentScopeForSamples`, which the popup reuses), so the scope adds no constraint
+      AND: [{}],
     });
 
     scope.resolveDepartmentIds.mockResolvedValue(['dA', 'dB']);

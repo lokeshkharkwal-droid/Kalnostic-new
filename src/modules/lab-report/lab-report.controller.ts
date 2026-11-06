@@ -154,13 +154,11 @@ export class LabReportController {
   getLabTestOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
-    @CurrentUser('person_id') personId: string,
     @Query() query: LabReportCatalogueOptionsQueryDto,
   ) {
     return this.labReportService.getLabTestOptions(
       tenantId,
       profile.branchId,
-      personId,
       query,
     );
   }
@@ -170,13 +168,11 @@ export class LabReportController {
   getLabPanelOptions(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
-    @CurrentUser('person_id') personId: string,
     @Query() query: LabReportCatalogueOptionsQueryDto,
   ) {
     return this.labReportService.getLabPanelOptions(
       tenantId,
       profile.branchId,
-      personId,
       query,
     );
   }
@@ -351,9 +347,15 @@ export class LabReportController {
   findOne(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
   ) {
-    return this.labReportService.findByIdForApi(id, tenantId, profile.branchId);
+    return this.labReportService.findByIdForViewer(
+      id,
+      tenantId,
+      profile.branchId,
+      personId,
+    );
   }
 
   /**
@@ -572,10 +574,12 @@ export class LabReportController {
    * Choose which of the five Notes sections are LEFT OUT of this report's
    * printed version (the checkbox beside each section on the report). The body's
    * `excludedSections` replaces the stored list; an empty list prints all five.
-   * It only changes the printed and shared PDF, never what the screen shows, and
-   * only counts while the matching Branch Setting (Branch Settings > Technician
-   * Settings > Report Printing: Lab Test / Lab Panel) is on. No permission key by design; the report's write locks still apply
-   * (locked, sent-out and cancelled reports are refused).
+   * It only changes the printed and shared PDF, never what the screen shows. It works
+   * whether the matching Branch Setting (Branch Settings > Technician Settings > Report
+   * Printing: Lab Test / Lab Panel) is ON or OFF: that setting only sets the default
+   * selection until a choice is saved. No permission key by design; the report's write
+   * locks still apply (locked, sent-out and cancelled reports are refused), and so does
+   * the status rule (only while Pending, Partial Pending or Saved).
    */
   @Patch(':id/note-print-sections')
   @Audit({

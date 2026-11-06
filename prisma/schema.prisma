@@ -312,6 +312,7 @@ enum AuditModule {
   SALES_SETTINGS
   REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
+  QR_CODE_SCAN_SETTINGS // Branch Settings: what a patient may open/print from a bill/report QR code
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
   LAB_TEST_FIELD_PERMISSIONS
   OVERALL_RESULT_TEMPLATE
@@ -575,13 +576,19 @@ enum AgeUnit {
   YEARS
 }
 
-/// How an out-of-range result is visually flagged on the report.
+/// How an out-of-range result is visually flagged on the report. The first five
+/// are the original styles; the last three are faithful "combined" styles added
+/// so every Master Data → Abnormal Flag Logic label (and the matching Technician
+/// Reporting → Highlighted option) renders exactly as its name reads.
 enum AbnormalFlag {
   BOLD_AND_RED
   BOLD_ONLY
   ITALIC
   UNDERLINE
   COLOUR_HIGHLIGHT
+  ITALIC_AND_RED
+  BOLD_AND_ITALIC
+  BOLD_ITALIC_AND_RED
 }
 
 /// Sample container type (tube/colour or receptacle). One display label per value
@@ -3009,6 +3016,11 @@ model LabTestReferenceRange {
   displayOfReferenceRange String?      @map("display_of_reference_range")
   abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
 
+  // Position in the test's whole Reference Range list, set by drag-to-reorder
+  // in the Master Data editor (spans every parameter of the test). 0 = never
+  // reordered; reads tie-break on `createdAt`.
+  sortOrder Int @default(0) @map("sort_order")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -3043,6 +3055,11 @@ model LabTestReferenceValue {
   normalValueText         String       @map("normal_value_text")
   displayOfReferenceRange String?      @map("display_of_reference_range")
   abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
+
+  // Position in the test's whole Reference Value list, set by drag-to-reorder
+  // in the Master Data editor (spans every parameter of the test). 0 = never
+  // reordered; reads tie-break on `createdAt`.
+  sortOrder Int @default(0) @map("sort_order")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -6601,6 +6618,21 @@ model Order {
   // sums the ledger + items, which Prisma can't express in a `where`.
   billStatus BillStatus @default(NOT_PAID) @map("bill_status")
 
+  // Denormalized billing rollups — the exact gross / discount / net / paid /
+  // balance / refunded the Billings, Quotations, Appointments and Order Console
+  // lists render per row (see OrderService.billingRollups). Stored for the SAME
+  // reason as paymentStatus/billStatus: these are sums over the item + payment
+  // ledger that Prisma can't `ORDER BY`, so the lists could only sort them
+  // client-side (one page at a time) — a violation of the server-side-sort rule.
+  // Recomputed in the same transaction as every billing-state write by
+  // `recomputeBillStatusInTx`. `balanceAmount` = max(0, net − paid) (the "Due").
+  grossAmount    Int @default(0) @map("gross_amount")
+  discountAmount Int @default(0) @map("discount_amount")
+  netAmount      Int @default(0) @map("net_amount")
+  paidAmount     Int @default(0) @map("paid_amount")
+  balanceAmount  Int @default(0) @map("balance_amount")
+  refundedAmount Int @default(0) @map("refunded_amount")
+
   // Fee (rupees, up to 2 decimal places) retained by the lab when the order is
   // cancelled (0 = none). Deducted from the order's effective paid amount;
   // caps the refundable amount on a cancel-with-refund (max refundable = paid
@@ -6639,6 +6671,14 @@ model Order {
   // and its append-only status history. Nullable: DRAFT/QUOTE/ORDER rows have none.
   appointmentId String?      @unique @map("appointment_id")
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  // Set once when an appointment order is checked in (the Create → Confirm
+  // "Check-In" action, `dto.checkIn`, which advances the linked appointment to
+  // CHECKED_IN). A checked-in appointment stays `status = APPOINTMENT` but
+  // behaves like an order; the Billings screen uses this as its bill/appointment
+  // date (when the patient was actually checked in), falling back to `createdAt`
+  // for plain orders. NULL = never checked in.
+  checkedInAt DateTime? @map("checked_in_at")
 
   // Referral & B2B billing (all optional)
   referredByDoctorId String?         @map("referred_by_doctor_id")
@@ -7113,6 +7153,21 @@ model OrderItem {
   /// exclusive with the test/panel refs).
   direct String?
 
+  /// For a PANEL line (`branchLabPanelId` set): the subset of the panel's member
+  /// tests the user chose to actually run, stored as the selected members'
+  /// `BranchLabTest` ids (matching `BranchLabPanelTest.branchLabTestId`). An
+  /// EMPTY array means "all members" — the default and the backward-compatible
+  /// behaviour for every line created before this feature. Only the listed
+  /// members are expanded into OrderSamples / LabReports downstream (accession +
+  /// technician); the panel's own pricing/billing is unaffected (the full panel
+  /// `unitPrice` is still charged regardless of how many members are selected).
+  /// Deselection is gated server-side (see OrderService.assertItems): a member
+  /// can be dropped only if its `BranchLabPanelTest.isRemovable` is true and the
+  /// panel's `isAllowPartialBilling` is true, up to `maxTestsRemovable` removals
+  /// (0 = no limit), and at least one member must remain. Always empty for
+  /// test/direct lines.
+  selectedMemberBranchLabTestIds String[] @default([]) @map("selected_member_branch_lab_test_ids")
+
   /// Snapshot of the resolved list unit price (minor units) at order/quotation
   /// time, copied from the chosen list's `BranchLabTest`/`BranchLabPanel`
   /// `listPrice`. Stable even if the list is later re-priced.
@@ -7262,6 +7317,20 @@ model LabReport {
 
   labTestId String? @map("lab_test_id")
 
+  /// Denormalized department of the test this report is for, stamped at report
+  /// creation (`createReportForAcceptedItem`): for a panel-member report the
+  /// MEMBER test's own department, for a standalone test the order line test's —
+  /// each resolved branch-entry-first, falling back to the source Master Data
+  /// test, exactly as `OrderSample.departmentId` is at accession time. The
+  /// Reporting worklist's department-visibility scope filters directly on this
+  /// column instead of joining through `orderItem.branchLabTest` /
+  /// `branchLabPanel`, which resolved a panel member to the PANEL's single
+  /// department and so hid it from the member test's own department. NULL =
+  /// unassigned (visible to every department). A transferred report keeps this as
+  /// the order line's department; the HOLDING branch's re-chosen department lives
+  /// on `performingEntry` (a genuinely different value, still joined).
+  departmentId String? @map("department_id")
+
   /// The Lab Test List entry the branch that now HOLDS this report works it with
   /// (its report template / PDF settings, TAT windows and department). NULL = the
   /// order line's own entry (`OrderItem.branchLabTest`), which is the case until
@@ -7287,14 +7356,20 @@ model LabReport {
 
   /// The Notes sections the technician LEFT OUT of this report's printed
   /// version (keys: useful_for, interpretation, limitations, remarks,
-  /// references). Empty (the default for every report) means all five print,
-  /// exactly as before. Only honoured while the matching Technician setting
-  /// (`TechnicianSetting.isLabTestNotesSelectable` for a test report,
-  /// `isLabPanelNotesSelectable` for a report on a panel order line) is on;
-  /// when it is off every section prints. It never changes the content shown on
-  /// screen, only what the printed/shared PDF contains. Cleared when the report
-  /// is returned for a repeat (like the Notes overrides above); kept on re-run.
+  /// references). Only meaningful once `hasChosenNotePrint` is true: until then
+  /// the branch's Technician setting decides the default (see below) and this
+  /// list is ignored. It never changes the content shown on screen, only what
+  /// the printed/shared PDF contains. Reset (with `hasChosenNotePrint`) when the
+  /// report is returned for a repeat and when it is re-run.
   excludedNoteSections String[] @default([]) @map("excluded_note_sections")
+
+  /// Whether the technician (or the approval, which freezes the default) has
+  /// settled which Notes sections print. False = no choice yet: the branch's
+  /// Technician setting (`TechnicianSetting.isLabTestNotesSelectable` for a test
+  /// report, `isLabPanelNotesSelectable` for a report on a panel order line) sets
+  /// the DEFAULT, ON = every section prints, OFF = none prints, and the
+  /// technician can change it. True = `excludedNoteSections` is the choice.
+  hasChosenNotePrint Boolean @default(false) @map("has_chosen_note_print")
 
   status LabReportStatus @default(PENDING)
 
@@ -7417,6 +7492,7 @@ model LabReport {
   @@index([branchId])
   @@index([status])
   @@index([labTestId])
+  @@index([departmentId])
   @@index([memberBranchLabTestId])
   @@index([performingBranchLabTestId])
   @@index([isOutsourced])
@@ -8890,6 +8966,40 @@ model TechnicianSetting {
   @@map("technician_settings")
 }
 
+/// Branch Admin › Branch Settings › QR Code Scan Settings. Decides what a patient
+/// may open/print after scanning the QR code on their bill or report, for THIS
+/// branch (it applies to every patient of the branch). Tenant-scoped + branch-level
+/// (CLAUDE.md §4.6): one row per branch (unique `(tenantId, branchId)`), created on
+/// first read so the frontend always receives a complete object.
+model QrCodeScanSetting {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  branchId String @map("branch_id")
+
+  /// Which bill payment statuses a patient may print from the bill QR code.
+  /// Empty = the patient may print no bill. The UI's "All" is simply all three
+  /// values selected. Defaults to PAID only (a fully-paid bill is printable).
+  billPrintablePaymentStatuses PaymentStatus[] @default([PAID]) @map("bill_printable_payment_statuses")
+
+  /// The `pdf_report_templates` row (type `bill_print`) used to render the bill a
+  /// patient prints from the QR code. NULL = none chosen yet (print falls back to
+  /// the tenant's normal bill-print resolution).
+  billPrintTemplateId String? @map("bill_print_template_id")
+
+  /// The `pdf_report_templates` row (type `lab_all_report`) used to render the
+  /// consolidated report a patient prints from the QR code. NULL = none chosen yet.
+  reportPrintTemplateId String? @map("report_print_template_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, branchId])
+  @@index([tenantId])
+  @@index([branchId])
+  @@map("qr_code_scan_settings")
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Sales & B2B module
 // Business-lead lifecycle + trips + follow-ups + territory master + settings.
@@ -9467,4 +9577,39 @@ enum MasterDataImportJobStatus {
   SUCCEEDED
   FAILED
   INTERRUPTED
+}
+
+/// Background "Sync from Master Data" jobs for a branch's Lab Test / Lab Panel
+/// List (reconcile the list against Branch Master Data) so the branch-admin
+/// dialog can poll live progress — mirrors `MasterDataImportJob`, one table for
+/// both kinds (`kind`). Reuses `MasterDataImportJobStatus` for `status`.
+model BranchListSyncJob {
+  id         String                    @id @default(uuid())
+  tenantId   String                    @map("tenant_id")
+  branchId   String                    @map("branch_id")
+  /// Which branch list this sync reconciles (lab tests vs lab panels).
+  kind       BranchListSyncKind
+  status     MasterDataImportJobStatus @default(RUNNING)
+  /// `MasterDataSyncJobProgress` (phase, batches, counts) — see the service.
+  progress   Json
+  /// `{ created, updated, deleted, failed }` once SUCCEEDED.
+  result     Json?
+  /// `{ code, message, phase }` once FAILED / INTERRUPTED.
+  error      Json?
+  startedBy  String?                   @map("started_by")
+  /// Backend process running it (`host#pm2-instance`); on startup that process
+  /// marks its own leftover RUNNING jobs INTERRUPTED at once.
+  runner     String?                   @map("runner")
+  startedAt  DateTime                  @default(now()) @map("started_at")
+  finishedAt DateTime?                 @map("finished_at")
+  createdAt  DateTime                  @default(now()) @map("created_at")
+  updatedAt  DateTime                  @updatedAt @map("updated_at")
+
+  @@index([tenantId, branchId, createdAt])
+  @@map("branch_list_sync_jobs")
+}
+
+enum BranchListSyncKind {
+  LAB_TEST
+  LAB_PANEL
 }

@@ -1,0 +1,38 @@
+meta {
+  name: 77 Public Patient Order
+  seq: 77
+}
+
+docs {
+  # Public Patient Order Access
+
+  Unauthenticated, patient-facing access to a single order via its public URL
+  `/public/:tenantId/:branchId/:orderId`. No login / no JWT — every route is
+  `@Public()` and per-IP rate-limited (30 req / 60 s). Backed by the `public`
+  module, which reuses the existing order, billing and report pipelines and
+  returns only a minimal, safe projection.
+
+  ## Security model
+  Every request re-validates the full ownership chain, and any failure returns a
+  single generic `404 PUBLIC_ORDER_NOT_FOUND` so a caller cannot probe which id
+  is wrong by swapping URL params:
+  - the tenant exists and is active;
+  - the branch belongs to that tenant and is active;
+  - the order belongs to that branch + tenant and is a finalized `ORDER`
+    (not DRAFT / QUOTE / APPOINTMENT / CANCELLED).
+  Patient data is read only through the validated order. The tenant RLS context
+  is set server-side from the URL `tenantId` (never a client-supplied id).
+
+  ## Endpoints
+  - `GET /public/orders/:tenantId/:branchId/:orderId` — the page payload
+    (patient identity, order header, billing, report availability).
+  - `GET /public/orders/:tenantId/:branchId/:orderId/bill.pdf` — the patient
+    bill PDF (reuses the `bill_print` template; obeys the same fully-paid rule).
+  - `GET /public/orders/:tenantId/:branchId/:orderId/report.pdf` — the order's
+    PUBLISHED lab reports merged into one PDF; `404` when nothing is published.
+
+  ## Setup
+  Set `tenantId`, `branchId`, `orderId` in the environment to a real finalized
+  order (run **Business Auth → Login** then **Orders → Create Order** to produce
+  one, and copy its tenant/branch/order ids). No bearer token is needed.
+}

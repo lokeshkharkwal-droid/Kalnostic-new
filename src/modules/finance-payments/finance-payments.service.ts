@@ -134,6 +134,10 @@ export class FinancePaymentsService {
         : null;
 
     const take = page * limit;
+    // Server-side sort: only `dateTime` (= `createdAt`) is consistently sortable
+    // across both merged sources. Direction applies to BOTH source reads AND the
+    // in-memory merge so the `take: page*limit` prefix stays a valid total order.
+    const dir: 'asc' | 'desc' = query.sortOrder === 'asc' ? 'asc' : 'desc';
     const directWhere = useDirect
       ? this.directRecordsWhere(tenantId, query)
       : null;
@@ -152,7 +156,7 @@ export class FinancePaymentsService {
               // `take: page*limit` prefix is stable — otherwise rows sharing a
               // `createdAt` shuffle between fetches and the merge-slice below
               // drops/duplicates rows at page boundaries (breaks batch export).
-              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              orderBy: [{ createdAt: dir }, { id: 'desc' }],
               take,
             })
           : Promise.resolve([] as DirectRow[]),
@@ -164,7 +168,7 @@ export class FinancePaymentsService {
               where: invoiceWhere,
               include: INVOICE_INCLUDE,
               // Total order (see paymentDetails above) so page prefixes are stable.
-              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              orderBy: [{ createdAt: dir }, { id: 'desc' }],
               take,
             })
           : Promise.resolve([] as InvoiceRow[]),
@@ -188,7 +192,11 @@ export class FinancePaymentsService {
         at: r.createdAt.getTime(),
         id: r.id,
       })),
-    ].sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    ].sort(
+      (a, b) =>
+        (dir === 'asc' ? a.at - b.at : b.at - a.at) ||
+        (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+    );
     const pageItems = merged.slice((page - 1) * limit, take).map((m) => m.item);
     await this.resolveNamesInPlace(tenantId, pageItems);
 

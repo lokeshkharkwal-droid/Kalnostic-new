@@ -13,7 +13,7 @@ get {
 params:query {
   page: 1
   limit: 20
-  ~search: ACC-00001
+  ~search: ORD-00717
   ~status: NEW
   ~priority: ROUTINE
   ~collectionStatus: PENDING
@@ -84,17 +84,24 @@ docs {
 
   ## Filters (toggle the `~` to enable a query param)
 
-  - `search` — matches barcode **or** order id (e.g. `ORD-00717`), plus patient name / UHID / mobile (case-insensitive). The accession number is NOT searched any more.
+  - `search` — Global Search (max 50 characters, trimmed, case-insensitive; `%`, `_` and `\` are matched as typed). Matches
+    barcode, order id (e.g. `ORD-00717`), patient name (a full name matches in any word order: every word must be found
+    across first / middle / last name), UHID, mobile, referral-panel name, and the test or panel name on the order. The
+    accession number is NOT searched. The summary (tab counts) and the PDF export follow it identically.
   - `status` — the §A.5 status tab (a `SampleStatus` — the 15-stage lifecycle).
   - `priority` — `ROUTINE` | `URGENT` | `STAT`.
   - `collectionStatus` — order-level **collection progress** `PENDING` | `PARTIAL`
-    | `COLLECTED` (derived from the order's workflow items' `collectedAt`; distinct
-    from `status`). Same rule as the Order Console's `sampleStatus`.
+    | `COLLECTED` (derived from the order's samples' `collectedAt` — cancelled and
+    removed-test samples are left out; distinct from `status`). Same rule as the
+    Order Console's `sampleStatus`.
   - `tatStatus` — derived TAT band (translated to a `createdAt` range server-side).
   - `orderId` / `originBranchId` / `processingBranchId` — scoping filters.
   - `patientId` / `referredByDoctorId` / `referralPanelId` — via the linked order.
   - `dateFrom` / `dateTo` — linked order's `orderDate` range.
-  - `departmentId` / `branchLabTestId` / `branchLabPanelId` — via the order's items.
+  - `departmentId` / `branchLabTestId` / `branchLabPanelId` — three INDEPENDENT filters: an order qualifies when it satisfies each one that is set (they need not be met by the same line or sample).
+    - `departmentId` (a department id, or `none` = samples with no department) is judged on the SAMPLE's own department. With ORDER grouping an order qualifies when at least one of its samples is in the department, and the whole order is shown; with every other grouping, a group is kept when its own samples are in the department.
+    - `branchLabTestId` — the order has the test ordered directly, or one of its samples serves the test (so a test that came through a panel is found).
+    - `branchLabPanelId` — the order has the panel, in ANY price list (every copy of the panel is matched).
   - `orderMode` — DEPRECATED (`Walk-in` | `Home Visit` | `Referral` | `Outsource` | `Emergency`); use `orderType` below. Kept only until the frontend stops sending it.
   - `logisticsType` — sample scalar filter (also matches the transfer's logistics type, see below).
   - `reportStatus` — one of the nine report statuses the Technician Reporting screen uses: `PENDING` | `PARTIAL_PENDING` | `SAVED` | `VALIDATION_PENDING` | `RESULT_DONE` | `APPROVED` | `PUBLISHED` | `ERROR_REPORTED` | `RESULT_REJECTED`. It reads the sample's real report (the sample's own `reportStatus` column is never written); a sample with no report yet matches no status. A panel member's sample matches its own member report.

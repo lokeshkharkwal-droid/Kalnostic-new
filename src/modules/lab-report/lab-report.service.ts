@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { dateOnlyRange } from '../../common/utils/date-range.util';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PDFDocument } from 'pdf-lib';
@@ -26,17 +27,14 @@ import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
   salutationLabel,
-  patientReportAgeDisplay,
+  patientPrintAgeDisplay,
   sampleSourceLabel,
   toBranchLocalInstant,
   formatReportDateTime,
   formatOrderPrintDate,
   formatOrderPrintDateTime,
-  buildEvaluationOrder,
-  evaluateFormula,
-  formatCalculatedValue,
-  type FormulaParam,
 } from '../../common/utils';
+import { recomputeCalculatedValues } from './utils/recompute-calculated-values';
 import { TenantService } from '../tenant/tenant.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
@@ -135,6 +133,7 @@ import {
   LabReportLockedException,
   LabReportPrintOrderCancelledException,
   LabReportPrintItemRemovedException,
+  LabReportPrintNotApprovedForPanelException,
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportResultsNotEditableException,
@@ -166,9 +165,15 @@ import {
 } from './utils/reference-range.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
 import { findReceiverReturns } from '../accession/utils/returned-by-receiver.util';
+import { escapeLike } from '../accession/utils/like-escape.util';
+import {
+  NO_MEMBER_MATCHES,
+  type MemberEntryMatches,
+} from './utils/member-test-match.util';
 import {
   classifyResultValueSave,
   describeAnalyzerOverwrite,
+  describeRangeForAudit,
   formatMomentForAudit,
 } from './utils/result-value-save.util';
 import {
@@ -192,6 +197,9 @@ import {
 import {
   buildReportBarcodeTags,
   pickReportSample,
+  publicOrderQrCode,
+  publicBillDownloadQrCode,
+  publicReportDownloadQrCode,
 } from './utils/print-barcode.util';
 import { code128DataUri } from '../../common/utils/barcode-image.util';
 import { TatService, TatSummary } from './tat.service';
@@ -263,6 +271,38 @@ export function applyB2bLabReportScope(
 }
 
 /**
+ * The report statuses a B2B Referral Panel may print / download: only finished
+ * reports. Matches the Technician Reporting screen's rule for B2B rows.
+ */
+export const B2B_PRINTABLE_REPORT_STATUSES: readonly LabReportStatus[] = [
+  LabReportStatus.APPROVED,
+  LabReportStatus.PUBLISHED,
+];
+
+/**
+ * Restrict a LabReport `where` to the printable statuses for a B2B session. Added
+ * through `AND`, so it never overwrites a `status` filter already on the query. A
+ * no-op for every non-B2B session.
+ * @param where the Prisma LabReportWhereInput being built (mutated in place)
+ * @param panelId the active B2B panel id, or undefined for non-B2B sessions
+ */
+export function applyB2bPrintableReportScope(
+  where: Prisma.LabReportWhereInput,
+  panelId: string | undefined,
+): void {
+  if (!panelId) return;
+  const existing = where.AND
+    ? Array.isArray(where.AND)
+      ? where.AND
+      : [where.AND]
+    : [];
+  where.AND = [
+    ...existing,
+    { status: { in: [...B2B_PRINTABLE_REPORT_STATUSES] } },
+  ];
+}
+
+/**
  * Assert a report traces (orderItem → order) to the active B2B panel.
  * @param report fetched report (needs `id` + `orderItem.order.referralPanelId`)
  * @param panelId the active B2B panel id, or undefined for non-B2B sessions
@@ -294,6 +334,7 @@ export class LabReportService {
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly referralCredit: ReferralCreditService,
     private readonly appointmentService: AppointmentService,
+    private readonly config: ConfigService,
   ) {}
 
   private readonly logger = new Logger(LabReportService.name);
@@ -648,9 +689,10 @@ export class LabReportService {
         limitations: null,
         remarks: null,
         references: null,
-        // The repeat starts a new cycle: every Notes section prints again until
-        // the technician chooses otherwise (like the Notes edits above).
+        // The repeat starts a new cycle: no Print choice yet, so the branch's
+        // setting decides the default again (like the Notes edits above).
         excludedNoteSections: [],
+        hasChosenNotePrint: false,
         status: LabReportStatus.PENDING,
         savedAt: null,
         savedBy: null,
@@ -853,7 +895,13 @@ export class LabReportService {
   private async panelMemberBranchLabTests(
     tx: Prisma.TransactionClient,
     branchLabPanelId: string,
-  ): Promise<{ id: string; sourceLabTestId: string | null }[]> {
+  ): Promise<
+    {
+      id: string;
+      sourceLabTestId: string | null;
+      departmentId: string | null;
+    }[]
+  > {
     const panelTests = await tx.branchLabPanelTest.findMany({
       where: { branchLabPanelId, deletedAt: null },
       select: { branchLabTestId: true },
@@ -864,14 +912,54 @@ export class LabReportService {
 
     const branchLabTests = await tx.branchLabTest.findMany({
       where: { id: { in: branchLabTestIds }, deletedAt: null },
-      select: { id: true, sourceLabTestId: true },
+      // departmentId is read so the per-member report can denormalize the
+      // MEMBER test's own department (not the panel's) — see
+      // createReportForAcceptedItem / LabReport.departmentId.
+      select: { id: true, sourceLabTestId: true, departmentId: true },
     });
     const byId = new Map(branchLabTests.map((t) => [t.id, t]));
     // Preserve the panel's own member-test sortOrder (branchLabTests above
     // has no guaranteed order matching branchLabTestIds).
     return branchLabTestIds
       .map((id) => byId.get(id))
-      .filter((t): t is { id: string; sourceLabTestId: string | null } => !!t);
+      .filter(
+        (
+          t,
+        ): t is {
+          id: string;
+          sourceLabTestId: string | null;
+          departmentId: string | null;
+        } => !!t,
+      );
+  }
+
+  /**
+   * Resolve a test's department id for the denormalized `LabReport.departmentId`:
+   * prefer the branch test's own logical `departmentId`, falling back to its
+   * source Master Data test's `departmentId`. Mirrors the accession module's
+   * identical resolution for `OrderSample.departmentId` so a report and its
+   * sample always agree on the owning department.
+   * @param tx the caller's transaction
+   * @param tenantId tenant scope
+   * @param branchDepartmentId the branch lab test's own department (preferred)
+   * @param sourceLabTestId the source Master Data test id (fallback lookup)
+   * @returns the resolved department id, or null when neither resolves one
+   */
+  private async resolveReportDepartmentId(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    branchDepartmentId: string | null,
+    sourceLabTestId: string | null,
+  ): Promise<string | null> {
+    if (branchDepartmentId) return branchDepartmentId;
+    if (sourceLabTestId) {
+      const src = await tx.labTest.findFirst({
+        where: { id: sourceLabTestId, tenantId, deletedAt: null },
+        select: { departmentId: true },
+      });
+      return src?.departmentId ?? null;
+    }
+    return null;
   }
 
   private async createReportForAcceptedItem(
@@ -904,6 +992,7 @@ export class LabReportService {
     const createOne = async (
       labTestId: string | null,
       memberBranchLabTestId: string | null,
+      departmentId: string | null,
     ): Promise<void> => {
       const report = await tx.labReport.create({
         data: {
@@ -912,6 +1001,11 @@ export class LabReportService {
           orderItemId,
           memberBranchLabTestId,
           labTestId,
+          // Denormalized department of this report's test — the member test's own
+          // for a panel member, the standalone test's otherwise. Mirrors
+          // OrderSample.departmentId so Reporting's department-visibility scope
+          // filters directly on the report (see LabReport.departmentId).
+          departmentId,
           status: LabReportStatus.PENDING,
           isOutsourced: orderItem.outsourceCenterId !== null,
           // An outsourced-out item counts as referral work from the moment its
@@ -954,7 +1048,13 @@ export class LabReportService {
       }
       for (const member of memberTests) {
         if (existingMemberIds.has(member.id)) continue;
-        await createOne(member.sourceLabTestId, member.id);
+        const departmentId = await this.resolveReportDepartmentId(
+          tx,
+          tenantId,
+          member.departmentId,
+          member.sourceLabTestId,
+        );
+        await createOne(member.sourceLabTestId, member.id, departmentId);
       }
       return;
     }
@@ -963,7 +1063,13 @@ export class LabReportService {
     // unchanged behaviour — exactly one report, memberBranchLabTestId null.
     if (existingMemberIds.has(null)) return;
     const labTestId = orderItem.branchLabTest?.sourceLabTestId ?? null;
-    await createOne(labTestId, null);
+    const departmentId = await this.resolveReportDepartmentId(
+      tx,
+      tenantId,
+      orderItem.branchLabTest?.departmentId ?? null,
+      labTestId,
+    );
+    await createOne(labTestId, null, departmentId);
   }
 
   // ── Worklist ────────────────────────────────────────────────────────────
@@ -1006,11 +1112,77 @@ export class LabReportService {
     where.AND = [{ OR: usable.map(ruleWhere) }];
   }
 
+  /**
+   * The panel-member test entries a worklist request depends on (see `MemberEntryMatches`). A panel member's report
+   * has no test on its order line, so a name search or a Lab Test filter reaches it through `memberBranchLabTestId` -
+   * by ITS OWN test entry (the same rule Accession applies to a panel's samples):
+   *  - search: the member entries whose name contains the search text (the name the row shows, `attachMemberTestNames`);
+   *  - testFilter: the entries of the Lab Test filter's test (the entry or any price-list copy of it).
+   * (Department visibility and the Department filter are not resolved here: they compare `LabReport.departmentId`.)
+   * First one lookup of the member entries that appear on reports in the caller's branches, then one small query per
+   * condition that applies (run together). Call once per request and pass the result to every `buildListWhere` of it.
+   *
+   * @param tenantId the lab's tenant
+   * @param scope the branches (and statuses) the request covers
+   * @param filters the worklist filters of the request
+   */
+  private async resolveMemberEntryMatches(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    filters: ListLabReportsDto,
+  ): Promise<MemberEntryMatches> {
+    const typed = filters.search?.trim();
+    const needsMembers = !!typed || !!filters.branchLabTestId;
+    if (!needsMembers) return NO_MEMBER_MATCHES;
+    const reportedWhere: Prisma.LabReportWhereInput = {
+      tenantId,
+      deletedAt: null,
+      memberBranchLabTestId: { not: null },
+    };
+    this.applyBranchScope(reportedWhere, scope);
+    const reported = await this.prisma.labReport.findMany({
+      where: reportedWhere,
+      distinct: ['memberBranchLabTestId'],
+      select: { memberBranchLabTestId: true },
+    });
+    const memberIds = reported
+      .map((r) => r.memberBranchLabTestId)
+      .filter((id): id is string => id !== null);
+    const idsOf = async (
+      where: Prisma.BranchLabTestWhereInput,
+    ): Promise<string[]> =>
+      (
+        await this.prisma.branchLabTest.findMany({
+          where: { deletedAt: null, ...where },
+          select: { id: true },
+        })
+      ).map((e) => e.id);
+    const [search, testFilter] = await Promise.all([
+      memberIds.length > 0 && typed
+        ? idsOf({
+            id: { in: memberIds },
+            testName: { contains: escapeLike(typed), mode: 'insensitive' },
+          })
+        : [],
+      filters.branchLabTestId
+        ? idsOf({
+            tenantId,
+            OR: [
+              { id: filters.branchLabTestId },
+              { sourceLabTestId: filters.branchLabTestId },
+            ],
+          })
+        : [],
+    ]);
+    return { search, testFilter };
+  }
+
   private buildListWhere(
     tenantId: string,
     scope: WorklistBranchScope,
     filters: ListLabReportsDto,
     scopeIds: string[],
+    members: MemberEntryMatches = NO_MEMBER_MATCHES,
   ): Prisma.LabReportWhereInput {
     const where: Prisma.LabReportWhereInput = {
       tenantId,
@@ -1028,6 +1200,12 @@ export class LabReportService {
     // forwarded on an accepted EXTERNAL/OUTSOURCE transfer. A plain equality on
     // the denormalized flag; see LabReport.isReferral.
     if (filters.outsource) where.isReferral = true;
+    // Explicit "Department" dropdown filter: match the report's OWN denormalized
+    // department directly (same column the visibility scope uses). Previously this
+    // joined through orderItem.branchLabTest.departmentId, which is null for panel
+    // order items, so filtering by a department never returned panel-member reports
+    // in that department.
+    if (filters.departmentId) where.departmentId = filters.departmentId;
 
     const orderItem: Prisma.OrderItemWhereInput = {};
     // The "Lab Test"/"Lab Panel" filter's id may be either a specific
@@ -1036,17 +1214,27 @@ export class LabReportService {
     // pricing list as its own row, and the Reporting dropdown (getOptions)
     // sends the shared source id so one filter selection matches the test/
     // panel regardless of which list's copy a given order actually used.
-    const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {};
-    if (filters.departmentId)
-      branchLabTestWhere.departmentId = filters.departmentId;
+    // A panel member's report has no test on its order line (the line is the panel), so a Lab Test filter
+    // also matches it through its member entry; `memberAnd` collects those report-level alternatives. The
+    // Department filter (`where.departmentId`, above) is ANDed on the report itself, so it needs no handling here.
+    const memberAnd: Prisma.LabReportWhereInput[] = [];
     if (filters.branchLabTestId) {
-      branchLabTestWhere.OR = [
-        { id: filters.branchLabTestId },
-        { sourceLabTestId: filters.branchLabTestId },
-      ];
-    }
-    if (Object.keys(branchLabTestWhere).length > 0) {
-      orderItem.branchLabTest = branchLabTestWhere;
+      const branchLabTestWhere: Prisma.BranchLabTestWhereInput = {
+        OR: [
+          { id: filters.branchLabTestId },
+          { sourceLabTestId: filters.branchLabTestId },
+        ],
+      };
+      if (members.testFilter.length > 0) {
+        memberAnd.push({
+          OR: [
+            { orderItem: { branchLabTest: branchLabTestWhere } },
+            { memberBranchLabTestId: { in: members.testFilter } },
+          ],
+        });
+      } else {
+        orderItem.branchLabTest = branchLabTestWhere;
+      }
     }
     if (filters.branchLabPanelId) {
       orderItem.branchLabPanel = {
@@ -1087,13 +1275,18 @@ export class LabReportService {
     if (Object.keys(order).length > 0) orderItem.order = order;
 
     // Search bar (LABORATORY.docx §1.1 element 4): Patient Name, Order ID, Test
-    // Name, Ref Panel. Spans both OrderItem-level fields (Test Name, via the
-    // branch lab test/panel snapshot) and Order-level fields (Order ID, Patient
+    // Name, Ref Panel, and the Sample Barcode (the Barcode column the row shows).
+    // Spans both OrderItem-level fields (Test Name, via the
+    // branch lab test/panel snapshot; Barcode, via the order line's samples) and Order-level fields (Order ID, Patient
     // Name, Ref Panel) — combined as a top-level OR so a hit on any one field
     // matches, independent of the other orderItem/order filters above (which
     // still apply as an AND alongside this, via Prisma's implicit top-level AND).
-    if (filters.search) {
-      const search = filters.search;
+    // The text is trimmed first (a scanner or a stray space around a barcode / order id must not make it match
+    // nothing), a blank search is no search, and `%`, `_` and `\` are matched as typed (Prisma hands `contains`
+    // to LIKE as it is, so an unescaped `%` would match every row).
+    const typedSearch = filters.search?.trim();
+    if (typedSearch) {
+      const search = escapeLike(typedSearch);
       // Bug fix: a full-name search (e.g. "Hiroshi Tanaka") never matched
       // anything, because firstName/lastName were only ever checked against
       // the whole search string independently — neither field alone
@@ -1101,7 +1294,10 @@ export class LabReportService {
       // every word to be found somewhere across first/middle/last name (in
       // any order) fixes full-name search without changing single-word
       // search behavior at all (a 1-word split is just the original check).
-      const searchWords = search.trim().split(/\s+/).filter(Boolean);
+      const searchWords = typedSearch
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(escapeLike);
       const patientNameMatchesEveryWord: Prisma.PatientWhereInput = {
         AND: searchWords.map((word) => ({
           OR: [
@@ -1111,7 +1307,7 @@ export class LabReportService {
           ],
         })),
       };
-      orderItem.OR = [
+      const searchOrderItemOr: Prisma.OrderItemWhereInput[] = [
         {
           branchLabTest: {
             is: { testName: { contains: search, mode: 'insensitive' } },
@@ -1120,6 +1316,18 @@ export class LabReportService {
         {
           branchLabPanel: {
             is: { panelName: { contains: search, mode: 'insensitive' } },
+          },
+        },
+        // The Barcode column: the barcode of any live sample linked to this order
+        // line. One barcode is shared by every sample of a grouping bucket, so a
+        // scanned tube lists every test on it. Same case-insensitive "contains" as
+        // the Accession search; the same link the Sample Status filter above uses.
+        {
+          orderSampleTests: {
+            some: {
+              deletedAt: null,
+              sample: { barcode: { contains: search, mode: 'insensitive' } },
+            },
           },
         },
         {
@@ -1138,6 +1346,26 @@ export class LabReportService {
           },
         },
       ];
+      if (members.search.length > 0) {
+        // A panel member's report has no test on its order line, so its name is matched through its own member
+        // entry; the order-line fields (patient, order id, barcode ...) apply to it as to every report.
+        memberAnd.push({
+          OR: [
+            { orderItem: { OR: searchOrderItemOr } },
+            { memberBranchLabTestId: { in: members.search } },
+          ],
+        });
+      } else {
+        orderItem.OR = searchOrderItemOr;
+      }
+    }
+    if (memberAnd.length > 0) {
+      const existing = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+      where.AND = [...existing, ...memberAnd];
     }
     where.orderItem = orderItem;
     // Department visibility scope (mandatory, not a user filter): a report is
@@ -1174,13 +1402,25 @@ export class LabReportService {
   ): void {
     const rules = usableRules(scope);
     if (rules.length === 0) return; // the branch scope already matches nothing
-    const lineOk: Prisma.LabReportWhereInput = {
-      orderItem: { is: this.departmentScopeForOrderItem(scopeIds) },
-    };
+    // The report's OWN denormalized department (stamped at creation from the
+    // test's own department — the panel MEMBER test's for a panel-member report,
+    // the standalone test's otherwise; mirrors OrderSample.departmentId). Filtered
+    // directly on the report, NOT joined through orderItem.branchLabTest /
+    // branchLabPanel: that join resolved a panel member to the PANEL's single
+    // department and hid it from the member test's own department. A report is
+    // visible when its department is unassigned (NULL → everyone) or one of the
+    // caller's; a user with NO department is UNRESTRICTED — they see every
+    // report regardless of department (an empty `{}` fragment adds no
+    // constraint), mirroring the Accession In-House rule
+    // (`OrderSampleService.departmentScopeForSamples`).
+    const lineOk: Prisma.LabReportWhereInput =
+      scopeIds.length > 0
+        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
+        : {};
     const entryOk: Prisma.BranchLabTestWhereInput =
       scopeIds.length > 0
         ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
+        : {};
     const heldOk: Prisma.LabReportWhereInput = {
       OR: [
         { performingBranchLabTestId: null, ...lineOk },
@@ -1209,31 +1449,6 @@ export class LabReportService {
   }
 
   /**
-   * The department-visibility condition for a report's order item. A report maps
-   * to exactly one order item, which is EITHER a branch lab test OR a branch lab
-   * panel (the other relation is null), so only the matching pair of branches can
-   * apply — giving correct per-item department resolution. Unassigned tests/panels
-   * (NULL department) are visible to all; an empty scope (user with no department)
-   * therefore sees only unassigned items.
-   * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
-   */
-  private departmentScopeForOrderItem(
-    scopeIds: string[],
-  ): Prisma.OrderItemWhereInput {
-    const or: Prisma.OrderItemWhereInput[] = [
-      { branchLabTest: { is: { departmentId: null } } },
-      { branchLabPanel: { is: { departmentId: null } } },
-    ];
-    if (scopeIds.length > 0) {
-      or.push(
-        { branchLabTest: { is: { departmentId: { in: scopeIds } } } },
-        { branchLabPanel: { is: { departmentId: { in: scopeIds } } } },
-      );
-    }
-    return { OR: or };
-  }
-
-  /**
    * The Reporting Worklist page.
    * @param scope the branches (and per-branch visible statuses) this request
    *   covers — resolved by the controller from the caller's branch + Technician-
@@ -1249,7 +1464,18 @@ export class LabReportService {
       tenantId,
       personId,
     );
-    const where = this.buildListWhere(tenantId, scope, filters, scopeIds);
+    const members = await this.resolveMemberEntryMatches(
+      tenantId,
+      scope,
+      filters,
+    );
+    const where = this.buildListWhere(
+      tenantId,
+      scope,
+      filters,
+      scopeIds,
+      members,
+    );
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 25;
 
@@ -1528,15 +1754,27 @@ export class LabReportService {
   }
 
   /**
-   * Resolves this report's department/category/sub-category the same way
-   * `toWorklistRow` resolves department
-   * (`branchLabTest?.departmentId ?? branchLabPanel?.departmentId ?? null`),
-   * generalized to all three classification axes, without needing the
-   * report's full detail payload — used by `getSignatoryCandidatesInternal`.
-   * `BranchLabPanel` has no `subCategoryId` column at all (only `LabTest`/
-   * `BranchLabTest` classify that granularly), so a panel-based report's
-   * `subCategoryId` is always null — a report on a panel item simply has no
-   * sub-category-basis signatories, regardless of configuration.
+   * Resolves this report's department/category/sub-category used to pick the
+   * Approve modal's signatory candidates, without needing the report's full
+   * detail payload — used by `getSignatoryCandidatesInternal`.
+   *
+   * Resolution priority:
+   * 1. `performingEntry` — once the report was sent to another branch, THAT
+   *    branch's Lab Test List entry decides department / category.
+   * 2. `memberBranchLabTestId` — a panel-member report (one `LabReport` per
+   *    member test) classifies by the MEMBER test's own department, NOT the
+   *    panel line's single department. When a panel sits in one department but
+   *    a member test sits in another, the signatories must come from the member
+   *    test's department (the panel is "broken into tests" for reporting). The
+   *    department is read from the denormalized `LabReport.departmentId` — the
+   *    same member-test department the Reporting worklist's visibility scope
+   *    uses — so signatories and visibility always agree; category /
+   *    sub-category have no denormalized column, so they are read live from the
+   *    member's own `BranchLabTest`.
+   * 3. Otherwise the order line's `branchLabTest` (standalone test) or
+   *    `branchLabPanel` (a grandfathered pre-breakdown panel report, whose
+   *    `memberBranchLabTestId` is null). `BranchLabPanel` has no `subCategoryId`
+   *    column, so such a panel report's `subCategoryId` is always null.
    */
   private async resolveReportClassificationIds(
     id: string,
@@ -1552,6 +1790,11 @@ export class LabReportService {
       where: { id, tenantId, branchId, deletedAt: null },
       select: {
         branchId: true,
+        // which panel member test this report is for (null = non-panel or an
+        // old-style grandfathered panel report) and that member's denormalized
+        // department
+        memberBranchLabTestId: true,
+        departmentId: true,
         // the entry the holding branch works the test with (null = the order line's)
         performingEntry: {
           select: {
@@ -1584,6 +1827,29 @@ export class LabReportService {
         departmentId: report.performingEntry.departmentId,
         categoryId: report.performingEntry.categoryId,
         subCategoryId: report.performingEntry.subCategoryId,
+        report: { branchId: report.branchId },
+      };
+    }
+    // Panel-member report: classify by the member test, not the panel line, so
+    // a panel and its member tests belonging to different departments each pick
+    // signatories from their own department.
+    if (report.memberBranchLabTestId) {
+      const member = await this.prisma.branchLabTest.findFirst({
+        where: {
+          id: report.memberBranchLabTestId,
+          tenantId,
+          deletedAt: null,
+        },
+        select: { departmentId: true, categoryId: true, subCategoryId: true },
+      });
+      return {
+        // prefer the denormalized member-test department (branch-entry-first
+        // with source-test fallback, resolved at report creation); fall back to
+        // the member's live department if, for an older report, it was never
+        // stamped.
+        departmentId: report.departmentId ?? member?.departmentId ?? null,
+        categoryId: member?.categoryId ?? null,
+        subCategoryId: member?.subCategoryId ?? null,
         report: { branchId: report.branchId },
       };
     }
@@ -2118,11 +2384,18 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    // The panel members the search / Lab Test filter point at, resolved once for every count below.
+    const members = await this.resolveMemberEntryMatches(
+      tenantId,
+      scope,
+      filters,
+    );
     const baseWhere = this.buildListWhere(
       tenantId,
       scope,
       { ...filters, status: undefined },
       scopeIds,
+      members,
     );
 
     const statuses = Object.values(LabReportStatus);
@@ -2152,6 +2425,7 @@ export class LabReportService {
         outsource: undefined,
       },
       scopeIds,
+      members,
     );
     const [inHouse, outsource] = await Promise.all([
       this.prisma.labReport.count({
@@ -2194,11 +2468,17 @@ export class LabReportService {
       tenantId,
       personId,
     );
+    const members = await this.resolveMemberEntryMatches(
+      tenantId,
+      scope,
+      filters,
+    );
     const where = this.buildListWhere(
       tenantId,
       scope,
       { ...filters, status: LabReportStatus.APPROVED },
       scopeIds,
+      members,
     );
     const existingAnd = where.AND
       ? Array.isArray(where.AND)
@@ -2274,10 +2554,16 @@ export class LabReportService {
    * The same master test is copied into every pricing list as its own
    * `BranchLabTest` row (one row per list), so without dedup the same test
    * would show once per list it's been imported into. Dedup happens in two
-   * passes: first a lightweight id-only fetch (scoped by department, active,
-   * search) to compute the true deduped set + total count and pick out this
-   * page's representative row ids; then a second fetch for just those rows'
-   * display names. Dedup key is `sourceLabTestId ?? id` — a branch-only row
+   * passes: first a lightweight id-only fetch (active, search) to compute the
+   * true deduped set + total count and pick out this page's representative row
+   * ids; then a second fetch for just those rows' display names.
+   *
+   * The dropdown is NOT filtered by the caller's departments - the same as
+   * Accession's. It is a catalogue of the branch's tests; who may see a report is
+   * decided by the worklist itself (the department stamped on the report), so a
+   * test whose department was edited after its reports were made can never
+   * disagree with those reports. Choosing a test the user has no department for
+   * simply lists nothing. Dedup key is `sourceLabTestId ?? id` — a branch-only row
    * with no source (hand-created, never imported from Master Data) has
    * nothing to share, so it's simply its own group of one. The returned `id`
    * is the shared source id (or the row's own id when there's no source), so
@@ -2287,21 +2573,11 @@ export class LabReportService {
   async getLabTestOptions(
     tenantId: string,
     branchId: string | null,
-    personId: string,
     query: { search?: string; page?: number; limit?: number },
   ): Promise<PaginatedResult<LabReportOption>> {
     const activeBranchId = this.requireBranch(branchId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabTest.findMany({
@@ -2310,8 +2586,11 @@ export class LabReportService {
         branchId: activeBranchId,
         isActive: true,
         deletedAt: null,
-        ...deptScope,
-        ...(term ? { testName: { contains: term, mode: 'insensitive' } } : {}),
+        // `%`, `_` and `\` are matched as typed (Prisma hands `contains` to LIKE as it is),
+        // the same as the worklist search.
+        ...(term
+          ? { testName: { contains: escapeLike(term), mode: 'insensitive' } }
+          : {}),
       },
       select: { id: true, testName: true, sourceLabTestId: true },
       orderBy: { testName: 'asc' },
@@ -2346,26 +2625,19 @@ export class LabReportService {
    * filter row (`GET /lab-reports/lab-panel-options`) — mirrors
    * {@link getLabTestOptions} exactly (same list-per-pricing-list dedup
    * reasoning, same `sourceLabPanelId ?? id` dedup/return key), for
-   * `BranchLabPanel` instead of `BranchLabTest`.
+   * `BranchLabPanel` instead of `BranchLabTest`. Like the Lab Test dropdown it is
+   * NOT filtered by the caller's departments (the same as Accession's): the
+   * worklist decides who may see which report, so a panel the user has no
+   * department for simply lists nothing.
    */
   async getLabPanelOptions(
     tenantId: string,
     branchId: string | null,
-    personId: string,
     query: { search?: string; page?: number; limit?: number },
   ): Promise<PaginatedResult<LabReportOption>> {
     const activeBranchId = this.requireBranch(branchId);
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-
-    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
-      tenantId,
-      personId,
-    );
-    const deptScope =
-      scopeIds.length > 0
-        ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
-        : { departmentId: null };
     const term = query.search?.trim();
 
     const rows = await this.prisma.branchLabPanel.findMany({
@@ -2374,8 +2646,9 @@ export class LabReportService {
         branchId: activeBranchId,
         isActive: true,
         deletedAt: null,
-        ...deptScope,
-        ...(term ? { panelName: { contains: term, mode: 'insensitive' } } : {}),
+        ...(term
+          ? { panelName: { contains: escapeLike(term), mode: 'insensitive' } }
+          : {}),
       },
       select: { id: true, panelName: true, sourceLabPanelId: true },
       orderBy: { panelName: 'asc' },
@@ -2440,6 +2713,79 @@ export class LabReportService {
   }
 
   /** Whether `branchId` owns the order this report belongs to (see {@link canPrintWholeOrder}). */
+  /**
+   * B2B Referral Panel isolation for order-level report actions (Print All, share):
+   * a panel session may only act on an order billed to its own panel. A no-op for
+   * every non-B2B session. An unknown order is refused the same way, so a panel
+   * cannot tell "not mine" from "does not exist".
+   * @param tenantId tenant scope
+   * @param orderId the order whose reports are being printed / shared
+   * @throws ReferralPanelAccessDeniedException when the order is another panel's
+   */
+  private async assertOrderInActivePanel(
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    const panelId = getReferralPanelId();
+    if (!panelId) return;
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId, deletedAt: null },
+      select: { id: true, referralPanelId: true },
+    });
+    if (!order || order.referralPanelId !== panelId) {
+      throw new ReferralPanelAccessDeniedException('order', orderId);
+    }
+  }
+
+  /**
+   * B2B Referral Panel isolation for single-report actions (Print Report): the
+   * report must trace (orderItem → order) to the session's own panel. A no-op for
+   * every non-B2B session.
+   * @param tenantId tenant scope
+   * @param reportId the report being printed
+   * @throws ReferralPanelAccessDeniedException when the report is another panel's
+   */
+  private async assertReportInActivePanel(
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    const panelId = getReferralPanelId();
+    if (!panelId) return;
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        orderItem: { select: { order: { select: { referralPanelId: true } } } },
+      },
+    });
+    if (!report) {
+      throw new ReferralPanelAccessDeniedException('lab-report', reportId);
+    }
+    assertLabReportPanelOwnership(report, panelId);
+  }
+
+  /**
+   * A B2B Referral Panel prints only finished reports (Approved / Published).
+   * A no-op for every non-B2B session, so lab staff can still print unfinished
+   * reports as "Result pending".
+   * @param tenantId tenant scope
+   * @param reportId the report being printed
+   * @throws LabReportPrintNotApprovedForPanelException for a B2B session when the report is not Approved / Published
+   */
+  private async assertReportPrintableForPanel(
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    if (!getReferralPanelId()) return;
+    const report = await this.prisma.labReport.findFirst({
+      where: { id: reportId, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!report || !B2B_PRINTABLE_REPORT_STATUSES.includes(report.status)) {
+      throw new LabReportPrintNotApprovedForPanelException(reportId);
+    }
+  }
+
   /**
    * Printing a cancelled order's report is refused (see
    * {@link LabReportPrintOrderCancelledException}).
@@ -2682,11 +3028,51 @@ export class LabReportService {
   }
 
   /**
-   * Which Notes sections print on a report, and whether the technician may
-   * choose. The setting that applies is the Lab Panel switch for a report on a
-   * panel order line, the Lab Test switch for a single test, read from the branch
-   * that HOLDS the report. While it is off nothing is left out (every section
-   * prints), whatever choice was saved earlier.
+   * `GET /lab-reports/:id` for a signed-in user: the report as {@link findByIdForApi} returns it, but only when the
+   * user may see it by department - the same rule the worklist applies (a row is visible when its department is
+   * unassigned or one of the user's departments; the department is the one the row shows - the one stamped on the
+   * report when it was created; a user with NO department is unrestricted, like the worklist and Accession In-House,
+   * so every row they are listed can be opened). A report the user may not see behaves as not found, like one that
+   * does not exist.
+   * Only this read route checks it: {@link findByIdForApi} also answers every save / submit, which must not fail
+   * after the write.
+   *
+   * @param id the report id
+   * @param tenantId the lab's tenant
+   * @param branchId the caller's active branch
+   * @param personId the calling user, whose departments decide
+   * @throws LabReportNotFoundException when the report is missing, belongs to another branch, or is outside the user's departments
+   */
+  async findByIdForViewer(
+    id: string,
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+  ): Promise<LabReportDetailApiResponse> {
+    const detail = await this.findByIdForApi(id, tenantId, branchId);
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    // No department assigned = unrestricted (the worklist adds no department condition for such a user).
+    if (scopeIds.length === 0) return detail;
+    if (
+      detail.departmentId !== null &&
+      !scopeIds.includes(detail.departmentId)
+    ) {
+      throw new LabReportNotFoundException(id);
+    }
+    return detail;
+  }
+
+  /**
+   * Which Notes sections print on a report. The checkboxes are always offered
+   * (`enabled`) for a test or a panel report. The branch setting only sets the
+   * DEFAULT until someone chooses: the Lab Panel switch for a report on a panel
+   * order line, the Lab Test switch for a single test, read from the branch that
+   * HOLDS the report; ON = every section prints, OFF = none prints. Once a choice
+   * is saved (`hasChosenNotePrint`) it is that choice. A free-text line has no
+   * Notes, so it offers nothing.
    * @param shared per-print cache of the settings already read, so a Print All
    *   reads each branch's switches once instead of once per report
    */
@@ -2695,6 +3081,7 @@ export class LabReportService {
     report: {
       branchId: string | null;
       excludedNoteSections: string[];
+      hasChosenNotePrint: boolean;
       orderItem: {
         branchLabPanelId: string | null;
         branchLabTestId: string | null;
@@ -2712,12 +3099,16 @@ export class LabReportService {
       report.branchId,
       shared,
     );
-    const enabled = notesSelectableFor(kind, switches);
+    const selectedByDefault = notesSelectableFor(kind, switches);
     return {
-      enabled,
+      enabled: true,
       isPanelMember: kind === 'PANEL',
       excludedSections: [
-        ...excludedSectionsToApply(enabled, report.excludedNoteSections),
+        ...excludedSectionsToApply(
+          selectedByDefault,
+          report.hasChosenNotePrint,
+          report.excludedNoteSections,
+        ),
       ],
     };
   }
@@ -2800,6 +3191,11 @@ export class LabReportService {
    * rather than rejecting the whole request — lets the frontend send all 5
    * fields unconditionally without needing to know which are currently
    * allowed.
+   *
+   * Only while the report is Pending, Partial Pending or Saved (same rule as a
+   * parameter Note): a report that was submitted or has moved on is refused, since
+   * an edit after approval would silently change every later print.
+   * @throws LabReportParameterNoteNotEditableException when the report is past Saved
    */
   async updateContentSections(
     id: string,
@@ -2809,6 +3205,7 @@ export class LabReportService {
   ): Promise<LabReportContentSections> {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+    this.assertParameterNoteEditable(id, report.status);
 
     const settings = await this.technicianSettingsService.getForBranch(
       tenantId,
@@ -2838,10 +3235,7 @@ export class LabReportService {
     }
 
     if (Object.keys(patch).length > 0) {
-      await this.prisma.labReport.update({
-        where: { id: report.id },
-        data: patch,
-      });
+      await this.updateNotesWhileEditable(tenantId, report, patch);
     }
 
     const updated = await this.prisma.labReport.findFirstOrThrow({
@@ -2867,13 +3261,16 @@ export class LabReportService {
   /**
    * Save which Notes sections to LEAVE OUT of this report's printed version (the
    * checkbox beside each section on the report). The list replaces the stored one;
-   * a section not in it prints. It never changes what the screen shows, only the
-   * printed and shared PDF.
+   * a section not in it prints. From the first save the report has a choice of its
+   * own (`hasChosenNotePrint`), so the branch setting no longer decides its default.
+   * It never changes what the screen shows, only the printed and shared PDF.
    *
    * Same write rules as editing the notes (a locked, sent-out or cancelled report
-   * is refused), but no permission key. While the matching Technician setting (Lab
-   * Test / Lab Panel) is off, nothing is saved and the current state comes back
-   * unchanged, the same "silently ignore" convention as `updateContentSections`.
+   * is refused, and so is one past Saved: only while the report is Pending, Partial
+   * Pending or Saved), but no permission key. It works whether the matching
+   * Technician setting (Lab Test / Lab Panel) is ON or OFF, because that setting
+   * only sets the default. A free-text line has no Notes: nothing is saved and the
+   * current state comes back unchanged.
    * @returns the report's resulting notes-print state
    */
   async updateNotePrintSections(
@@ -2884,6 +3281,7 @@ export class LabReportService {
   ): Promise<LabReportNotesPrint> {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
+    this.assertParameterNoteEditable(id, report.status);
     const orderItem = await this.prisma.orderItem.findFirst({
       where: { id: report.orderItemId, tenantId },
       select: { branchLabPanelId: true, branchLabTestId: true },
@@ -2893,16 +3291,41 @@ export class LabReportService {
     const current = await this.resolveNotesPrint(tenantId, {
       branchId: report.branchId,
       excludedNoteSections: report.excludedNoteSections,
+      hasChosenNotePrint: report.hasChosenNotePrint,
       orderItem: item,
     });
     if (!current.enabled) return current;
 
     const excludedNoteSections = normaliseNoteSections(dto.excludedSections);
-    await this.prisma.labReport.update({
-      where: { id: report.id },
-      data: { excludedNoteSections },
+    await this.updateNotesWhileEditable(tenantId, report, {
+      excludedNoteSections,
+      hasChosenNotePrint: true,
     });
     return { ...current, excludedSections: excludedNoteSections };
+  }
+
+  /**
+   * Writes the Notes columns of one report (the five section texts and/or the Print choice) only while the report
+   * is still Pending, Partial Pending or Saved. The status is read again after the report row is locked, so a
+   * Submit that commits in between is not overwritten.
+   */
+  private async updateNotesWhileEditable(
+    tenantId: string,
+    report: { id: string; status: string },
+    data: Prisma.LabReportUpdateInput,
+  ): Promise<void> {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, report.id);
+      const fresh = await tx.labReport.findFirst({
+        where: { id: report.id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.assertParameterNoteEditable(
+        report.id,
+        fresh?.status ?? report.status,
+      );
+      await tx.labReport.update({ where: { id: report.id }, data });
+    });
   }
 
   /**
@@ -3061,7 +3484,10 @@ export class LabReportService {
     return { resultParamId, content: dto.content };
   }
 
-  /** Refuses a parameter-note write unless the report is still Pending, Partial Pending or Saved. */
+  /**
+   * Refuses a note write unless the report is still Pending, Partial Pending or Saved. Used for a parameter Note,
+   * the five Notes-section texts and the Print choice alike.
+   */
   private assertParameterNoteEditable(id: string, status: string): void {
     if (
       !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)
@@ -3580,12 +4006,52 @@ export class LabReportService {
         (p) => p.mode === 'overwrite-analyzer' && p.stored,
       );
       if (overwritten.length > 0) {
-        const adapterIds = [
+        // A range the technician changed is named in the entry (old and new), so the history says WHICH ranges.
+        const trimmed = (v: string | null | undefined): string =>
+          (v ?? '').trim();
+        const rangeChanged = (
+          value: { referenceRangeId?: string },
+          stored: { referenceRangeId?: string | null },
+        ): boolean =>
+          value.referenceRangeId !== undefined &&
+          trimmed(value.referenceRangeId) !== trimmed(stored.referenceRangeId);
+        const rangeIds = [
           ...new Set(
-            overwritten
+            overwritten.flatMap((p) =>
+              p.stored && rangeChanged(p.value, p.stored)
+                ? [
+                    trimmed(p.stored.referenceRangeId),
+                    trimmed(p.value.referenceRangeId),
+                  ].filter(Boolean)
+                : [],
+            ),
+          ),
+        ];
+        // Deleted ranges are included: the old range of an entry may have been removed since.
+        const rangeRows = rangeIds.length
+          ? await tx.labTestReferenceRange.findMany({
+              where: { id: { in: rangeIds }, tenantId },
+              select: {
+                id: true,
+                method: true,
+                unit: true,
+                displayOfReferenceRange: true,
+                lowerLimit: true,
+                upperLimit: true,
+                labAdapterId: true,
+              },
+            })
+          : [];
+        const rangeById = new Map(rangeRows.map((r) => [r.id, r]));
+        const adapterIds = [
+          ...new Set([
+            ...overwritten
               .map((p) => p.stored?.enteredBy)
               .filter((a): a is string => !!a),
-          ),
+            ...rangeRows
+              .map((r) => r.labAdapterId)
+              .filter((a): a is string => !!a),
+          ]),
         ];
         const adapters = adapterIds.length
           ? await tx.labAdapter.findMany({
@@ -3594,6 +4060,19 @@ export class LabReportService {
             })
           : [];
         const adapterNameById = new Map(adapters.map((a) => [a.id, a.name]));
+        const rangeLabel = (rangeId: string | null | undefined): string => {
+          const rid = trimmed(rangeId);
+          if (!rid) return '(no range)';
+          const range = rangeById.get(rid);
+          return range
+            ? describeRangeForAudit(
+                range,
+                range.labAdapterId
+                  ? adapterNameById.get(range.labAdapterId)
+                  : undefined,
+              )
+            : '(a range that was removed)';
+        };
         for (const { value, stored } of overwritten) {
           if (!stored) continue;
           await this.recordHistory(
@@ -3613,6 +4092,12 @@ export class LabReportService {
               value,
               stored.enteredAt
                 ? formatMomentForAudit(stored.enteredAt, timezone)
+                : undefined,
+              rangeChanged(value, stored)
+                ? {
+                    before: rangeLabel(stored.referenceRangeId),
+                    after: rangeLabel(value.referenceRangeId),
+                  }
                 : undefined,
             ),
           );
@@ -3652,17 +4137,10 @@ export class LabReportService {
   }
 
   /**
-   * Re-derive every dynamic/calculated parameter of a report from its formula
-   * and persist the result with `source = CALCULATED`. Runs inside the caller's
-   * tenant transaction, AFTER the incoming (measured/override) values are saved,
-   * so it evaluates against the report's freshest values.
-   *
-   * Evaluation is in dependency order (a calculated parameter may reference
-   * another calculated parameter). A parameter listed in `overriddenParamIds` is
-   * left untouched (its manual override "sticks") but still feeds downstream
-   * formulas. A formula that cannot be computed yet (a blank/non-numeric input,
-   * or division by zero) blanks the slot rather than failing the save, so
-   * partial result entry stays allowed.
+   * Re-derive every dynamic/calculated parameter of a report from its formula and persist the result with
+   * `source = CALCULATED`. Runs inside the caller's tenant transaction, AFTER the incoming (measured/override) values
+   * are saved. The logic lives in `recomputeCalculatedValues` (utils/recompute-calculated-values.ts) so a machine's
+   * result (`EmiService.submitResult`) recalculates in exactly the same way; this keeps the method the save calls.
    *
    * @param tx the active tenant-scoped Prisma transaction client.
    * @param labReportId the report whose values are being (re)computed.
@@ -3681,89 +4159,15 @@ export class LabReportService {
     actorId: string,
     now: Date,
   ): Promise<void> {
-    const params = await tx.labTestResultParam.findMany({
-      where: { labTestId, deletedAt: null },
-      select: {
-        id: true,
-        parameterCode: true,
-        parameterType: true,
-        resultType: true,
-        calculationFormula: true,
-        decimalPlaces: true,
-      },
-    });
-
-    const formulaParams: FormulaParam[] = params.map((p) => ({
-      code: p.parameterCode,
-      isCalculated:
-        p.parameterType === 'CALCULATED' || !!p.calculationFormula?.trim(),
-      formula: p.calculationFormula,
-    }));
-    const ordered = buildEvaluationOrder(formulaParams);
-    // A cycle should have been rejected at config time; skip defensively.
-    if (!ordered.ok || ordered.order.length === 0) return;
-
-    const paramByCode = new Map(params.map((p) => [p.parameterCode, p]));
-
-    // Seed the value map from the report's current stored values (measured +
-    // any already-computed values), keyed by parameter code.
-    const existing = await tx.labReportResultValue.findMany({
-      where: { labReportId, tenantId, deletedAt: null },
-      select: { resultParamId: true, observed1: true },
-    });
-    const existingByParamId = new Map(
-      existing.map((v) => [v.resultParamId, v]),
+    await recomputeCalculatedValues(
+      tx,
+      labReportId,
+      tenantId,
+      labTestId,
+      overriddenParamIds,
+      actorId,
+      now,
     );
-    const paramCodeById = new Map(params.map((p) => [p.id, p.parameterCode]));
-    const values: Record<string, number | null> = {};
-    for (const p of params) values[p.parameterCode] = null;
-    for (const v of existing) {
-      const code = paramCodeById.get(v.resultParamId);
-      if (!code) continue;
-      const raw = v.observed1?.trim();
-      const num = raw ? Number(raw) : NaN;
-      values[code] = Number.isFinite(num) ? num : null;
-    }
-
-    for (const code of ordered.order) {
-      const param = paramByCode.get(code);
-      if (!param || !param.calculationFormula) continue;
-      // Respect a manual override: keep the stored value and let it feed
-      // downstream formulas (its numeric value is already in `values`).
-      if (overriddenParamIds.has(param.id)) continue;
-
-      const result = evaluateFormula(param.calculationFormula, values);
-      const computed = result.ok
-        ? formatCalculatedValue(result.value, param.decimalPlaces)
-        : null;
-      values[code] = result.ok ? result.value : null;
-
-      // Skip creating an empty row that never existed — only blank an existing
-      // slot (e.g. a source value was cleared) so partial entry stays clean.
-      if (computed === null && !existingByParamId.has(param.id)) continue;
-
-      await tx.labReportResultValue.upsert({
-        where: {
-          labReportId_resultParamId: { labReportId, resultParamId: param.id },
-        },
-        create: {
-          tenantId,
-          labReportId,
-          resultParamId: param.id,
-          observed1: computed ?? undefined,
-          source: ResultValueSource.CALCULATED,
-          enteredAt: now,
-          enteredBy: actorId,
-        },
-        update: {
-          observed1: computed,
-          source: ResultValueSource.CALCULATED,
-          enteredAt: now,
-          enteredBy: actorId,
-          deletedAt: null,
-        },
-      });
-    }
   }
 
   /**
@@ -4425,6 +4829,32 @@ export class LabReportService {
       order.orderCode,
       sample?.barcode,
     );
+    // `{public_order_qr_code}` — QR to the patient's public order page
+    // (`/public/{tenant}/{branch}/{order}`), so scanning a printed report opens
+    // it. Blank when the frontend base URL (`FRONTEND_URL`) or branch is unknown.
+    const frontendUrl = this.config.get<string>('exchange.frontendUrl');
+    const publicOrderQr = await publicOrderQrCode(
+      frontendUrl,
+      tenantId,
+      order.branchId,
+      order.id,
+    );
+    // `{qr_download_bill}` / `{qr_download_all_report}` — QRs to the public
+    // download endpoints (`?download=1` → save-to-device), gated + templated by
+    // the branch's QR Code Scan Settings server-side. Order-scoped, so every
+    // test on the order prints the same two QRs.
+    const billDownloadQr = await publicBillDownloadQrCode(
+      frontendUrl,
+      tenantId,
+      order.branchId,
+      order.id,
+    );
+    const reportDownloadQr = await publicReportDownloadQrCode(
+      frontendUrl,
+      tenantId,
+      order.branchId,
+      order.id,
+    );
     // "Today" on the branch's calendar — `{patient_age}` is the age as of the
     // print date, and a raw UTC `now` is still yesterday before 05:30 IST.
     const localNow = toBranchLocalInstant(new Date(), timezone);
@@ -4690,8 +5120,9 @@ export class LabReportService {
     const results = hideResults
       ? [pendingResultRow(printedTestName)]
       : realResults;
-    // Which Notes sections the technician left out of this report's print (only
-    // while the matching Lab Test / Lab Panel switch is on; otherwise none).
+    // Which Notes sections are left out of this report's print: the technician's
+    // saved choice, or, until one exists, the default from the matching Lab Test /
+    // Lab Panel setting (ON = none left out, OFF = all left out).
     const notesPrint = await this.resolveNotesPrint(
       tenantId,
       report,
@@ -4730,9 +5161,11 @@ export class LabReportService {
           .filter(Boolean)
           .join(' '),
         patient_salutation: patient.salutation ?? '',
-        // Single unit from DOB as of today: 0-29 days → Days, under 1 year →
-        // Months, else Years; stored age/ageType fallback when DOB is absent.
-        patient_age: patientReportAgeDisplay(
+        // Single leading-unit age from DOB via the shared `patientPrintAgeDisplay`
+        // rule: Years at ≥12 months, Months at 1–11 months, Days under a month;
+        // stored age/ageType fallback when DOB is absent. Same rule as the
+        // bill/TRF/sample-label tag.
+        patient_age: patientPrintAgeDisplay(
           patient.dateOfBirth ?? null,
           patient.age,
           patient.ageType,
@@ -4813,6 +5246,12 @@ export class LabReportService {
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
         sample_id_barcode: barcodeTags.sample_id_barcode,
+        // Public patient-order page QR (URL-valued, not an ID) — see above.
+        public_order_qr_code: publicOrderQr,
+        // Public document-download QRs (URL-valued) — scanning saves the bill /
+        // all-reports PDF to the patient's device. See above.
+        qr_download_bill: billDownloadQr,
+        qr_download_all_report: reportDownloadQr,
         sample_note: sampleNote?.body ?? '',
         // `{test_file_attachment}` — the PDF(s) uploaded via this test's
         // "File +" button, as `<embed>` markup (printed unescaped, see
@@ -4841,6 +5280,9 @@ export class LabReportService {
         order_id_barcode: barcodeTags.order_id_barcode,
         order_id_qr_code: barcodeTags.order_id_qr_code,
         sample_id_barcode: barcodeTags.sample_id_barcode,
+        public_order_qr_code: publicOrderQr,
+        qr_download_bill: billDownloadQr,
+        qr_download_all_report: reportDownloadQr,
       },
       sections: { results },
       signatories,
@@ -4870,6 +5312,10 @@ export class LabReportService {
     maskUnfinished = false,
     notesSwitches?: NotesSwitchCache,
   ): Promise<Buffer> {
+    // B2B Referral Panel isolation: a panel prints only its own reports.
+    await this.assertReportInActivePanel(tenantId, id);
+    // ...and only finished (Approved / Published) reports.
+    await this.assertReportPrintableForPanel(tenantId, id);
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByReportId(tenantId, id);
     await this.assertReportOrderNotCancelledForPrint(tenantId, id);
@@ -5068,6 +5514,7 @@ export class LabReportService {
     branchId: string | null,
     orderItemIds?: string[],
     scope?: WorklistBranchScope,
+    publishedOnly = false,
   ): Promise<{
     latteContext: Record<string, unknown>;
     flatContext: GeneratePdfDto;
@@ -5088,6 +5535,8 @@ export class LabReportService {
       ...(orderItemIds && orderItemIds.length > 0
         ? { orderItemId: { in: orderItemIds } }
         : {}),
+      // Public patient access prints PUBLISHED reports only (see printAllForOrder).
+      ...(publishedOnly ? { status: LabReportStatus.PUBLISHED } : {}),
     };
     if (!allBranches) {
       // Own branch only when no scope is given (the share flows).
@@ -5096,6 +5545,8 @@ export class LabReportService {
         scope ?? { rules: [{ branchId: activeBranchId, statuses: 'ALL' }] },
       );
     }
+    // B2B Referral Panel: only finished reports go into the document.
+    applyB2bPrintableReportScope(reportWhere, getReferralPanelId());
     const reportRows = await this.prisma.labReport.findMany({
       where: reportWhere,
       select: {
@@ -5108,7 +5559,9 @@ export class LabReportService {
       orderBy: { createdAt: 'asc' },
     });
     if (reportRows.length === 0) {
-      throw new OrderReportsNotFoundException(orderId);
+      throw getReferralPanelId()
+        ? new LabReportPrintNotApprovedForPanelException(orderId)
+        : new OrderReportsNotFoundException(orderId);
     }
 
     const { timezone, dateFormat, timeFormat } =
@@ -5143,8 +5596,8 @@ export class LabReportService {
           patient.lastName,
         ]),
       },
-      // Same single-unit report age as `{patient_age}` (see buildPrintContext).
-      client_age: patientReportAgeDisplay(
+      // Same shared single-unit age as `{patient_age}` (see buildPrintContext).
+      client_age: patientPrintAgeDisplay(
         patient.dateOfBirth ?? null,
         patient.age,
         patient.ageType,
@@ -5182,6 +5635,30 @@ export class LabReportService {
       // Order ID barcode IMAGE src (Code 128 data URI of the Order ID
       // `Order.orderCode`; templates use it as `<img src=…>`).
       order_id_barcode: code128DataUri(order.orderCode),
+      // Public patient-order page QR (data URI). Latte has no `{{image:…}}`
+      // token, so all-report templates print it as `<img
+      // src="{public_order_qr_code}">`.
+      public_order_qr_code: await publicOrderQrCode(
+        this.config.get<string>('exchange.frontendUrl'),
+        tenantId,
+        order.branchId,
+        order.id,
+      ),
+      // Public document-download QRs (data URIs) — `<img
+      // src="{$header_fields->qr_download_bill}">` / `qr_download_all_report`.
+      // Scanning saves the bill / all-reports PDF to the patient's device.
+      qr_download_bill: await publicBillDownloadQrCode(
+        this.config.get<string>('exchange.frontendUrl'),
+        tenantId,
+        order.branchId,
+        order.id,
+      ),
+      qr_download_all_report: await publicReportDownloadQrCode(
+        this.config.get<string>('exchange.frontendUrl'),
+        tenantId,
+        order.branchId,
+        order.id,
+      ),
     };
 
     // Per-report body + dates, reusing the single-report context builder.
@@ -5314,6 +5791,13 @@ export class LabReportService {
         // "Order — order code" snippet) resolves in a Latte all-report template
         // too; the flat fallback already carries it via `flatContext.variables`.
         order_code: headerFields.order_code,
+        // Root alias so `<img src="{public_order_qr_code}">` resolves in a Latte
+        // all-report header the same way `order_id_barcode` does.
+        public_order_qr_code: headerFields.public_order_qr_code,
+        // Root aliases so the bare `<img src="{qr_download_bill}">` /
+        // `{qr_download_all_report}` tags resolve in a Latte all-report body too.
+        qr_download_bill: headerFields.qr_download_bill,
+        qr_download_all_report: headerFields.qr_download_all_report,
       },
       flatContext,
     };
@@ -5537,8 +6021,11 @@ export class LabReportService {
     templateId?: string,
     orderItemIds?: string[],
     scope?: WorklistBranchScope,
+    publishedOnly = false,
   ): Promise<Buffer> {
     const activeBranchId = this.requireBranch(branchId);
+    // B2B Referral Panel isolation: a panel prints only its own orders' reports.
+    await this.assertOrderInActivePanel(tenantId, orderId);
     // Referral Panel Settings — Restrict Report Access (Credit Limit/Days).
     await this.referralCredit.assertReportAccessAllowedByOrderId(
       tenantId,
@@ -5563,6 +6050,7 @@ export class LabReportService {
           branchId,
           orderItemIds,
           scope,
+          publishedOnly,
         );
         // `generateLattePdf` picks the engine by the template body's syntax: a
         // Latte all-report template (`{foreach $report_tests->tests}`) uses
@@ -5592,6 +6080,9 @@ export class LabReportService {
       ...(orderItemIds && orderItemIds.length > 0
         ? { orderItemId: { in: orderItemIds } }
         : {}),
+      // Public patient access prints PUBLISHED reports only — an APPROVED but
+      // not-yet-released report must never surface on the public page.
+      ...(publishedOnly ? { status: LabReportStatus.PUBLISHED } : {}),
     };
     if (!allBranches) {
       this.applyBranchScope(
@@ -5599,13 +6090,17 @@ export class LabReportService {
         scope ?? { rules: [{ branchId: activeBranchId, statuses: 'ALL' }] },
       );
     }
+    // B2B Referral Panel: only finished reports are printed; others are left out.
+    applyB2bPrintableReportScope(reportWhere, getReferralPanelId());
     const reportRows = await this.prisma.labReport.findMany({
       where: reportWhere,
       select: { id: true, branchId: true },
       orderBy: { createdAt: 'asc' },
     });
     if (reportRows.length === 0) {
-      throw new OrderReportsNotFoundException(orderId);
+      throw getReferralPanelId()
+        ? new LabReportPrintNotApprovedForPanelException(orderId)
+        : new OrderReportsNotFoundException(orderId);
     }
 
     // A report this caller cannot read is skipped, not allowed to fail the whole
@@ -5811,6 +6306,8 @@ export class LabReportService {
 
   /** Order + patient contact for a share, or throws if the order isn't found. */
   private async loadOrderForShare(orderId: string, tenantId: string) {
+    // B2B Referral Panel isolation: a panel shares only its own orders' reports.
+    await this.assertOrderInActivePanel(tenantId, orderId);
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, tenantId, deletedAt: null },
       select: {
@@ -6480,6 +6977,10 @@ export class LabReportService {
           };
         })();
 
+    // An approved report must print the same forever, even if the branch's
+    // Notes-print setting is changed later: settle the default selection now.
+    const notePrintChoice = await this.freezeNotePrintChoice(tenantId, report);
+
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
       const updated = await tx.labReport.update({
@@ -6491,6 +6992,7 @@ export class LabReportService {
           reportingDeferredUntil: null,
           ...tatData,
           ...signatoryColumns,
+          ...notePrintChoice,
         },
       });
       if (dto.notes) {
@@ -6516,6 +7018,42 @@ export class LabReportService {
       );
       return updated;
     });
+  }
+
+  /**
+   * What to store on a report at approval so its Notes print can never change afterwards. While nobody chose
+   * (`hasChosenNotePrint` false) the branch setting decided the default live; the approval writes that default
+   * down as the report's own choice. Nothing to write when a choice exists already, or for a free-text line
+   * (no Notes).
+   */
+  private async freezeNotePrintChoice(
+    tenantId: string,
+    report: {
+      orderItemId: string;
+      branchId: string | null;
+      excludedNoteSections: string[];
+      hasChosenNotePrint: boolean;
+    },
+  ): Promise<{
+    excludedNoteSections: NoteSectionKey[];
+    hasChosenNotePrint: true;
+  } | null> {
+    if (report.hasChosenNotePrint) return null;
+    const orderItem = await this.prisma.orderItem.findFirst({
+      where: { id: report.orderItemId, tenantId },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+    });
+    const resolved = await this.resolveNotesPrint(tenantId, {
+      branchId: report.branchId,
+      excludedNoteSections: report.excludedNoteSections,
+      hasChosenNotePrint: false,
+      orderItem: orderItem ?? { branchLabPanelId: null, branchLabTestId: null },
+    });
+    if (!resolved.enabled) return null;
+    return {
+      excludedNoteSections: normaliseNoteSections(resolved.excludedSections),
+      hasChosenNotePrint: true,
+    };
   }
 
   async publish(
@@ -6703,6 +7241,12 @@ export class LabReportService {
    * `assertTransition` gate applies here. Creating the `ReRunRequest` worklist
    * row is the caller's (worklist service's) responsibility; this method only
    * performs the report-side reset.
+   *
+   * A re-run starts the notes over too, like a fresh report: the technician's
+   * parameter Notes are soft-deleted and the five Notes-section texts are cleared,
+   * so the configured (Master Data) notes show again; the Print choice goes back
+   * to the branch's default (every section ticked or none, per the setting). The
+   * text that was cleared is NOT kept.
    */
   async resetForRerun(
     id: string,
@@ -6721,13 +7265,28 @@ export class LabReportService {
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      const now = new Date();
       await tx.labReportResultValue.updateMany({
         where: { labReportId: id, deletedAt: null },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: now },
+      });
+      // The technician's own parameter Notes: the configured Note shows again.
+      await tx.labReportParameterNote.updateMany({
+        where: { labReportId: id, deletedAt: null },
+        data: { deletedAt: now },
       });
       const updated = await tx.labReport.update({
         where: { id },
         data: {
+          // The five Notes sections fall back to the configured ones, and the
+          // Print choice starts over: the branch's setting decides the default.
+          usefulFor: null,
+          interpretationOfResults: null,
+          limitations: null,
+          remarks: null,
+          references: null,
+          excludedNoteSections: [],
+          hasChosenNotePrint: false,
           status: LabReportStatus.PENDING,
           savedAt: null,
           savedBy: null,
