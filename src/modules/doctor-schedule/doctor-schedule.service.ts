@@ -7,6 +7,8 @@ import {
   SlotStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import { BranchService } from '../branch/branch.service';
 import { DoctorsService } from '../doctors/doctors.service';
 import { CreateDoctorScheduleDto } from './dto/create-doctor-schedule.dto';
@@ -71,7 +73,16 @@ export class DoctorScheduleService {
     private readonly prisma: PrismaService,
     private readonly doctorsService: DoctorsService,
     private readonly branchService: BranchService,
+    private readonly tenantTz: TenantTimeZoneService,
   ) {}
+
+  /** Business-local "today" (midnight) for the tenant — the anchor for slot
+   * generation + the future-slot boundary, so horizons and recurrence weekdays
+   * are evaluated in the business calendar, not UTC. */
+  private async localToday(tenantId: string): Promise<Date> {
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    return startOfUtcDay(toBranchLocalInstant(new Date(), zone));
+  }
 
   /**
    * Create a doctor schedule and generate its future slots (when ACTIVE), all in
@@ -351,7 +362,7 @@ export class DoctorScheduleService {
    */
   async remove(id: string, tenantId: string): Promise<DoctorScheduleDetail> {
     const schedule = await this.findById(id, tenantId);
-    const today = startOfUtcDay(new Date());
+    const today = await this.localToday(tenantId);
 
     const futureBooked = await this.prisma.doctorSlot.count({
       where: {
@@ -569,7 +580,7 @@ export class DoctorScheduleService {
     await this.softDeleteFutureUnbookedSlots(tx, tenantId, scheduleId);
 
     // Retained (booked) future slots: skip these date/time keys when generating.
-    const today = startOfUtcDay(new Date());
+    const today = await this.localToday(tenantId);
     const retained = await tx.doctorSlot.findMany({
       where: {
         scheduleId,
@@ -666,7 +677,7 @@ export class DoctorScheduleService {
     tenantId: string,
     scheduleId: string,
   ): Promise<void> {
-    const today = startOfUtcDay(new Date());
+    const today = await this.localToday(tenantId);
     await tx.doctorSlot.updateMany({
       where: {
         scheduleId,

@@ -7,6 +7,7 @@ import {
   AppointmentType,
   BillStatus,
   BranchStatus,
+  CollectionStatus,
   DiscountMode,
   DoctorType,
   ExternalIdFormat,
@@ -64,6 +65,7 @@ import {
   salutationLabel,
   patientPrintAgeDisplay,
   toBranchLocalInstant,
+  fromBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
   formatOrderDateTime,
@@ -74,7 +76,7 @@ import {
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { ListOrdersDto } from './dto/list-orders.dto';
+import { ListOrdersDto, type OrderSortKey } from './dto/list-orders.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
@@ -3778,15 +3780,25 @@ export class OrderService {
     // Appointment-date range (filters `appointmentAt`, which carries a time, so
     // the upper bound is stretched to the end of that day to stay inclusive).
     if (query.appointmentDateFrom || query.appointmentDateTo) {
-      where.appointmentAt = {};
+      // `appointmentAt` is a true UTC instant; the filter bounds are business-local
+      // calendar days, so convert each day boundary (local 00:00 … 23:59:59.999)
+      // to its UTC equivalent via the tenant zone — otherwise a "today" filter is
+      // offset by the tenant's UTC offset.
+      const { timezone } = await this.tenantService.getLocale(tenantId);
+      const appointmentAt: Prisma.DateTimeFilter = {};
       if (query.appointmentDateFrom) {
-        where.appointmentAt.gte = new Date(query.appointmentDateFrom);
+        appointmentAt.gte = fromBranchLocalInstant(
+          new Date(`${query.appointmentDateFrom.slice(0, 10)}T00:00:00.000Z`),
+          timezone,
+        );
       }
       if (query.appointmentDateTo) {
-        const end = new Date(query.appointmentDateTo);
-        end.setUTCHours(23, 59, 59, 999);
-        where.appointmentAt.lte = end;
+        appointmentAt.lte = fromBranchLocalInstant(
+          new Date(`${query.appointmentDateTo.slice(0, 10)}T23:59:59.999Z`),
+          timezone,
+        );
       }
+      where.appointmentAt = appointmentAt;
     }
 
     // Section scope + diagnostics-only flags collapse into one relation filter
@@ -4074,6 +4086,45 @@ export class OrderService {
           }
           break;
       }
+    } else if (query.quotationStatuses?.length) {
+      // Multi-value checkbox filter (Quotations screen): an order matches when
+      // its effective quotation status is ANY of the selected values. Each value
+      // reuses the same runtime derivation as the single-value filter above
+      // (EXPIRED folds in DRAFTs past the validity cutoff; DRAFT excludes them).
+      const statusOrs: Prisma.OrderWhereInput[] = [];
+      for (const st of query.quotationStatuses) {
+        switch (st) {
+          case QuotationStatus.CONVERTED:
+            statusOrs.push({ quotationStatus: QuotationStatus.CONVERTED });
+            break;
+          case QuotationStatus.EXPIRED:
+            statusOrs.push({
+              OR: [
+                { quotationStatus: QuotationStatus.EXPIRED },
+                ...(quotationExpiryCutoff
+                  ? [
+                      {
+                        quotationStatus: QuotationStatus.DRAFT,
+                        orderDate: { lt: quotationExpiryCutoff },
+                      },
+                    ]
+                  : []),
+              ],
+            });
+            break;
+          case QuotationStatus.DRAFT:
+            statusOrs.push(
+              quotationExpiryCutoff
+                ? {
+                    quotationStatus: QuotationStatus.DRAFT,
+                    orderDate: { gte: quotationExpiryCutoff },
+                  }
+                : { quotationStatus: QuotationStatus.DRAFT },
+            );
+            break;
+        }
+      }
+      if (statusOrs.length) and.push({ OR: statusOrs });
     }
 
     if (and.length) where.AND = and;
@@ -4084,6 +4135,77 @@ export class OrderService {
       quotationValidityUnit,
       quotationExpiryCutoff,
     };
+  }
+
+  /**
+   * Build the Prisma `orderBy` for the order list from the whitelisted
+   * `sortBy`/`sortOrder` (see {@link ORDER_SORT_KEYS}). Maps each key to a stored
+   * column, a to-one relation, or a denormalized billing-rollup column. Relation
+   * and name sorts add a stable `createdAt` tie-break. Defaults to newest-first
+   * (`createdAt desc`) when no sort is requested, preserving the previous
+   * behaviour. All sorting happens in the database — never client-side.
+   * @param sortBy whitelisted sort column (undefined → default)
+   * @param sortOrder `asc` | `desc` (undefined → `desc`)
+   */
+  private buildOrderListOrderBy(
+    sortBy: OrderSortKey | undefined,
+    sortOrder: 'asc' | 'desc' | undefined,
+  ):
+    | Prisma.OrderOrderByWithRelationInput
+    | Prisma.OrderOrderByWithRelationInput[] {
+    const dir: Prisma.SortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+    switch (sortBy) {
+      case 'orderDate':
+        return [{ orderDate: dir }, { createdAt: dir }];
+      case 'createdAt':
+        return { createdAt: dir };
+      case 'checkedInAt':
+        return [{ checkedInAt: dir }, { createdAt: dir }];
+      case 'appointmentAt':
+        return [{ appointmentAt: dir }, { createdAt: dir }];
+      case 'orderCode':
+        return { orderCode: dir };
+      case 'billId':
+        return [{ billId: dir }, { createdAt: dir }];
+      case 'externalOrderId':
+        return [{ externalOrderId: dir }, { createdAt: dir }];
+      case 'status':
+        return [{ status: dir }, { createdAt: 'desc' }];
+      case 'paymentStatus':
+        return [{ paymentStatus: dir }, { createdAt: 'desc' }];
+      case 'billStatus':
+        return [{ billStatus: dir }, { createdAt: 'desc' }];
+      case 'refundStatus':
+        return [{ refundStatus: dir }, { createdAt: 'desc' }];
+      case 'patientName':
+        return [
+          { patient: { firstName: dir } },
+          { patient: { lastName: dir } },
+          { createdAt: 'desc' },
+        ];
+      case 'referralPanel':
+        return [{ referralPanel: { name: dir } }, { createdAt: 'desc' }];
+      case 'referredBy':
+        return [
+          { referredByDoctor: { firstName: dir } },
+          { referredByDoctor: { lastName: dir } },
+          { createdAt: 'desc' },
+        ];
+      case 'grossAmount':
+        return [{ grossAmount: dir }, { createdAt: 'desc' }];
+      case 'discountAmount':
+        return [{ discountAmount: dir }, { createdAt: 'desc' }];
+      case 'netAmount':
+        return [{ netAmount: dir }, { createdAt: 'desc' }];
+      case 'paidAmount':
+        return [{ paidAmount: dir }, { createdAt: 'desc' }];
+      case 'balanceAmount':
+        return [{ balanceAmount: dir }, { createdAt: 'desc' }];
+      case 'refundedAmount':
+        return [{ refundedAmount: dir }, { createdAt: 'desc' }];
+      default:
+        return { createdAt: 'desc' };
+    }
   }
 
   /**
@@ -4135,7 +4257,7 @@ export class OrderService {
         include: ORDER_LIST_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: this.buildOrderListOrderBy(query.sortBy, query.sortOrder),
       }),
       this.prisma.order.count({ where }),
     ]);
@@ -7010,6 +7132,16 @@ export class OrderService {
             newReservation.phlebotomistId,
             newReservation.at,
           );
+          // Keep the existing collection's denormalized time/phlebotomist in step
+          // with the rescheduled order, so a later collection-side action releases
+          // the correct slot (no-op when no live collection exists).
+          await this.homeVisitCollections.syncScheduleForOrderInTx(
+            tx,
+            tenantId,
+            id,
+            newReservation.at,
+            newReservation.phlebotomistId,
+          );
         }
       }
 
@@ -7349,11 +7481,20 @@ export class OrderService {
         },
       },
     });
-    // The slot held by this booking (null if its appointment already released it).
-    // Computed from the pre-cancel state; released below whether or not an
-    // appointment is linked (a walk-in ORDER holds a slot with no appointment).
+    // The home-visit collection linked to this order (if any). A collection whose
+    // slot was already freed when IT was cancelled first must not trigger a second
+    // release here — the shared slot/day counter would be double-decremented.
+    const bookingCollection = await this.prisma.homeVisitCollection.findFirst({
+      where: { orderId: id, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    // The slot held by this booking (null if its appointment or its collection
+    // already released it). Computed from the pre-cancel state; released below
+    // whether or not an appointment is linked (a walk-in ORDER holds a slot with
+    // no appointment).
     const reservation =
-      booking?.appointment?.status === AppointmentStatus.CANCELLED
+      booking?.appointment?.status === AppointmentStatus.CANCELLED ||
+      bookingCollection?.status === CollectionStatus.CANCELLED
         ? null
         : this.homeVisitReservation(
             booking?.status,
@@ -7493,6 +7634,17 @@ export class OrderService {
           },
         });
       }
+      // Cancel the linked home-visit collection too (+ history) so a cancelled
+      // order's visit no longer shows as pending on the Collection Schedule, and a
+      // later collection-side cancel becomes a guarded no-op (no double release).
+      // This does NOT release the slot — that happens exactly once below.
+      await this.homeVisitCollections.cancelForOrderInTx(
+        tx,
+        tenantId,
+        actorId,
+        id,
+        'Order cancelled',
+      );
       // Release the phlebotomist slot the (now-cancelled) order held.
       if (reservation) {
         await this.slotReservation.releaseInTx(
