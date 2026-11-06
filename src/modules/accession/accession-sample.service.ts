@@ -21,6 +21,7 @@ import { ReferralPanelAccessDeniedException } from '../../common/exceptions/refe
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { barcodeGroupKey } from './utils/barcode-group-key';
+import { NO_DEPARTMENT_FILTER } from './constants/department-filter.constant';
 import { timestampRange } from '../../common/utils/date-range.util';
 import {
   buildCollectionProgressWhere,
@@ -275,6 +276,20 @@ function transferKindOutFor(status: SampleStatus): TransferKind | null {
  * has a single-item and a bulk (`ids[]`) variant looping inside one transaction
  * (PDF §A.11). Reads always filter `{ tenantId, deletedAt: null }`.
  */
+/**
+ * What `buildSampleWhere` needs to know from the database before it can build the
+ * Department / Lab Test / Lab Panel filters. Resolved once per request by
+ * `resolveSampleFilterContext`; empty (and free) when none of those filters is set.
+ */
+interface SampleFilterContext {
+  /** The tenant's grouping mode - only read when a Department filter is set. */
+  groupingMode?: AccessionGroupingMode;
+  /** The Lab Test filter's master (source) test id. */
+  labTestSourceId?: string;
+  /** Every price-list copy of the Lab Panel filter's panel (its own id included). */
+  labPanelIds?: string[];
+}
+
 @Injectable()
 export class OrderSampleService {
   private readonly logger = new Logger(OrderSampleService.name);
@@ -1264,6 +1279,11 @@ export class OrderSampleService {
       personId,
     );
 
+    const filterCtx = await this.resolveSampleFilterContext(
+      tenantId,
+      branchId,
+      query,
+    );
     const where = this.buildSampleWhere(
       tenantId,
       branchId,
@@ -1271,6 +1291,7 @@ export class OrderSampleService {
       tat,
       nowMs,
       scopeIds,
+      filterCtx,
     );
 
     // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
@@ -1334,6 +1355,11 @@ export class OrderSampleService {
       tenantId,
       personId,
     );
+    const filterCtx = await this.resolveSampleFilterContext(
+      tenantId,
+      branchId,
+      query,
+    );
     const where = this.buildSampleWhere(
       tenantId,
       branchId,
@@ -1341,6 +1367,7 @@ export class OrderSampleService {
       tat,
       nowMs,
       scopeIds,
+      filterCtx,
     );
 
     const { orderIds, total, rows, mode, collectionByOrderId } =
@@ -1714,6 +1741,11 @@ export class OrderSampleService {
     );
     const tat = await this.tatThresholds(tenantId, branchId);
     const nowMs = Date.now();
+    const filterCtx = await this.resolveSampleFilterContext(
+      tenantId,
+      branchId,
+      query,
+    );
     const where = this.buildSampleWhere(
       tenantId,
       branchId,
@@ -1727,6 +1759,7 @@ export class OrderSampleService {
       tat,
       nowMs,
       scopeIds,
+      filterCtx,
     );
 
     const grouped = await this.prisma.orderSample.groupBy({
@@ -4800,6 +4833,69 @@ export class OrderSampleService {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   /**
+   * Look up what the Department / Lab Test / Lab Panel filters depend on:
+   *  - the grouping mode (ORDER keeps a qualifying order whole; the other modes match the sample),
+   *  - the Lab Test dropdown row's master test id (the dropdown sends a branch test id),
+   *  - every price-list copy of the Lab Panel dropdown row's panel.
+   * No filter set = no query. An id that is not found is read as the master id itself.
+   */
+  private async resolveSampleFilterContext(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<SampleFilterContext> {
+    if (
+      !query.departmentId &&
+      !query.branchLabTestId &&
+      !query.branchLabPanelId
+    ) {
+      return {};
+    }
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const ctx: SampleFilterContext = {};
+      if (query.departmentId) {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { groupingMode: true },
+        });
+        ctx.groupingMode =
+          tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+      }
+      if (query.branchLabTestId) {
+        const row = await tx.branchLabTest.findFirst({
+          where: { id: query.branchLabTestId, tenantId },
+          select: { sourceLabTestId: true },
+        });
+        ctx.labTestSourceId = row?.sourceLabTestId ?? query.branchLabTestId;
+      }
+      if (query.branchLabPanelId) {
+        const row = await tx.branchLabPanel.findFirst({
+          where: { id: query.branchLabPanelId, tenantId },
+          select: { sourceLabPanelId: true },
+        });
+        const sourceLabPanelId = row
+          ? row.sourceLabPanelId
+          : query.branchLabPanelId;
+        const copies = sourceLabPanelId
+          ? await tx.branchLabPanel.findMany({
+              where: {
+                tenantId,
+                ...(branchId ? { branchId } : {}),
+                sourceLabPanelId,
+                deletedAt: null,
+              },
+              select: { id: true },
+            })
+          : [];
+        ctx.labPanelIds = [
+          ...new Set([query.branchLabPanelId, ...copies.map((c) => c.id)]),
+        ];
+      }
+      return ctx;
+    });
+  }
+
+  /**
    * Build the tenant/branch-scoped `where` for the sample list from the §A.3
    * filter panel. Order-level filters (date range, department, lab test/panel,
    * order mode, home-collection) are applied through the `order` relation; the
@@ -4813,6 +4909,7 @@ export class OrderSampleService {
     tat: TatThresholds,
     nowMs: number,
     scopeIds: string[],
+    filterCtx: SampleFilterContext = {},
   ): Prisma.OrderSampleWhereInput {
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
@@ -4846,21 +4943,101 @@ export class OrderSampleService {
         ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
       };
     }
-    if (query.departmentId || query.branchLabTestId || query.branchLabPanelId) {
-      order.items = {
-        some: {
-          deletedAt: null,
-          ...(query.branchLabTestId
-            ? { branchLabTestId: query.branchLabTestId }
-            : {}),
-          ...(query.branchLabPanelId
-            ? { branchLabPanelId: query.branchLabPanelId }
-            : {}),
-          ...(query.departmentId
-            ? { branchLabTest: { is: { departmentId: query.departmentId } } }
-            : {}),
+    // Department / Lab Test / Lab Panel are INDEPENDENT filters: an order qualifies
+    // when it satisfies each one that is set (they need not be satisfied by the same
+    // line or sample). Collected here and ANDed onto the order below.
+    const orderAnd: Prisma.OrderWhereInput[] = [];
+    if (query.departmentId) {
+      // Judged on the SAMPLE's own (stamped) department, not on the ordered test.
+      const sampleDepartmentId =
+        query.departmentId === NO_DEPARTMENT_FILTER ? null : query.departmentId;
+      if (filterCtx.groupingMode === AccessionGroupingMode.ORDER) {
+        // ORDER grouping: the order qualifies when at least one of its samples is in
+        // the department, and the whole order is then shown.
+        orderAnd.push({
+          orderSamples: {
+            some: {
+              deletedAt: null,
+              branchId,
+              departmentId: sampleDepartmentId,
+              // only samples the caller may see count, so a restricted user cannot
+              // learn (or filter on) a department outside their scope
+              AND: [this.departmentScopeForSamples(scopeIds)],
+            },
+          },
+        });
+      } else {
+        // Every other grouping: a group's samples share one department (or are a
+        // single sample), so matching the sample keeps each qualifying group whole.
+        where.departmentId = sampleDepartmentId;
+      }
+    }
+    if (query.branchLabTestId) {
+      // Ordered directly - in ANY price list's copy of the test (the dropdown shows only
+      // the default list's copy, but an order priced from another list holds that list's
+      // copy) - OR served by one of the order's samples, which also finds a test that
+      // arrived through a panel.
+      const sourceLabTestId = filterCtx.labTestSourceId;
+      orderAnd.push({
+        OR: [
+          {
+            items: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { branchLabTestId: query.branchLabTestId },
+                  ...(sourceLabTestId
+                    ? [{ branchLabTest: { is: { sourceLabTestId } } }]
+                    : []),
+                ],
+              },
+            },
+          },
+          ...(sourceLabTestId
+            ? [
+                {
+                  orderSamples: {
+                    some: {
+                      deletedAt: null,
+                      OR: [
+                        {
+                          tests: {
+                            some: {
+                              deletedAt: null,
+                              labTestId: sourceLabTestId,
+                              orderItem: { deletedAt: null },
+                            },
+                          },
+                        },
+                        // a sample with no test links (older data) is read by its own test
+                        {
+                          labTestId: sourceLabTestId,
+                          tests: { none: { deletedAt: null } },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
+    }
+    if (query.branchLabPanelId) {
+      // The dropdown shows the default price list's copy of a panel; an order priced
+      // from another list holds that list's copy, so match every copy of the panel.
+      orderAnd.push({
+        items: {
+          some: {
+            deletedAt: null,
+            branchLabPanelId: {
+              in: filterCtx.labPanelIds?.length
+                ? filterCtx.labPanelIds
+                : [query.branchLabPanelId],
+            },
+          },
         },
-      };
+      });
     }
     if (query.isHomeCollection) {
       order.diagnostics = { is: { isHomeVisit: true } };
@@ -4890,15 +5067,9 @@ export class OrderSampleService {
       // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived from
       // the order's workflow items — the same rule as the Order Console's
       // `sampleStatus`, applied here through the sample's to-one `order` relation.
-      order.AND = [
-        ...(Array.isArray(order.AND)
-          ? order.AND
-          : order.AND
-            ? [order.AND]
-            : []),
-        buildCollectionProgressWhere(query.collectionStatus),
-      ];
+      orderAnd.push(buildCollectionProgressWhere(query.collectionStatus));
     }
+    if (orderAnd.length > 0) order.AND = orderAnd;
 
     const and: Prisma.OrderSampleWhereInput[] = [];
     // Global Search — the same matching as Technician → Reporting's search, plus the
