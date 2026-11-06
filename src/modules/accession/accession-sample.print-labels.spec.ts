@@ -124,7 +124,7 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
   it("prints each label's own {sample_name}, blank when the sample has none", async () => {
     locale('12h');
 
-    await service.printLabels(['s4', 's3'], 't1', 'tpl-1');
+    await service.printLabels(['s4', 's3'], 't1', null, 'tpl-1');
 
     const labels = printedContext().sections?.labels ?? [];
     expect(labels.map((l) => l.sample_name)).toEqual(['Fasting blood', '']);
