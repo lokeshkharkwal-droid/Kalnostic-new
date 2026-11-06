@@ -72,6 +72,7 @@ import {
   resolveOrderLocalDateTime,
   classifyOrderDate,
   buildCollectionProgressWhere,
+  collectionProgressByOrder,
   COLLECTION_WORKFLOW_ITEM_WHERE,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -4272,11 +4273,13 @@ export class OrderService {
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
     const panelMembers = await this.panelMemberTests(tenantId, panelIds);
-    const [counts, invoiceCodes, cancelBlocked] = await Promise.all([
-      this.countItemsByOrder(tenantId, orderIds),
-      this.invoicedOrderCodes(tenantId, orderIds),
-      this.cancelBlockedReasons(tenantId, orderIds),
-    ]);
+    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked] =
+      await Promise.all([
+        this.countItemsByOrder(tenantId, orderIds),
+        collectionProgressByOrder(this.prisma, tenantId, orderIds),
+        this.invoicedOrderCodes(tenantId, orderIds),
+        this.cancelBlockedReasons(tenantId, orderIds),
+      ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
       // derived from the persisted item prices and the persisted order-discount
@@ -4336,6 +4339,9 @@ export class OrderService {
         ...r,
         itemCount: count?.total ?? 0,
         collectedItemCount: count?.collected ?? 0,
+        // Sample Status: derived from the order's SAMPLES (any collect path sets
+        // them), not from the item flag above — see `collection-progress.util`.
+        collectionStatus: collectionByOrderId.get(r.id) ?? 'PENDING',
         // Order-level "Order Status": derived per-test from each item's LabReport.
         reportStatus: deriveReportStatus(workflowItems, panelMemberCounts),
         // Per-status report counts (all nine LabReport statuses) + the item
@@ -5745,6 +5751,9 @@ export class OrderService {
       // `resolveActorNames` only maps ids it actually found, so an unresolved id
       // becomes null rather than a raw UUID leaking to the client.
       r.responsibleUser = actorId ? (names.get(actorId) ?? null) : null;
+      // That same actor's Person id, so the FE's Userwise PDF can group by person
+      // (two users sharing a display name stay apart), as it does by `createdBy`.
+      r.responsibleUserId = actorId;
       // The order's ORIGINAL creator — resolved for every report, not just the
       // ones whose responsible actor happens to be the creator — so each Finance
       // page can show a consistent "Order Created By" independent of who performed

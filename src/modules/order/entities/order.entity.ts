@@ -6,7 +6,10 @@ import {
   QuotationStatus,
   RefundStatus,
 } from '@prisma/client';
-import { roundToTwoDecimalPlaces } from '../../../common/utils';
+import {
+  roundToTwoDecimalPlaces,
+  type CollectionProgress,
+} from '../../../common/utils';
 
 /**
  * Derive an order's {@link PaymentStatus} from its payment ledger totals — the
@@ -866,6 +869,13 @@ export type BillingRecordRow = BillingOrder & {
   dateTimeDisplay?: string;
   responsibleUser?: string | null;
   /**
+   * The `Person.id` that {@link responsibleUser} was resolved from (same actor:
+   * order creator / payment collector / refunder / canceller). Keys the
+   * frontend's Userwise PDF grouping so two users sharing a display name are
+   * never merged. Null when no actor was recorded.
+   */
+  responsibleUserId?: string | null;
+  /**
    * The resolved display name of the order's ORIGINAL creator (`Order.createdBy`),
    * attached by `billingRecords` for EVERY report. Distinct from
    * {@link responsibleUser}, which on Collection/Refund/Cancel is the
@@ -895,8 +905,19 @@ export type OrderListRow = Prisma.OrderGetPayload<{
   include: typeof ORDER_LIST_INCLUDE;
 }> & {
   itemCount: number;
-  /** Count of the order's active items with a `collectedAt` timestamp. */
+  /**
+   * Count of the order's active items with a `collectedAt` timestamp. Only the
+   * Order Overview's Collect stamps it, so do NOT use it for "Sample Status" —
+   * use {@link OrderListRow.collectionStatus}.
+   */
   collectedItemCount: number;
+  /**
+   * Sample Status: `PENDING` / `PARTIAL` / `COLLECTED`, derived from the order's
+   * samples (`OrderSample.collectedAt`, cancelled and removed-test samples left
+   * out) so every collect path counts. Same rule as the Accession list's
+   * `collectionStatus` and the `sampleStatus` filter.
+   */
+  collectionStatus: CollectionProgress;
   /**
    * Order-level reporting progress, derived per-test from each item's LabReport
    * ({@link deriveReportStatus}). This is the Order Console's "Order Status".

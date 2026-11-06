@@ -104,4 +104,18 @@ docs {
   inside the block decides per test (the text `Yes` or empty). They are empty at the
   top level, because whether a test is in a panel is not a property of the whole
   order. Each test's own body (`body_html`) also has the tags (see Print Report).
+
+  ## B2B Referral Panel sessions
+
+  A referral panel (B2B) login prints only its own, FINISHED reports. Lab staff are
+  not affected: every report on the order is printed, an unfinished one as "Result
+  pending".
+  - 403 `REFERRAL_PANEL_ACCESS_DENIED` — the order belongs to another panel (or to no
+    panel).
+  - Unfinished reports (anything other than Approved / Published) are LEFT OUT of the
+    document, on both render paths (`lab_all_report` template and the per-report
+    merge), and out of "Share and Inform", which prints through this same route.
+  - 409 `LAB_REPORT_PRINT_NOT_APPROVED_FOR_PANEL` — none of the order's (or the
+    selected `orderItemIds`') reports is Approved or Published yet. Lab staff get
+    the usual 404 `ORDER_REPORTS_NOT_FOUND` for an order with no reports instead.
 }
