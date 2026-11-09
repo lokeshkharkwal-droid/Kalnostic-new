@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { AccessionModule } from '../accession/accession.module';
 import { PhlebotomistScheduleModule } from '../phlebotomist-schedule/phlebotomist-schedule.module';
+import { TenantTimeZoneModule } from '../tenant/tenant-timezone.module';
 import { PhlebotomistCollectionController } from './phlebotomist-collection.controller';
 import { PhlebotomistCollectionService } from './phlebotomist-collection.service';
 
@@ -20,7 +21,12 @@ import { PhlebotomistCollectionService } from './phlebotomist-collection.service
  * home-visit order is placed.
  */
 @Module({
-  imports: [PrismaModule, AccessionModule, PhlebotomistScheduleModule],
+  imports: [
+    PrismaModule,
+    AccessionModule,
+    PhlebotomistScheduleModule,
+    TenantTimeZoneModule,
+  ],
   controllers: [PhlebotomistCollectionController],
   providers: [PhlebotomistCollectionService],
   exports: [PhlebotomistCollectionService],

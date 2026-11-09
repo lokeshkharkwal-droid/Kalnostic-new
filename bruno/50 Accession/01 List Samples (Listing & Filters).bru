@@ -86,7 +86,10 @@ docs {
   - `orderId` / `originBranchId` / `processingBranchId` — scoping filters.
   - `patientId` / `referredByDoctorId` / `referralPanelId` — via the linked order.
   - `dateFrom` / `dateTo` — linked order's `orderDate` range.
-  - `departmentId` / `branchLabTestId` / `branchLabPanelId` — via the order's items.
+  - `departmentId` / `branchLabTestId` / `branchLabPanelId` — three INDEPENDENT filters: an order qualifies when it satisfies each one that is set (they need not be met by the same line or sample).
+    - `departmentId` (a department id, or `none` = samples with no department) is judged on the SAMPLE's own department. With ORDER grouping an order qualifies when at least one of its samples is in the department, and the whole order is shown; with every other grouping, a group is kept when its own samples are in the department.
+    - `branchLabTestId` — the order has the test ordered directly, or one of its samples serves the test (so a test that came through a panel is found).
+    - `branchLabPanelId` — the order has the panel, in ANY price list (every copy of the panel is matched).
   - `orderMode` — `Walk-in` | `Home Visit` | `Referral` | `Outsource` | `Emergency`.
   - `logisticsType` / `reportStatus` — sample scalar filters.
   - `isOutsource` / `isUrgent` / `isHomeCollection` — boolean toggles.

@@ -58,12 +58,12 @@ export class PublicController {
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Res() res: Response,
   ): Promise<void> {
-    const pdf = await this.publicService.getBillPdf(
+    const { pdf, fileName } = await this.publicService.getBillPdf(
       tenantId,
       branchId,
       orderId,
     );
-    this.streamPdf(res, pdf, `bill-${orderId}.pdf`);
+    this.streamPdf(res, pdf, fileName);
   }
 
   /**
@@ -78,12 +78,12 @@ export class PublicController {
     @Param('orderId', ParseUUIDPipe) orderId: string,
     @Res() res: Response,
   ): Promise<void> {
-    const pdf = await this.publicService.getReportPdf(
+    const { pdf, fileName } = await this.publicService.getReportPdf(
       tenantId,
       branchId,
       orderId,
     );
-    this.streamPdf(res, pdf, `report-${orderId}.pdf`);
+    this.streamPdf(res, pdf, fileName);
   }
 
   /**

@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AppointmentStatus, RecipientType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import { AutoNotificationService } from './services/auto-notification.service';
 
 /** An appointment due for a reminder, with the data needed to dispatch. */
@@ -46,6 +48,7 @@ export class AppointmentReminderWorkerService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly auto: AutoNotificationService,
+    private readonly tenantTz: TenantTimeZoneService,
   ) {}
 
   /** Send due reminders once per hour across all tenants. Never throws. */
@@ -162,7 +165,8 @@ export class AppointmentReminderWorkerService {
     tenantId: string,
     appt: DueAppointment,
   ): Promise<void> {
-    const when = this.formatAppt(appt.appointmentAt);
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    const when = this.formatAppt(appt.appointmentAt, zone);
     const location = appt.branchName ?? '';
     const orderCode = appt.orderCode ?? '';
     const doctorName = appt.doctor
@@ -215,8 +219,16 @@ export class AppointmentReminderWorkerService {
     }
   }
 
-  /** Compact UTC-ish display of the appointment time (e.g. "2026-08-25 10:30 UTC"). */
-  private formatAppt(d: Date): string {
-    return `${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  /**
+   * Compact display of the appointment time in the tenant's business-local zone
+   * (e.g. "25/08/2026 16:00"). `appointmentAt` is a true UTC instant, so it is
+   * projected to the configured zone first — the patient/doctor reminder must show
+   * their local wall-clock time, never raw UTC.
+   */
+  private formatAppt(d: Date, zone: string): string {
+    const local = toBranchLocalInstant(d, zone);
+    const p = (n: number): string => String(n).padStart(2, '0');
+    const date = `${p(local.getUTCDate())}/${p(local.getUTCMonth() + 1)}/${local.getUTCFullYear()}`;
+    return `${date} ${p(local.getUTCHours())}:${p(local.getUTCMinutes())}`;
   }
 }

@@ -145,7 +145,7 @@ export async function recomputeBillStatusInTx(
   if (!order) return null;
 
   const { payments } = order;
-  const { net } = computeBillingTotals(
+  const { gross, discount, net } = computeBillingTotals(
     payments.map((p) => ({
       totalAmount: toNum(p.totalAmount),
       orderDiscount: toNum(p.orderDiscount),
@@ -162,8 +162,9 @@ export async function recomputeBillStatusInTx(
   const sum = (pick: (p: (typeof payments)[number]) => Prisma.Decimal) =>
     payments.reduce((s, p) => s + toNum(pick(p)), 0);
   const refunded = sum((p) => p.refundAmount);
+  const grossPaid = sum((p) => p.paidAmount);
   const effectivePaid = computeEffectivePaid(
-    sum((p) => p.paidAmount),
+    grossPaid,
     toNum(order.cancellationCharge),
     refunded,
     sum((p) => p.refundCharge),
@@ -174,6 +175,21 @@ export async function recomputeBillStatusInTx(
     effectivePaid,
     refunded,
   );
-  await tx.order.update({ where: { id: orderId }, data: { billStatus } });
+  // Persist billStatus AND the denormalized money rollups together. These mirror
+  // exactly what the Billings list row shows (OrderService.billingRollups +
+  // dueAmount/refundedAmount), so the list can sort them server-side. Rounded to
+  // whole rupees (sort-only columns — the list still renders exact amounts).
+  await tx.order.update({
+    where: { id: orderId },
+    data: {
+      billStatus,
+      grossAmount: Math.round(gross),
+      discountAmount: Math.round(discount),
+      netAmount: Math.round(net),
+      paidAmount: Math.round(grossPaid),
+      balanceAmount: Math.round(Math.max(0, net - grossPaid)),
+      refundedAmount: Math.round(refunded),
+    },
+  });
   return billStatus;
 }

@@ -6618,6 +6618,21 @@ model Order {
   // sums the ledger + items, which Prisma can't express in a `where`.
   billStatus BillStatus @default(NOT_PAID) @map("bill_status")
 
+  // Denormalized billing rollups — the exact gross / discount / net / paid /
+  // balance / refunded the Billings, Quotations, Appointments and Order Console
+  // lists render per row (see OrderService.billingRollups). Stored for the SAME
+  // reason as paymentStatus/billStatus: these are sums over the item + payment
+  // ledger that Prisma can't `ORDER BY`, so the lists could only sort them
+  // client-side (one page at a time) — a violation of the server-side-sort rule.
+  // Recomputed in the same transaction as every billing-state write by
+  // `recomputeBillStatusInTx`. `balanceAmount` = max(0, net − paid) (the "Due").
+  grossAmount    Int @default(0) @map("gross_amount")
+  discountAmount Int @default(0) @map("discount_amount")
+  netAmount      Int @default(0) @map("net_amount")
+  paidAmount     Int @default(0) @map("paid_amount")
+  balanceAmount  Int @default(0) @map("balance_amount")
+  refundedAmount Int @default(0) @map("refunded_amount")
+
   // Fee (rupees, up to 2 decimal places) retained by the lab when the order is
   // cancelled (0 = none). Deducted from the order's effective paid amount;
   // caps the refundable amount on a cancel-with-refund (max refundable = paid

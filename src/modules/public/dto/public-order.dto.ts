@@ -83,6 +83,23 @@ export interface PublicOrderView {
   };
   /** The bill's payment + refund history, oldest first. */
   transactions: PublicTransaction[];
+  /**
+   * The owning tenant's display locale. The public page has no authenticated
+   * session, so it cannot call `GET /tenant/locale`; it receives the locale here
+   * instead and formats every timestamp (notably the payment/transaction
+   * dates — which are stored in UTC) and currency amount in the business's own
+   * time zone / format, never the server's or the patient device's.
+   */
+  locale: {
+    /** IANA time zone, e.g. "Asia/Kolkata". */
+    timeZone: string;
+    /** ISO 4217 currency code, e.g. "INR". */
+    currency: string;
+    /** Free-text date pattern (tokens: YYYY/YY/MM/DD), e.g. "DD/MM/YYYY". */
+    dateFormat: string;
+    /** Clock style: "12h" or "24h". */
+    timeFormat: string;
+  };
   reports: {
     /** Whether any PUBLISHED report exists (gates the Print Report button). */
     hasPublishedReports: boolean;

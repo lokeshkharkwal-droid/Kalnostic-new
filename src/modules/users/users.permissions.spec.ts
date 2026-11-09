@@ -41,6 +41,7 @@ function makeService(opts: {
   userOverrides?: { permissionKey: string; allowed: boolean }[];
   branchRoleOverrides?: { permissionKey: string; allowed: boolean }[];
   hasProfile?: boolean;
+  defaultModuleId?: string | null;
 }) {
   const profile = {
     id: 'ubp1',
@@ -54,6 +55,7 @@ function makeService(opts: {
       name: 'Branch Admin',
     },
     enabledModules: opts.enabledModules,
+    defaultModuleId: opts.defaultModuleId ?? null,
   };
   const tx = {
     userBranchPermission: {
@@ -175,6 +177,54 @@ describe('UsersService permissions — assigned modules are the ceiling', () => 
 
       // branch_admin's template is ['branch_admin'].
       expect(moduleKeysOf(res)).toEqual(['branch_admin']);
+    });
+    describe('defaultModule (where the app opens after login)', () => {
+      it('returns the Default Module saved on the assignment', async () => {
+        const { service } = makeService({
+          enabledModules: ['registration', 'accession', 'lab_operations'],
+          defaultModuleId: 'lab_operations',
+        });
+
+        const res = await service.getMyPermissions(TENANT, PERSON, BRANCH);
+
+        expect(res.defaultModule).toBe('lab_operations');
+      });
+
+      it('is null when no Default Module is set', async () => {
+        const { service } = makeService({
+          enabledModules: ['registration', 'accession'],
+        });
+
+        const res = await service.getMyPermissions(TENANT, PERSON, BRANCH);
+
+        expect(res.defaultModule).toBeNull();
+      });
+
+      it('is null when the user has no role at the branch', async () => {
+        const { service } = makeService({
+          enabledModules: [],
+          hasProfile: false,
+        });
+
+        const res = await service.getMyPermissions(TENANT, PERSON, BRANCH);
+
+        expect(res.defaultModule).toBeNull();
+        expect(res.allowed).toEqual([]);
+      });
+
+      it('does not widen access: a default outside the assigned modules grants nothing', async () => {
+        const { service } = makeService({
+          enabledModules: ['registration'],
+          defaultModuleId: 'finance',
+        });
+
+        const res = await service.getMyPermissions(TENANT, PERSON, BRANCH);
+
+        // The value is only a hint for the landing page; access is unchanged.
+        expect(res.defaultModule).toBe('finance');
+        expect(moduleKeysOf(res)).toEqual(['registration']);
+        expect(res.allowed.some((k) => k.startsWith('finance:'))).toBe(false);
+      });
     });
   });
 

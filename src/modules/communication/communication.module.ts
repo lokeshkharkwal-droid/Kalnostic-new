@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { BranchModule } from '../branch/branch.module';
 import { TemplateModule } from '../template/template.module';
+import { TenantTimeZoneModule } from '../tenant/tenant-timezone.module';
 import { CommunicationController } from './communication.controller';
 import { NotificationController } from './notification.controller';
 import { CommunicationService } from './communication.service';
@@ -28,7 +29,13 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
  * can enqueue messages / raise notifications on business events.
  */
 @Module({
-  imports: [PrismaModule, BranchModule, TemplateModule, ExchangeModule],
+  imports: [
+    PrismaModule,
+    BranchModule,
+    TemplateModule,
+    ExchangeModule,
+    TenantTimeZoneModule,
+  ],
   controllers: [
     CommunicationController,
     NotificationController,

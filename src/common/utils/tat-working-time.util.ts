@@ -173,6 +173,28 @@ export function toBranchLocalInstant(
 }
 
 /**
+ * Inverse of {@link toBranchLocalInstant}: given a `Date` whose UTC calendar
+ * fields represent a **business-local wall clock** in `timeZone`, return the real
+ * UTC instant it corresponds to. Used to turn a business-local day boundary
+ * (e.g. "today 00:00" local) into the UTC `gte`/`lte` bounds for filtering a
+ * UTC-stored column. DST-aware via a single guess-and-correct against the zone
+ * offset (exact except inside the ~1h DST fold, which is immaterial for day
+ * boundaries). A null/empty `timeZone` passes the value through unchanged.
+ * @param localAsUtc a Date whose UTC getters read the business-local wall clock
+ * @param timeZone an IANA zone (e.g. "Asia/Kolkata"), or null to pass through
+ */
+export function fromBranchLocalInstant(
+  localAsUtc: Date,
+  timeZone: string | null | undefined,
+): Date {
+  if (!timeZone) return localAsUtc;
+  const ms = localAsUtc.getTime();
+  const projected = toBranchLocalInstant(new Date(ms), timeZone);
+  const offset = projected.getTime() - ms;
+  return new Date(ms - offset);
+}
+
+/**
  * Remove `[cutStart, cutEnd)` from a set of `[start, end)` epoch-ms intervals,
  * splitting any interval the cut lands inside. Used to punch breaks out of a
  * shift occurrence.
