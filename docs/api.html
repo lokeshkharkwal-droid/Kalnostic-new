@@ -185,6 +185,9 @@
   <a href="#phleb-collections-reports">Reports</a>
   <h3>Overall Result Templates</h3>
   <a href="#overall-result-templates">Templates (CRUD) + Technician apply/edit</a>
+  <h3>User Preferences</h3>
+  <a href="#user-preferences">Default date filter (per user, per screen)</a>
+  <a href="#technician-worklist-dates">Technician special worklists — date filter</a>
 </nav>
 <main>
 
@@ -3027,6 +3030,54 @@ tagged with the old name — there is no cascade or reference-count warning.</di
   endpoint does not check <code>LabReportStatus</code> — a <code>PUBLISHED</code> report's overall
   result can still be edited through this route (the lock check above is the only lifecycle guard
   currently enforced here). Tracked, not yet fixed.</p>
+</div>
+
+<h2 id="user-preferences">User Preferences <span style="font-size:13px;color:var(--muted)">(the signed-in user's own UI preferences)</span></h2>
+<p>Table <code>user_date_filter_preferences</code> (tenant-scoped, RLS) — one row per
+(tenant, person, screen). Login-only routes (no permission key): tenant and person come from the JWT,
+so a user can only read or change their own defaults. <code>:screenKey</code> is one of
+<code>registration-billings</code>, <code>finance-billings</code>, <code>registration-order-console</code>,
+<code>accession-inhouse-orders</code>, <code>accession-referral-orders</code>, <code>technician-reporting</code>
+(anything else → <span class="pill">400 USER_PREFERENCE_INVALID_SCREEN</span>). ONE default per user per
+screen; the frontend applies it to every tab of that screen. Allowed for B2B referral-panel users
+(<code>/user-preferences</code> is on the B2B path allow-list).</p>
+
+<div class="ep" id="user-preferences-date-filter-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/user-preferences/date-filters/:screenKey</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The caller's saved default date filter for the screen, or <code>null</code> when none is saved (the
+  screen opens on the last 15 days). Shape: <code>{ screenKey, preset, dateFrom, dateTo, updatedAt }</code> —
+  <code>preset</code> is <code>TODAY</code>|<code>YESTERDAY</code>|<code>LAST_7_DAYS</code>|<code>LAST_15_DAYS</code>|<code>LAST_30_DAYS</code>|<code>THIS_MONTH</code>
+  (relative; resolved by the frontend against the business day each time the screen opens) or
+  <code>CUSTOM</code> with fixed <code>dateFrom</code>/<code>dateTo</code> (<code>YYYY-MM-DD</code>; null otherwise).</p>
+</div>
+
+<div class="ep" id="user-preferences-date-filter-put">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/user-preferences/date-filters/:screenKey</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Create or replace the caller's default (upsert; a reset row is revived). Body
+  <code>{ preset, dateFrom?, dateTo? }</code> — dates required (real <code>YYYY-MM-DD</code> dates) for
+  <code>CUSTOM</code> only and ignored/stored null for other presets. Errors:
+  <span class="pill">400 VALIDATION_ERROR</span> (unknown preset, bad/missing custom dates, extra fields),
+  <span class="pill">400 USER_PREFERENCE_INVALID_DATE_RANGE</span> (custom <code>dateFrom</code> after
+  <code>dateTo</code>). Returns the saved default. Not audited (personal UI preference).</p>
+</div>
+
+<div class="ep" id="user-preferences-date-filter-delete">
+  <div><span class="m delete">DELETE</span><span class="path">/api/v1/user-preferences/date-filters/:screenKey</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Remove the caller's default ("Reset to Last 15 Days") — soft delete; the screen then opens on the last 15 days; idempotent. Returns
+  <code>{ screenKey, reset: true }</code>.</p>
+</div>
+
+<div class="ep" id="technician-worklist-dates">
+  <div><span class="m get">GET</span><span class="path">/api/v1/re-run-requests · /critical-alerts · /out-of-range-flags · /delta-checks · /scheduled-tests</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The five Technician special worklists accept optional <code>dateFrom</code>/<code>dateTo</code>
+  (<code>YYYY-MM-DD</code>, inclusive) next to <code>branchId</code> — the Reporting screen's date filter.
+  Rows are limited to reports whose <b>order date</b> (<code>orders.order_date</code>) is in range, the
+  same column and semantics as <code>GET /lab-reports</code>. Omitted = no date limit (unchanged
+  behaviour). An invalid date → <span class="pill">400 VALIDATION_ERROR</span>.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
