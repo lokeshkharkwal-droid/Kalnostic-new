@@ -1,5 +1,6 @@
 import {
   worklistRowBranchWhere,
+  worklistRowDateWhere,
   type WorklistBranchScope,
 } from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
@@ -97,9 +98,21 @@ export class ReRunService {
    * default; several branches for "All Branches" — see
    * `TechnicianBranchAccessService.resolveScope`).
    */
-  async findAll(tenantId: string, scope: WorklistBranchScope) {
+  /**
+   * @param dates optional order-date range (the Reporting screen's date filter)
+   */
+  async findAll(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    dates?: { dateFrom?: string; dateTo?: string },
+  ) {
     const rows = await this.prisma.reRunRequest.findMany({
-      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
+      where: {
+        tenantId,
+        ...worklistRowBranchWhere(scope),
+        ...worklistRowDateWhere(dates),
+        deletedAt: null,
+      },
       include: WORKLIST_REPORT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });

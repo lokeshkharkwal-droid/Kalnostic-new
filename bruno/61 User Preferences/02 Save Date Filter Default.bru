@@ -1,0 +1,55 @@
+meta {
+  name: 02 Save Date Filter Default
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/user-preferences/date-filters/{{dateFilterScreenKey}}
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "preset": "LAST_7_DAYS"
+  }
+}
+
+vars:pre-request {
+  dateFilterScreenKey: registration-billings
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Create or replace the caller's default date filter for `:screenKey` (see
+  "Get Date Filter Default" for the allowed keys). Upsert on
+  (tenant, person, screen) — saving again replaces the previous default; a
+  previously reset (soft-deleted) row is revived.
+
+  Body:
+  - `preset` (required) — `TODAY` | `YESTERDAY` | `LAST_7_DAYS` | `LAST_15_DAYS`
+    | `LAST_30_DAYS` | `THIS_MONTH` | `CUSTOM`.
+  - `dateFrom`, `dateTo` — required for `CUSTOM` only (`YYYY-MM-DD`, a real
+    calendar date). Ignored and stored as null for any other preset.
+
+  Custom example: `{ "preset": "CUSTOM", "dateFrom": "2026-10-01", "dateTo": "2026-10-31" }`
+
+  Errors: 400 `VALIDATION_ERROR` (unknown preset, missing/invalid custom dates,
+  extra fields such as `personId`), 400 `USER_PREFERENCE_INVALID_DATE_RANGE`
+  (custom `dateFrom` after `dateTo`), 400 `USER_PREFERENCE_INVALID_SCREEN`.
+  Returns the saved default (same shape as GET).
+}

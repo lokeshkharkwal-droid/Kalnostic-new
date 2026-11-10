@@ -55,7 +55,10 @@ export class CriticalAlertController {
       query.branchId,
       PERMISSION_KEYS.LAB_ACCESS_CRITICAL_LIST,
     );
-    return this.criticalAlertService.findAll(tenantId, scope);
+    return this.criticalAlertService.findAll(tenantId, scope, {
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    });
   }
 
   @Patch(':id/status')

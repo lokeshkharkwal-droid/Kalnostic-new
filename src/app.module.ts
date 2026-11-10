@@ -67,6 +67,7 @@ import { PtCategoryModule } from './modules/pt-category/pt-category.module';
 import { OrderModule } from './modules/order/order.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
+import { UserPreferenceModule } from './modules/user-preference/user-preference.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
 import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
 import { ConsoleSettingsModule } from './modules/console-settings/console-settings.module';
@@ -191,6 +192,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     SettlementModule,
     PricingModule,
     OrderFieldConfigModule,
+    UserPreferenceModule,
     PaymentDetailsModule,
     FinancePaymentsModule,
     CommunicationModule,

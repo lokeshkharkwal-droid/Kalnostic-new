@@ -1,0 +1,49 @@
+meta {
+  name: 01 Get Date Filter Default
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/user-preferences/date-filters/{{dateFilterScreenKey}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  dateFilterScreenKey: registration-billings
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  The signed-in user's own saved **default date filter** for one list screen
+  (the "Default date filter" pop-up). Login-only (no permission key); tenant and
+  person come from the JWT, so a user can only ever read their own default.
+
+  `:screenKey` — one of:
+  - `registration-billings` (Registration › Billings)
+  - `finance-billings` (Finance › Billings)
+  - `registration-order-console` (Registration › Order Console)
+  - `accession-inhouse-orders` (Accession › In-House Orders)
+  - `accession-referral-orders` (Accession › Internal Referral Orders)
+  - `technician-reporting` (Technician › Reporting)
+  Anything else → 400 `USER_PREFERENCE_INVALID_SCREEN`.
+
+  ONE default per user per screen — it applies to every tab of that screen.
+
+  Response `data`: `null` when nothing is saved (the screen opens on the last 15 days), else
+  `{ screenKey, preset, dateFrom, dateTo, updatedAt }`. `preset` is a relative
+  range (`TODAY`, `YESTERDAY`, `LAST_7_DAYS`, `LAST_15_DAYS`, `LAST_30_DAYS`,
+  `THIS_MONTH`)
+  resolved by the frontend against the business day each time the screen opens,
+  or `CUSTOM` with fixed `dateFrom`/`dateTo` (`YYYY-MM-DD`; null otherwise).
+}

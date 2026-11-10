@@ -8194,6 +8194,32 @@ model OrderFieldConfig {
   @@map("order_field_configs")
 }
 
+/// A user's own default date filter for one list screen (Registration Billings,
+/// Finance Billings, Registration Order Console). Personal UI preference:
+/// one row per (tenant, person, screen), set from the screen's "Default date
+/// filter" pop-up and applied whenever that user opens the screen. `preset` is
+/// a relative range (`TODAY`, `LAST_7_DAYS`, …) resolved against the business
+/// day at open time; only `CUSTOM` stores fixed `dateFrom`/`dateTo`.
+model UserDateFilterPreference {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  personId  String @map("person_id")
+  screenKey String @map("screen_key")
+
+  preset   String
+  dateFrom DateTime? @map("date_from") @db.Date
+  dateTo   DateTime? @map("date_to") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, personId, screenKey])
+  @@index([tenantId])
+  @@index([personId])
+  @@map("user_date_filter_preferences")
+}
+
 /// A payment/ledger entry against an order (1:many). Amounts are integer minor
 /// units. Wallet/Points/Previous-Dues columns exist per spec but are NOT computed
 /// this phase (deferred). Tenant-scoped + branch-level.

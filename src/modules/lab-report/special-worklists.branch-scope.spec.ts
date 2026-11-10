@@ -36,10 +36,15 @@ const CASES: Array<{
 async function listWhere(
   c: (typeof CASES)[number],
   scope: WorklistBranchScope,
+  dates?: { dateFrom?: string; dateTo?: string },
 ): Promise<Where> {
   const findMany = jest.fn().mockResolvedValue([]);
   const svc = Object.create(c.Service.prototype) as {
-    findAll: (tenantId: string, scope: WorklistBranchScope) => Promise<unknown>;
+    findAll: (
+      tenantId: string,
+      scope: WorklistBranchScope,
+      dates?: { dateFrom?: string; dateTo?: string },
+    ) => Promise<unknown>;
   };
   Object.assign(svc, {
     prisma: new Proxy(
@@ -52,7 +57,7 @@ async function listWhere(
       },
     ),
   });
-  await svc.findAll('t1', scope);
+  await svc.findAll('t1', scope, dates);
   return (findMany.mock.calls[0] as [{ where: Where }])[0].where;
 }
 
@@ -104,5 +109,51 @@ describe.each(CASES)('$name worklist — branch scope', (c) => {
   it('an empty scope matches nothing', async () => {
     const w = await listWhere(c, { rules: [] });
     expect(w.OR).toEqual([]);
+  });
+});
+
+/**
+ * The Reporting screen's date filter applies to every special worklist too, on
+ * the ORDER date (the same column as the main worklist), alongside the branch
+ * scope — never replacing it.
+ */
+describe.each(CASES)('$name worklist — order-date filter', (c) => {
+  const own: WorklistBranchScope = {
+    rules: [{ branchId: 'A', statuses: 'ALL' }],
+  };
+
+  it('no dates: no date condition (unchanged behaviour)', async () => {
+    const w = await listWhere(c, own);
+    expect(w).not.toHaveProperty('labReport');
+    const w2 = await listWhere(c, own, {});
+    expect(w2).not.toHaveProperty('labReport');
+  });
+
+  it('a range limits rows to that inclusive order-date range, keeping the branch scope', async () => {
+    const w = await listWhere(c, own, {
+      dateFrom: '2026-11-04',
+      dateTo: '2026-11-10',
+    });
+    expect(w).toMatchObject({
+      tenantId: 't1',
+      deletedAt: null,
+      OR: [{ labReport: { is: { branchId: 'A' } } }],
+      labReport: {
+        is: {
+          orderItem: {
+            is: {
+              order: {
+                is: {
+                  orderDate: {
+                    gte: new Date('2026-11-04T00:00:00.000Z'),
+                    lte: new Date('2026-11-10T00:00:00.000Z'),
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   });
 });
