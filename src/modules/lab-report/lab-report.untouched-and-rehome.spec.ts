@@ -121,7 +121,9 @@ describe('LabReportService.isReportUntouched - a report returned for repeat star
       expect(whereOf(tx, table)).toEqual(
         table === 'labReportNote'
           ? { labReportId: 'r1', category: { notIn: ['LOCK', 'UNLOCK'] } }
-          : { labReportId: 'r1' },
+          : table === 'reRunRequest'
+            ? { labReportId: 'r1', sampleMode: 'SAME' }
+            : { labReportId: 'r1' },
       );
     }
   });
@@ -179,9 +181,17 @@ describe('LabReportService.isReportUntouched - a report returned for repeat star
       expect(whereOf(tx, table)).toEqual({
         labReportId: 'r1',
         OR: [{ deletedAt: null }, { createdAt: { gt: RETURNED } }],
+        // a FRESH Re-run request is not work done on the wiped report (it is written right after the wipe)
+        ...(table === 'reRunRequest' ? { sampleMode: 'SAME' } : {}),
       });
     },
   );
+
+  it('a FRESH Re-run request does not make a wiped report "worked on" (only SAME-sample requests count)', async () => {
+    const { tx, run } = setup({}, {}, RETURNED);
+    await run();
+    expect(whereOf(tx, 'reRunRequest')).toMatchObject({ sampleMode: 'SAME' });
+  });
 
   it('returned: attachments use their upload time', async () => {
     const { tx, run } = setup({}, {}, RETURNED);

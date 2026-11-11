@@ -7806,6 +7806,14 @@ enum ReRunStatus {
   CANCELLED
 }
 
+/// How a re-run is carried out: SAME = the test is processed again on the sample it already has (the report goes
+/// back to Pending, nothing changes in Accession); FRESH = the test's sample goes back for a fresh collection
+/// (Repeat) with a new barcode, and the report stays locked until that sample is accepted again.
+enum ReRunSampleMode {
+  SAME
+  FRESH
+}
+
 /// Status vocabulary for the Schedule Test worklist (LABORATORY.docx §8.5) — a
 /// test is Scheduled, moves to In Progress, may be Rescheduled, then Completed.
 enum ScheduledTestStatus {
@@ -7838,6 +7846,12 @@ model ReRunRequest {
   status       ReRunStatus @default(PENDING)
   requestedBy  String      @map("requested_by")
   requestNotes String?     @map("request_notes")
+
+  /// SAME sample (default) or a FRESH sample (the tube is repeated and recollected).
+  sampleMode ReRunSampleMode @default(SAME) @map("sample_mode")
+  /// For a FRESH re-run: the batch tag given to the repeated sample rows (`OrderSample.repeatBatchId`), so the
+  /// request can be traced to the rows that were repeated together.
+  repeatBatchId String? @map("repeat_batch_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -8582,6 +8596,11 @@ model OrderSample {
   // set when a copy is created. Empty on a never-transferred sample (its own and
   // origin branch are implied). A sample may never be sent to any of these again.
   heldBranchIds String[] @default([]) @map("held_branch_ids")
+
+  /// Set when this row was sent back for a fresh collection (Repeat / Re-run with a fresh sample): the rows
+  /// repeated together in one action share the tag. It is part of the barcode group key, so they form their own
+  /// group with their own new barcode and never borrow the old group's barcode. Null = never repeated this way.
+  repeatBatchId String? @map("repeat_batch_id")
 
   tests         OrderSampleTest[]
   statusHistory OrderSampleStatusHistory[]
