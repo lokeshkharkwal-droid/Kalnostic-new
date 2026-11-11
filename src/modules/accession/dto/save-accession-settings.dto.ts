@@ -104,6 +104,11 @@ export class SaveAccessionSettingsDto {
   @Max(10)
   SampleBarcodeSettings_NumberLength?: number;
 
+  /**
+   * @deprecated Ignored (2026-11). Barcode numbers come from the tenant-wide
+   * counter, which never resets. Still accepted so older clients don't fail
+   * validation.
+   */
   @IsOptional()
   @IsEnum(AccessionBarcodeResetCycle)
   SampleBarcodeSettings_ResetInterval?: AccessionBarcodeResetCycle;
@@ -136,6 +141,11 @@ export class SaveAccessionSettingsDto {
   @Max(10)
   OrderBarcodeSettings_NumberLength?: number;
 
+  /**
+   * @deprecated Ignored (2026-11). Barcode numbers come from the tenant-wide
+   * counter, which never resets. Still accepted so older clients don't fail
+   * validation.
+   */
   @IsOptional()
   @IsEnum(AccessionBarcodeResetCycle)
   OrderBarcodeSettings_ResetInterval?: AccessionBarcodeResetCycle;
