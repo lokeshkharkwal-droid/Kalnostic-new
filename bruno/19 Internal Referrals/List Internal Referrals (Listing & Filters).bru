@@ -49,7 +49,8 @@ docs {
 
   Each row contains ONLY: `id`, `employeeId`, `firstName`, `lastName`, `fullName`,
   `mobileNumber`, `email`, `isCommissionApplicable`, `isIncludedInPayroll`,
-  `status`, `hasActiveOrder`, and `labTestList` / `labPanelList` — `{ id, name } |
+  `status`, `hasActiveOrder`, `lastOrderCreatedAt`, `isB2bLoginEnabled`, and
+  `labTestList` / `labPanelList` — `{ id, name } |
   null` — the caller's active branch's assigned Lab Test List / Lab Panel List,
   bulk-resolved for the whole page (not a per-row lookup). Fetch the full record (all
   fields + the raw `branchLabTestListId`/`branchLabPanelListId`) via "Get Internal
@@ -59,4 +60,13 @@ docs {
     in an active accessioning/technician-stage workflow; the client uses it to disable
     the Delete action (deletion returns **409 `INTERNAL_REFERRAL_IN_USE`**).
     Bulk-resolved for the whole page.
+
+  - `lastOrderCreatedAt` (ISO date-time | `null`) — when the most recent order using
+    this referral was **created** (the order's `createdAt`, UTC; not the user-entered
+    order date). Counts every non-deleted order except drafts (`DRAFT`) and
+    quotations (`QUOTE`) — appointments and cancelled orders count. `null` when no
+    such order exists. Computed live for the whole page (one grouped query).
+
+  - `isB2bLoginEnabled` (boolean) — always `false` today: only referral panels can
+    have a B2B login. Sent so all four referral listings share one row shape.
 }

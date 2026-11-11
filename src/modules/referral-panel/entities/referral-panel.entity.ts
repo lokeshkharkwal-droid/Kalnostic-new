@@ -48,6 +48,19 @@ export type ReferralPanelListItem = ReferralPanel & {
    * bulk by `ReferralUsageService.findActiveReferralIds` (never per-row).
    */
   hasActiveOrder: boolean;
+  /**
+   * When the most recent order using this panel was created (the order's
+   * `createdAt`), or `null` when none exists. Drafts, quotations and
+   * soft-deleted orders do not count. Resolved in bulk by
+   * `ReferralUsageService.findLastOrderCreatedAt` (never per-row).
+   */
+  lastOrderCreatedAt: Date | null;
+  /**
+   * `true` when the panel has a dedicated B2B login whose user can sign in
+   * (profile live, person active, tenant membership not INACTIVE). Resolved in
+   * bulk by `ReferralPanelUserService.findPanelIdsWithEnabledLogin`.
+   */
+  isB2bLoginEnabled: boolean;
 };
 
 /**

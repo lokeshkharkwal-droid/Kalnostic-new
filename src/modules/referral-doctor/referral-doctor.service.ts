@@ -322,7 +322,9 @@ export class ReferralDoctorService {
    * a fallback) plus `departmentId`, `categoryId`, `status`, and `branchId`
    * filters.
    * Each row is enriched with the active branch's assigned Lab Test List / Lab
-   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row).
+   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row),
+   * plus `hasActiveOrder`, `lastOrderCreatedAt` (latest counted order's creation
+   * time) and `isB2bLoginEnabled` (always false — only panels have B2B logins).
    * @param tenantId tenant scope
    * @param activeBranchId caller's active branch (from JWT); used to resolve the
    *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
@@ -370,21 +372,33 @@ export class ReferralDoctorService {
       }),
       this.prisma.referralDoctor.count({ where }),
     ]);
-    const assignments =
-      await this.listAssignmentService.getAssignmentsWithListNames(
+    const ids = rows.map((r) => r.id);
+    const [assignments, activeIds, lastOrderAt] = await Promise.all([
+      this.listAssignmentService.getAssignmentsWithListNames(
         tenantId,
         activeBranchId,
         ReferralType.DOCTOR,
-        rows.map((r) => r.id),
-      );
-    const activeIds = await this.referralUsage.findActiveReferralIds(
-      tenantId,
-      'referredByDoctorId',
-      rows.map((r) => r.id),
-    );
+        ids,
+      ),
+      this.referralUsage.findActiveReferralIds(
+        tenantId,
+        'referredByDoctorId',
+        ids,
+      ),
+      this.referralUsage.findLastOrderCreatedAt(
+        tenantId,
+        'referredByDoctorId',
+        ids,
+      ),
+    ]);
     return {
       data: rows.map((r) =>
-        this.toListItem(r, assignments.get(r.id), activeIds.has(r.id)),
+        this.toListItem(
+          r,
+          assignments.get(r.id),
+          activeIds.has(r.id),
+          lastOrderAt.get(r.id) ?? null,
+        ),
       ),
       total,
       page,
@@ -915,11 +929,14 @@ export class ReferralDoctorService {
    * @param row a row from `REFERRAL_DOCTOR_LIST_SELECT`
    * @param assignment the row's bulk-resolved Lab Test/Panel List assignment, or
    *   undefined when none was found (both fields default to null)
+   * @param hasActiveOrder whether an active-workflow order uses this doctor
+   * @param lastOrderCreatedAt creation time of the latest counted order, or null
    */
   private toListItem(
     row: ReferralDoctorListRow,
     assignment?: ReferralListAssignmentView,
     hasActiveOrder = false,
+    lastOrderCreatedAt: Date | null = null,
   ): ReferralDoctorListItem {
     return {
       id: row.id,
@@ -941,6 +958,9 @@ export class ReferralDoctorService {
       labTestList: assignment?.labTestList ?? null,
       labPanelList: assignment?.labPanelList ?? null,
       hasActiveOrder,
+      lastOrderCreatedAt,
+      // Only referral panels can have a B2B login today (see the entity doc).
+      isB2bLoginEnabled: false,
     };
   }
 
