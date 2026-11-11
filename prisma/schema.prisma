@@ -6566,9 +6566,10 @@ model Order {
   // when the format is NONE. Unique per branch among active rows (enforced in the
   // service). Quotes (status QUOTE) reuse this column with their own format/counter.
   externalOrderId String?       @map("external_order_id")
-  // Order-level barcode, generated at creation from the branch's dedicated
-  // order-barcode counter/format (AccessionSetting.OrderBarcodeSettings_*, via
-  // BarcodeService.allocateOrderNumberInTx). A SEPARATE entity from sample
+  // Order-level barcode, generated at creation: the number comes from the
+  // tenant-wide order-barcode counter (TenantBarcodeCounter, kind ORDER) and the
+  // format from the branch (AccessionSetting.OrderBarcodeSettings_*), via
+  // BarcodeService.allocateOrderNumberInTx. A SEPARATE entity from sample
   // barcodes — the two have independent counters and may share the same number.
   // `orderIdBarcode` holds the barcode VALUE (e.g. "10001"); `orderIdQrCode`
   // holds the S3 URL of the rendered Code39 PNG (name kept for the print-template
@@ -6734,10 +6735,10 @@ model Order {
   @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
-  // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
-  // distinct in Postgres). Does NOT constrain against sample barcodes, so an order
-  // and a sample may legitimately share the same number.
-  @@unique([branchId, orderIdBarcode])
+  // The order barcode VALUE is unique per TENANT among active orders, enforced by
+  // the partial unique index `orders_tenant_order_barcode_active_unique` (in
+  // prisma/rls.sql — Prisma can't express `WHERE deleted_at IS NULL`). It does NOT
+  // constrain against sample barcodes, so an order and a sample may share a number.
   @@index([deletedAt])
   @@map("orders")
 }
@@ -8788,22 +8789,32 @@ model AccessionSetting {
   SampleBarcodeSettings_Suffix        String                     @default("") @map("sample_barcode_settings_suffix") @db.VarChar(24)
   SampleBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("sample_barcode_settings_separator")
   SampleBarcodeSettings_NumberLength  Int                        @default(5) @map("sample_barcode_settings_number_length")
+  /// DEPRECATED (2026-11): barcode numbers come from the tenant-wide
+  /// `TenantBarcodeCounter`, which never resets (a reset would re-issue numbers
+  /// already printed on samples). Always NEVER; kept so older clients that still
+  /// send it don't fail validation.
   SampleBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("sample_barcode_settings_reset_interval")
-  /// System-managed running counter — never accepted from the client.
+  /// DEPRECATED (2026-11): no longer written. The running number lives in
+  /// `TenantBarcodeCounter` (kind SAMPLE); kept for history.
   SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")
+  /// DEPRECATED (2026-11): no longer written (see ResetInterval above).
   SampleBarcodeSettings_LastResetAt   DateTime?                  @map("sample_barcode_settings_last_reset_at")
 
   // ── Order Barcode Settings ──
-  // Dedicated to the ORDER-level barcode (generated at order creation). A separate
+  // Format of the ORDER-level barcode (generated at order creation). A separate
   // entity/counter/format from the sample barcode above — order and sample numbers
-  // may coincide. Same field convention + reuses the shared BarcodeService logic.
+  // may coincide. The branch sets the format (prefix/suffix/separator/length);
+  // the number comes from the tenant-wide `TenantBarcodeCounter` (kind ORDER).
   OrderBarcodeSettings_Prefix        String                     @default("") @map("order_barcode_settings_prefix") @db.VarChar(24)
   OrderBarcodeSettings_Suffix        String                     @default("") @map("order_barcode_settings_suffix") @db.VarChar(24)
   OrderBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("order_barcode_settings_separator")
   OrderBarcodeSettings_NumberLength  Int                        @default(5) @map("order_barcode_settings_number_length")
+  /// DEPRECATED (2026-11): see SampleBarcodeSettings_ResetInterval. Always NEVER.
   OrderBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("order_barcode_settings_reset_interval")
-  /// System-managed running counter — never accepted from the client.
+  /// DEPRECATED (2026-11): no longer written. The running number lives in
+  /// `TenantBarcodeCounter` (kind ORDER); kept for history.
   OrderBarcodeSettings_CurrentNumber Int                        @default(0) @map("order_barcode_settings_current_number")
+  /// DEPRECATED (2026-11): no longer written.
   OrderBarcodeSettings_LastResetAt   DateTime?                  @map("order_barcode_settings_last_reset_at")
 
   // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
@@ -8830,6 +8841,40 @@ model AccessionSetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("accession_settings")
+}
+
+/// Which barcode a `TenantBarcodeCounter` row numbers.
+enum BarcodeCounterKind {
+  /// Order-level barcode (`Order.orderIdBarcode`), issued at order creation.
+  ORDER
+  /// Sample barcode (`OrderSample.barcode`), issued at collection.
+  SAMPLE
+}
+
+/// Tenant-wide running number for order and sample barcodes: one row per
+/// (tenant, kind). Barcodes must be unique across all of a tenant's branches,
+/// so the number comes from one tenant-level counter; each branch only chooses
+/// the format (prefix/suffix/separator/length in `AccessionSetting`).
+///
+/// Allocation (`BarcodeService`) increments `currentNumber` with a single
+/// `INSERT … ON CONFLICT DO UPDATE SET current_number = current_number + 1
+/// RETURNING` inside the caller's transaction. That statement locks the row
+/// until commit, so concurrent allocations from any branch queue on it and each
+/// gets a distinct number, and a rolled-back transaction gives its number back.
+/// Never reset: a reset would re-issue numbers already printed on orders/samples.
+/// Starts at 10000 so the first issued number is 10001.
+model TenantBarcodeCounter {
+  id            String             @id @default(uuid())
+  tenantId      String             @map("tenant_id")
+  kind          BarcodeCounterKind
+  /// Last number issued (system-managed — never accepted from the client).
+  currentNumber Int                @default(10000) @map("current_number")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, kind])
+  @@map("tenant_barcode_counters")
 }
 
 /// Per-branch Registration › Appointment Settings (slot/capacity, working
