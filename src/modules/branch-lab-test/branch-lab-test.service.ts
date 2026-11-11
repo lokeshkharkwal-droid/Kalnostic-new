@@ -24,6 +24,8 @@ import {
   BranchLabTestNotFoundException,
 } from './exceptions/branch-lab-test.exceptions';
 import {
+  AGE_RESTRICTION_SELECT,
+  BranchLabTestAgeRestriction,
   BranchLabTestConfigSnapshot,
   BranchLabTestImportResult,
   BranchLabTestListRow,
@@ -39,8 +41,11 @@ export interface BranchLabTestBulkEditResult {
   updated: number;
 }
 
-/** A Create-Order lab-test option row (Diagnostic Items table). */
-export interface BranchLabTestOption {
+/**
+ * A Create-Order lab-test option row (Diagnostic Items table). Carries the
+ * test's Age Restriction so Create Order can block it before it is added.
+ */
+export interface BranchLabTestOption extends BranchLabTestAgeRestriction {
   id: string;
   name: string;
   price: number;
@@ -775,10 +780,11 @@ export class BranchLabTestService {
       tatMaxUnit: true,
       usefulFor: true,
       sourceLabTestId: true,
+      ...AGE_RESTRICTION_SELECT,
     } as const;
     const orderBy = { testName: 'asc' } as const;
     const toOption = (
-      r: {
+      r: BranchLabTestAgeRestriction & {
         id: string;
         testName: string;
         listPrice: number;
@@ -816,6 +822,11 @@ export class BranchLabTestService {
         tatMinUnit: r.tatMinUnit,
         tatMaxValue: r.tatMaxValue,
         tatMaxUnit: r.tatMaxUnit,
+        isAgeRestricted: r.isAgeRestricted,
+        minAgeValue: r.minAgeValue,
+        minAgeUnit: r.minAgeUnit,
+        maxAgeValue: r.maxAgeValue,
+        maxAgeUnit: r.maxAgeUnit,
         ...(filters.includeSampleInfo && {
           usefulFor: r.usefulFor,
           sampleHandlingInstructions: handling?.get(r.id) ?? null,

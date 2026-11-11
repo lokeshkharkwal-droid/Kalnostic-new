@@ -40,6 +40,14 @@ docs {
   billed-only test that the frontend hides from the workflow item list (it
   generates no accession sample).
 
+  **Age Restriction:** every option carries `isAgeRestricted`, `minAgeValue`,
+  `minAgeUnit`, `maxAgeValue`, `maxAgeUnit` (units `DAYS`/`MONTHS`/`YEARS`; all
+  four bounds `null` when `isAgeRestricted` is `false`). Create Order blocks
+  adding the test when the patient's age on the order date is outside
+  min..max (min inclusive, max covers its whole unit); the server enforces the
+  same rule on `POST`/`PATCH /orders` (422 `ORDER_TEST_AGE_RESTRICTED`).
+  Copied from Master Data by the normal import/sync.
+
   Scoped to the JWT tenant + active branch (no `branchId` in the query). `search`
   matches testName (case-insensitive). `listId` scopes options (+ `listPrice`) to a
   named pricing list (omitted = Walk-in). Omit `page` for the full array; supply
