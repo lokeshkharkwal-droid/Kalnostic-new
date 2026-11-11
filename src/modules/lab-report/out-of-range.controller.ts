@@ -54,7 +54,10 @@ export class OutOfRangeController {
       query.branchId,
       PERMISSION_KEYS.LAB_ACCESS_OOR,
     );
-    return this.outOfRangeService.findAll(tenantId, scope);
+    return this.outOfRangeService.findAll(tenantId, scope, {
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    });
   }
 
   @Patch(':id/status')

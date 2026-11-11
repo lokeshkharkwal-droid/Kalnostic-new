@@ -1357,6 +1357,14 @@ CREATE POLICY order_field_configs_tenant_isolation ON order_field_configs
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 
+-- ── user_date_filter_preferences ────────────────────────────────────────────────
+ALTER TABLE user_date_filter_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_date_filter_preferences FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_date_filter_preferences_tenant_isolation ON user_date_filter_preferences;
+CREATE POLICY user_date_filter_preferences_tenant_isolation ON user_date_filter_preferences
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
 -- ── payment_details ─────────────────────────────────────────────────────────────
 ALTER TABLE payment_details ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment_details FORCE ROW LEVEL SECURITY;

@@ -56,7 +56,10 @@ export class ScheduledTestController {
       query.branchId,
       PERMISSION_KEYS.LAB_ACCESS_SCHEDULED_LIST,
     );
-    return this.scheduledTestService.findAll(tenantId, scope);
+    return this.scheduledTestService.findAll(tenantId, scope, {
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    });
   }
 
   @Patch(':id')
