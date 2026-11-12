@@ -13,6 +13,7 @@ import {
   SampleStatus,
   TatBand,
 } from '@prisma/client';
+import { ageFromDob } from '../../../common/utils/patient-label.util';
 import type { NoteSectionKey } from '../utils/note-sections.util';
 import type { NoteCounts } from '../../../common/utils/lab-report-note.util';
 
@@ -252,6 +253,28 @@ export const AGE_TYPE_SUFFIX: Record<AgeType, string> = {
   MONTHS: 'mo',
   DAYS: 'd',
 };
+
+/**
+ * The age fields of a Technician row's patient. The stored age (and its unit) always wins, exactly as
+ * before. Only a patient with NO stored age but a date of birth - which the patient API allows - used to
+ * show a blank age here; that age is now worked out from the date of birth (the same way the print
+ * documents and the Accession list do), so the row, the Order Overview and Test Entry all show it.
+ */
+export function patientAgeFields(patient: {
+  age: number | null;
+  ageType: AgeType | null;
+  dateOfBirth: Date | null;
+}): { age: number | null; ageType: AgeType | null; ageDisplay: string | null } {
+  const derived = patient.age == null ? ageFromDob(patient.dateOfBirth) : null;
+  const age = patient.age ?? derived?.age ?? null;
+  const ageType = derived ? derived.ageType : patient.ageType;
+  return {
+    age,
+    ageType,
+    ageDisplay:
+      age != null ? `${age}${AGE_TYPE_SUFFIX[ageType ?? 'YEARS']}` : null,
+  };
+}
 
 /** The flat shape the Reporting Worklist table renders — one row per `LabReport`,
  * mirroring the 11 columns of LABORATORY.docx §1.2 that are backend-resolvable
@@ -606,12 +629,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
             patient.middleName,
             patient.lastName,
           ]),
-          age: patient.age,
-          ageType: patient.ageType,
-          ageDisplay:
-            patient.age != null
-              ? `${patient.age}${AGE_TYPE_SUFFIX[patient.ageType ?? 'YEARS']}`
-              : null,
+          ...patientAgeFields(patient),
           gender: patient.gender,
           umId: patient.umId,
           mobile: patient.mobile,

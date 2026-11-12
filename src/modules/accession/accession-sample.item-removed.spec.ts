@@ -633,6 +633,8 @@ describe('SampleTransferService - a removed test freezes its transfer', () => {
       orderSampleTest: {
         findMany: jest.fn().mockImplementation(() => Promise.resolve(links)),
       },
+      // the step row a pick up / receive leaves on the sender's sample
+      orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     };
     const prisma = {
       withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>

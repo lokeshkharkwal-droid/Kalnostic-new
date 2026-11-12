@@ -36,6 +36,11 @@ docs {
     thresholds (Accession Settings).
   - `total` — total active samples.
 
+  Takes the SAME filters as `01 List Samples`, so the tab counts always match the list. That includes the 2026-10
+  additions (`orderType`, `createdByUserId`, `logisticsPerson`, `storeLocation`, `discardMethod`, `containerTypes`,
+  `sampleNames` / `sampleTypes` with their `...NotSet` flags, `categoryId` / `subCategoryId`) and `reportStatus` as
+  one of the nine report statuses; `search` no longer matches the accession number. See request 01 for each one.
+
   **Where did I send it (sender's filters).** `destinationBranchId` (UUID): only samples Sent RIGHT NOW to that
   branch (status Sent + a live INTERNAL transfer to it; a sample the receiving branch sent back, "Sent - Repeated",
   still counts because it stays Sent until the sender decides; one the sender repeated or retrieved does not).

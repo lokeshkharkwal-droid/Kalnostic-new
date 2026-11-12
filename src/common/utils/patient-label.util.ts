@@ -137,3 +137,24 @@ export function patientPrintAgeDisplay(
   // Under one completed month — `breakdown.days` is the total age in days here.
   return patientAgeDisplay(breakdown.days, AgeType.DAYS);
 }
+
+/**
+ * The age (number + unit) to show for a patient whose age is known only from the date of birth: the
+ * leading unit, by the same bands as {@link patientPrintAgeDisplay} - 12 months or more reads in
+ * Years, 1 to 11 months in Months, under a month in Days.
+ * @param dateOfBirth the patient's date of birth (may be null)
+ * @param now reference date (UTC getters, like the print age); defaults to today
+ * @returns the age and its unit, or `null` when there is no usable date of birth
+ */
+export function ageFromDob(
+  dateOfBirth: Date | null | undefined,
+  now: Date = new Date(),
+): { age: number; ageType: AgeType } | null {
+  const breakdown = ageBreakdownFromDob(dateOfBirth, now);
+  if (!breakdown) return null;
+  if (breakdown.years >= 1)
+    return { age: breakdown.years, ageType: AgeType.YEARS };
+  if (breakdown.months >= 1)
+    return { age: breakdown.months, ageType: AgeType.MONTHS };
+  return { age: breakdown.days, ageType: AgeType.DAYS };
+}

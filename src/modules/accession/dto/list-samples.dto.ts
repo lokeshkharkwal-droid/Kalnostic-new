@@ -10,12 +10,14 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
-import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 import { ToBoolean } from '../../../common/decorators/to-boolean.decorator';
-import type { CollectionProgress } from '../../../common/utils';
 import { TAT_STATUSES } from '../constants/tat.constant';
 import { DEPARTMENT_FILTER_PATTERN } from '../constants/department-filter.constant';
 import type { TatStatus } from '../constants/tat.constant';
+import { SampleFilterFieldsDto } from './sample-filter-fields.dto';
+import { IN_HOUSE_SORT_KEYS } from '../utils/in-house-sort.util';
+import type { InHouseSortKey } from '../utils/in-house-sort.util';
+import type { SortDirection } from '../utils/transfer-sort.util';
 
 /** A calendar day (`YYYY-MM-DD`) — the transfer-date filters match the whole day. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -32,23 +34,39 @@ export type OrderMode = (typeof ORDER_MODES)[number];
 
 /**
  * Query parameters for the accession sample listing (`GET /accession/samples`) —
- * the §A.3 filter panel, §A.5 status tabs and §A.4 TAT bar. Extends the shared
- * pagination DTO. `search` matches the accession number, barcode, order id, patient name
- * (first/middle/last, independently — not a concatenated full-name match),
- * patient UHID (`umId`) or patient mobile number (case-insensitive). `tatStatus`
+ * the §A.3 filter panel, §A.5 status tabs and §A.4 TAT bar. Extends the filters shared
+ * with the transfer queues (`SampleFilterFieldsDto`). `search` is the Global Search
+ * (see the field below: barcode, order id, patient name / UHID / mobile, referral panel
+ * and test / panel name; case-insensitive). `tatStatus`
  * filters by the derived TAT band (translated to a `createdAt` range in the
  * service). All filters are scoped to the caller's tenant + active branch.
  * Validated by `class-validator` only.
  */
-export class ListSamplesDto extends PaginationQueryDto {
+export class ListSamplesDto extends SampleFilterFieldsDto {
   /**
-   * Case-insensitive match against the accession number, barcode, order id
-   * (`orderCode`), patient name, patient UHID, or patient mobile number.
+   * Global Search: case-insensitive match against the barcode, order id
+   * (`orderCode`), patient name (every word, in any order), patient UHID, patient
+   * mobile number, referral panel name, or the test / panel name on the order.
+   * The accession number is not searched.
    */
   @IsOptional()
   @IsString()
   @MaxLength(50)
   search?: string;
+
+  /**
+   * Sort the In-House list (`/accession/samples/grouped`) by a column. The list pages by order, so an
+   * order is ranked by its smallest value when sorting ascending and its largest when descending.
+   * Absent = newest first. Ignored by the other endpoints that share this query.
+   */
+  @IsOptional()
+  @IsIn(IN_HOUSE_SORT_KEYS)
+  sortBy?: InHouseSortKey;
+
+  /** Sort direction; defaults to `asc`. Orders with no value in the column are always last. */
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: SortDirection;
 
   /** Filter by current lifecycle status (the §A.5 tab). */
   @IsOptional()
@@ -59,17 +77,6 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(SamplePriority)
   priority?: SamplePriority;
-
-  /**
-   * Filter by the order-level sample **collection progress** — derived from the
-   * order's workflow items' `collectedAt`: `PENDING` (none collected), `PARTIAL`
-   * (some collected), `COLLECTED` (all collected). Distinct from `status` (the
-   * 15-stage sample lifecycle). Shares `buildCollectionProgressWhere` with the
-   * Order Console's `sampleStatus` filter.
-   */
-  @IsOptional()
-  @IsIn(['PENDING', 'PARTIAL', 'COLLECTED'])
-  collectionStatus?: CollectionProgress;
 
   /** Filter by derived TAT band (§A.4). */
   @IsOptional()
@@ -96,16 +103,6 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsUUID()
   patientId?: string;
 
-  /** Filter by the order's referring doctor. */
-  @IsOptional()
-  @IsUUID()
-  referredByDoctorId?: string;
-
-  /** Filter by the order's referring panel. */
-  @IsOptional()
-  @IsUUID()
-  referralPanelId?: string;
-
   /** Order-date range start (ISO). Filters the linked order's `orderDate`. */
   @IsOptional()
   @IsDateString()
@@ -119,22 +116,17 @@ export class ListSamplesDto extends PaginationQueryDto {
   /**
    * Filter by department: a department id, or `none` for samples with no department.
    * Judged on the SAMPLE's own department (stamped when the sample was created).
+   * Redeclared here on purpose: this REPLACES the parent's UUID-only check, so `none`
+   * is accepted on the In-House list only. The transfer queues share the parent
+   * (`SampleFilterFieldsDto`) and keep rejecting `none`. The `= undefined` initializer
+   * is only there because TypeScript requires one when a subclass redeclares a base
+   * property; it changes nothing at runtime.
    */
   @IsOptional()
   @Matches(DEPARTMENT_FILTER_PATTERN, {
     message: 'departmentId must be a UUID or "none"',
   })
-  departmentId?: string;
-
-  /** Filter to samples whose order includes this branch lab test. */
-  @IsOptional()
-  @IsUUID()
-  branchLabTestId?: string;
-
-  /** Filter to samples whose order includes this branch lab panel. */
-  @IsOptional()
-  @IsUUID()
-  branchLabPanelId?: string;
+  departmentId?: string = undefined;
 
   /** Order mode (Walk-in / Home Visit / Referral / Outsource / Emergency). */
   @IsOptional()
@@ -147,23 +139,11 @@ export class ListSamplesDto extends PaginationQueryDto {
   @MaxLength(100)
   logisticsType?: string;
 
-  /** Filter by the (display) report status. */
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  reportStatus?: string;
-
   /** Only outsourced samples. */
   @IsOptional()
   @ToBoolean()
   @IsBoolean()
   isOutsource?: boolean;
-
-  /** Only urgent/STAT samples (or urgent-billed orders). */
-  @IsOptional()
-  @ToBoolean()
-  @IsBoolean()
-  isUrgent?: boolean;
 
   /** Only home-collection (home-visit) samples. */
   @IsOptional()
@@ -235,4 +215,22 @@ export class ListSamplesDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(200)
   externalPartnerName?: string;
+
+  /** Part of the logistics person's name typed when the sample was sent (case-insensitive). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  logisticsPerson?: string;
+
+  /** Part of the storage location typed when the sample was stored (case-insensitive). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  storeLocation?: string;
+
+  /** Samples discarded with this method (one of the branch's Discard Methods). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  discardMethod?: string;
 }

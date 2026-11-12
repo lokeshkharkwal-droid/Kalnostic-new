@@ -13,7 +13,7 @@ get {
 params:query {
   page: 1
   limit: 20
-  ~search: ACC-00001
+  ~search: ORD-00717
   ~status: NEW
   ~priority: ROUTINE
   ~collectionStatus: PENDING
@@ -31,10 +31,23 @@ params:query {
   ~branchLabPanelId: {{branchLabPanelId}}
   ~orderMode: Home Visit
   ~logisticsType: Courier
-  ~reportStatus: Pending
+  ~reportStatus: SAVED
   ~isOutsource: false
   ~isUrgent: false
   ~isHomeCollection: false
+  ~orderStatus: PARTIALLY_COMPLETED
+  ~orderType: WALK_IN
+  ~createdByUserId: {{userPersonId}}
+  ~logisticsPerson: ravi
+  ~storeLocation: freezer
+  ~discardMethod: Autoclave
+  ~containerTypes: URINE_CONTAINER
+  ~sampleNames: Serum-Plain
+  ~sampleNameNotSet: false
+  ~sampleTypes: Serum
+  ~sampleTypeNotSet: false
+  ~categoryId: {{categoryId}}
+  ~subCategoryId: {{subCategoryId}}
 }
 
 auth:bearer {
@@ -72,10 +85,9 @@ docs {
   ## Filters (toggle the `~` to enable a query param)
 
   - `search` — Global Search (max 50 characters, trimmed, case-insensitive; `%`, `_` and `\` are matched as typed). Matches
-    accession number, barcode, order id (e.g. `ORD-00717`), patient name (a full name matches in any word order: every word
-    must be found across first / middle / last name), UHID, mobile, referral-panel name, and the test or panel name on the
-    order. The same matching as Technician → Reporting's search plus Accession No / UHID / mobile; the summary (tab counts) and
-    the PDF export follow it identically.
+    barcode, order id (e.g. `ORD-00717`), patient name (a full name matches in any word order: every word must be found
+    across first / middle / last name), UHID, mobile, referral-panel name, and the test or panel name on the order. The
+    accession number is NOT searched. The summary (tab counts) and the PDF export follow it identically.
   - `status` — the §A.5 status tab (a `SampleStatus` — the 15-stage lifecycle).
   - `priority` — `ROUTINE` | `URGENT` | `STAT`.
   - `collectionStatus` — order-level **collection progress** `PENDING` | `PARTIAL`
@@ -90,12 +102,26 @@ docs {
     - `departmentId` (a department id, or `none` = samples with no department) is judged on the SAMPLE's own department. With ORDER grouping an order qualifies when at least one of its samples is in the department, and the whole order is shown; with every other grouping, a group is kept when its own samples are in the department.
     - `branchLabTestId` — the order has the test ordered directly, or one of its samples serves the test (so a test that came through a panel is found).
     - `branchLabPanelId` — the order has the panel, in ANY price list (every copy of the panel is matched).
-  - `orderMode` — `Walk-in` | `Home Visit` | `Referral` | `Outsource` | `Emergency`.
-  - `logisticsType` / `reportStatus` — sample scalar filters.
+  - `orderMode` — DEPRECATED (`Walk-in` | `Home Visit` | `Referral` | `Outsource` | `Emergency`); use `orderType` below. Kept only until the frontend stops sending it.
+  - `logisticsType` — sample scalar filter (also matches the transfer's logistics type, see below).
+  - `reportStatus` — one of the nine report statuses the Technician Reporting screen uses: `PENDING` | `PARTIAL_PENDING` | `SAVED` | `VALIDATION_PENDING` | `RESULT_DONE` | `APPROVED` | `PUBLISHED` | `ERROR_REPORTED` | `RESULT_REJECTED`. It reads the sample's real report (the sample's own `reportStatus` column is never written); a sample with no report yet matches no status. A panel member's sample matches its own member report.
   - `isOutsource` / `isUrgent` / `isHomeCollection` — boolean toggles.
+
+  **New filters (2026-10).**
+  - `orderStatus` — the ORDER's overall report progress (the Order Console's "Order Status"): `PENDING` | `PARTIALLY_COMPLETED` | `COMPLETED` | `APPROVED` | `PUBLISHED`. Derived from every test of the order by the same rule the Order Console uses; shows every row of a matching order. Different from `reportStatus`, which is one test's own report.
+  - `orderType` — how the order came in: `WALK_IN` | `APP` | `WEBSITE` (the Registration "Order Type").
+  - `createdByUserId` (UUID) — "Billed by": the person who created the order (`Order.createdBy`).
+  - `logisticsPerson` — part of the logistics person's name, case-insensitive (matches the transfer of a sample that is Sent / Forwarded / Outsourced, or the sample's own column).
+  - `storeLocation` — part of the storage location typed at Store, case-insensitive.
+  - `discardMethod` — samples discarded with that method (matches the reason of the sample's `discard` history entry).
+  - `containerTypes` — one or more `ContainerType` values (repeat the param).
+  - `sampleNames` / `sampleTypes` — one or more values matched EXACTLY as stored (repeat the param; commas are kept). The options list merges spelling variants into one entry and sends all of that entry's variants. `sampleNameNotSet=true` / `sampleTypeNotSet=true` also include samples with no name / type (null or blank).
+  - `categoryId` / `subCategoryId` (UUID) — samples of the tests in that category / subcategory; a test counts when the tenant test OR a branch copy of it is classified there.
 
   Requires a confirmed diagnostic order to exist first (Orders folder) so samples
   have been generated.
+
+  **Same transfer + matched transfer (2026-10).** The transfer filters of one kind are met by ONE transfer: Sent To `destinationBranchId` + `sendDate` (INTERNAL), Forwarded To `externalPartnerName` + `forwardDate` (EXTERNAL), `outsourceCenterId` + `outsourceDate` (OUTSOURCE). So a sample sent to B on the 28th (B rejected it) and later to C on the 30th is found by "B + 28th" but NOT by "B + 30th". While any of these filters is on, every row also carries `matchedTransfer` (same fields as `transfers[0]`, with `destinationBranchName` / `outsourceCenterName`): the latest transfer that met the filter - of the kind that fits the row's status, else the newest. It can differ from `transfers[0]` (the live one): the row's label / Send details describe `matchedTransfer`, the row's actions keep following `transfers[0]`. Without a transfer filter the field is absent. `logisticsType` / `logisticsPerson` are still matched on any transfer of a sample that is out now (not tied to the matched one).
 
   **Where did I send it (sender's filters).** `destinationBranchId` (UUID): only samples Sent RIGHT NOW to that
   branch (status Sent + a live INTERNAL transfer to it; a sample the receiving branch sent back, "Sent - Repeated",
