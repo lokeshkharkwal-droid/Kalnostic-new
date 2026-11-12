@@ -1,4 +1,4 @@
-import { BranchLabTest, LabTestSample } from '@prisma/client';
+import { AgeUnit, BranchLabTest, LabTestSample } from '@prisma/client';
 import { LabTestResultParamWithRefs } from '../../lab-test/entities/lab-test.entity';
 
 /** Domain/response shape for a branch lab test (Prisma model is the DB source of truth). */
@@ -24,6 +24,45 @@ export interface BranchLabTestListRow extends BranchLabTest {
 export interface BranchLabTestConfigSnapshot {
   samples: LabTestSample[];
   resultParams: LabTestResultParamWithRefs[];
+}
+
+/**
+ * Prisma `select` for a branch test's Age Restriction columns (mirrored from the
+ * Master Data test on import/sync). Shared by the Create-Order options and the
+ * order-time enforcement so both read the same fields.
+ */
+export const AGE_RESTRICTION_SELECT = {
+  isAgeRestricted: true,
+  minAgeValue: true,
+  minAgeUnit: true,
+  maxAgeValue: true,
+  maxAgeUnit: true,
+} as const;
+
+/**
+ * A branch test's Age Restriction. `isAgeRestricted` false (all bounds `null`)
+ * = no age limit; true = the patient's age on the order date must lie inside
+ * min..max (min inclusive, max covers its whole unit).
+ */
+export interface BranchLabTestAgeRestriction {
+  isAgeRestricted: boolean;
+  minAgeValue: number | null;
+  minAgeUnit: AgeUnit | null;
+  maxAgeValue: number | null;
+  maxAgeUnit: AgeUnit | null;
+}
+
+/**
+ * An age-restricted member test of a branch panel, carried on the Create-Order
+ * panel option so the panel can be checked before it is added.
+ */
+export interface AgeRestrictedPanelMember {
+  branchLabTestId: string;
+  testName: string;
+  minAgeValue: number;
+  minAgeUnit: AgeUnit;
+  maxAgeValue: number;
+  maxAgeUnit: AgeUnit;
 }
 
 /**

@@ -1,4 +1,5 @@
 import {
+  AgeUnit,
   ApprovalWorkflow,
   DayOfWeek,
   ProcessMethod,
@@ -328,6 +329,34 @@ export class CreateLabTestDto {
   @IsBoolean()
   @IsOptional()
   isOverrideAllowed?: boolean;
+
+  // ── Age Restriction ───────────────────────────────────────────────────────────
+  // When `isAgeRestricted` is true all four bounds are required and min must not
+  // exceed max (checked in LabTestService); when false the bounds are cleared
+  // (= no age limit). `null` is accepted for each bound so a client can clear it.
+  @IsBoolean()
+  @IsOptional()
+  isAgeRestricted?: boolean;
+
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  @IsOptional()
+  minAgeValue?: number | null;
+
+  @IsEnum(AgeUnit)
+  @IsOptional()
+  minAgeUnit?: AgeUnit | null;
+
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  @IsOptional()
+  maxAgeValue?: number | null;
+
+  @IsEnum(AgeUnit)
+  @IsOptional()
+  maxAgeUnit?: AgeUnit | null;
 
   // ── Status ────────────────────────────────────────────────────────────────────
   @IsBoolean()

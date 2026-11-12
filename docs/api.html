@@ -522,7 +522,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
   <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
-  <tr><td>GET /branch-lab-tests/options</td><td>Business JWT</td><td>lightweight orderable options (active default variants) for pickers; <code>search</code> on testName, <code>listId</code>, opt-in <code>preferredOnly</code> (unsearched view → preference tests) and <code>includeAka</code> (search also matches the AKA name — Create-Order picker)</td></tr>
+  <tr><td>GET /branch-lab-tests/options</td><td>Business JWT</td><td>lightweight orderable options (active default variants) for pickers; <code>search</code> on testName, <code>listId</code>, opt-in <code>preferredOnly</code> (unsearched view → preference tests) and <code>includeAka</code> (search also matches the AKA name — Create-Order picker); each option carries the test's Age Restriction (<code>isAgeRestricted</code>, <code>minAgeValue</code>/<code>minAgeUnit</code>, <code>maxAgeValue</code>/<code>maxAgeUnit</code>). The matching <code>GET /branch-lab-panels/options</code> carries <code>ageRestrictedTests[]</code> (the panel's restricted member tests with their ranges)</td></tr>
   <tr><td>GET /branch-lab-tests/:id</td><td>Business JWT</td><td>get one branch lab test (with configSnapshot)</td></tr>
   <tr><td>PUT /branch-lab-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/notes/active)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>
@@ -552,6 +552,10 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>PATCH /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>rename a panel list</td></tr>
   <tr><td>DELETE /branch-lab-panel-lists/:id</td><td>Business JWT</td><td>soft-delete a panel list + rows/members (blocked for default Walk-in)</td></tr>
   <tr><td>GET /referral-lists/resolve</td><td>Business JWT</td><td>resolve an order's pricing lists from referrals + PT category (priority PANEL→PT_CATEGORY→DOCTOR→INTERNAL→EXTERNAL→Walk-in)</td></tr>
+  <tr><td>GET /referral-panels</td><td>Business JWT</td><td>paginated referral panels (search name/panel code, clientType, status, branchId; newest first) — each row also carries <code>hasActiveOrder</code>, <code>labTestList</code>/<code>labPanelList</code>, <code>lastOrderCreatedAt</code> (ISO <code>createdAt</code> of the latest non-deleted order using it, drafts &amp; quotations excluded; <code>null</code> when none) and <code>isB2bLoginEnabled</code> (the panel's B2B login exists and its user can sign in)</td></tr>
+  <tr><td>GET /referral-doctors</td><td>Business JWT</td><td>paginated referral doctors (search name/mobile, departmentId, categoryId, status, branchId; newest first) — each row also carries <code>hasActiveOrder</code>, <code>labTestList</code>/<code>labPanelList</code>, <code>lastOrderCreatedAt</code> (ISO <code>createdAt</code> of the latest non-deleted order using it, drafts &amp; quotations excluded; <code>null</code> when none) and <code>isB2bLoginEnabled</code> (always false: only panels have B2B logins)</td></tr>
+  <tr><td>GET /external-referrals</td><td>Business JWT</td><td>paginated external referrals (search name/organisation/mobile/code, status, branchId; newest first) — each row also carries <code>hasActiveOrder</code>, <code>labTestList</code>/<code>labPanelList</code>, <code>lastOrderCreatedAt</code> (ISO <code>createdAt</code> of the latest non-deleted order using it, drafts &amp; quotations excluded; <code>null</code> when none) and <code>isB2bLoginEnabled</code> (always false: only panels have B2B logins)</td></tr>
+  <tr><td>GET /internal-referrals</td><td>Business JWT</td><td>paginated internal referrals (search name/mobile, status, branchId; newest first) — each row also carries <code>hasActiveOrder</code>, <code>labTestList</code>/<code>labPanelList</code>, <code>lastOrderCreatedAt</code> (ISO <code>createdAt</code> of the latest non-deleted order using it, drafts &amp; quotations excluded; <code>null</code> when none) and <code>isB2bLoginEnabled</code> (always false: only panels have B2B logins)</td></tr>
   <tr><td>POST /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template, code SA-Dep-{n})</td></tr>
   <tr><td>GET /siteadmin/departments</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global templates)</td></tr>
   <tr><td>GET /siteadmin/departments/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
@@ -1276,6 +1280,12 @@ tests never appear regardless of status.</div>
   cross-field rules (price ordering, mandatory-dept, repeat-interval, calc-formula, range bounds,
   result-level <code>criticalMin ≤ criticalMax</code>) →
   <span class="pill">422 VALIDATION_ERROR</span>. <code>isActive</code> optional (default <code>true</code>).</p>
+  <p><b>Age Restriction</b> (Basic Details): <code>isAgeRestricted</code> (default <code>false</code> = no age limit)
+  + <code>minAgeValue</code>/<code>minAgeUnit</code> + <code>maxAgeValue</code>/<code>maxAgeUnit</code> (integers 0–999,
+  units <code>DAYS</code>/<code>MONTHS</code>/<code>YEARS</code>). When enabled all four bounds are required and Minimum must
+  not exceed Maximum on the calendar (the max covers its whole unit) — else <span class="pill">422 VALIDATION_ERROR</span>;
+  when disabled the bounds are stored as <code>null</code>. Copied to Branch Master Data and the branch Lab Test List by the
+  normal import/sync, and enforced on orders (<span class="pill">422 ORDER_TEST_AGE_RESTRICTED</span>).</p>
   <p>Each result param may carry result-level <code>criticalMin</code>/<code>criticalMax</code> and
   <code>reflexTests</code>: a list of <code>{ id, name }</code> stored verbatim as a <b>JSON snapshot</b>
   (the <code>reflex_tests</code> column) and returned as-is on read — ids are validated as UUIDs but not
@@ -1473,7 +1483,8 @@ tests never appear regardless of status.</div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>Patch core fields (send only what changes). When <code>samples</code> or <code>resultParams</code> is
   provided, that whole child set is <b>replaced</b> in one transaction. Same conflicts/cross-field rules as
-  create. Toggle Active/Inactive via <code>isActive</code>.</p>
+  create. Toggle Active/Inactive via <code>isActive</code>. Age Restriction fields omitted = left unchanged; a
+  partial patch is merged with the stored values before validation; <code>"isAgeRestricted": false</code> clears the bounds.</p>
   <p><b>Parameters:</b> send each existing parameter's <code>id</code> so a rename of its <code>parameterCode</code>
   keeps the parameter and the results entered for it; without an <code>id</code> it is matched by
   <code>parameterCode</code>. A parameter nothing matches is created (a client <code>id</code> is never used for the new
@@ -2447,6 +2458,14 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   <span class="pill">MODULE_NOT_ENABLED_FOR_BRANCH</span>). Branch scoping as above. Audited under
   <code>AuditModule.USER</code>.</p>
 </div>
+
+<div class="note"><b>Lab test Age Restriction is enforced on orders.</b> <code>POST /orders</code> (every status except
+QUOTE) rejects a test line whose branch test is age-restricted — and a panel line containing such a member — when the
+patient's age on <code>orderDate</code> is outside its range (min inclusive, max covers its whole unit):
+<span class="pill">422 ORDER_TEST_AGE_RESTRICTED</span>, with the patient's age and the allowed range in the message.
+A restricted line for a patient with neither DOB nor age → <span class="pill">422 ORDER_PATIENT_AGE_REQUIRED</span>.
+<code>PATCH /orders/:id</code> checks only lines new to the order, or every effective line when it finalizes the order
+(<code>status = ORDER</code> from DRAFT / APPOINTMENT, even with no <code>items</code>).</div>
 
 <div class="note"><b>Enforced on order creation.</b> The <code>ChargesAndDeductions_*</code>
 TDS &amp; discount settings are applied server-side when finalizing an order

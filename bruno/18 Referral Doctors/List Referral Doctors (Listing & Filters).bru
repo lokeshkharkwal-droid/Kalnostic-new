@@ -55,9 +55,9 @@ docs {
   `mobileNumber`, `email`, `department` (`{ id, name }` or `null`), `specialty`
   (the linked category `{ id, name }`, or `null`), `superSpecialty` (the linked
   sub-category `{ id, name }`, or `null`), `isCommissionApplicable`, `status`,
-  `hasActiveOrder`, and `labTestList` / `labPanelList` — `{ id, name } | null` — the
-  caller's active branch's assigned Lab Test List / Lab Panel List, bulk-resolved for
-  the whole page (not a per-row lookup). Fetch the full record (all fields,
+  `hasActiveOrder`, `lastOrderCreatedAt`, `isB2bLoginEnabled`, and `labTestList` /
+  `labPanelList` — `{ id, name } | null` — the caller's active branch's assigned Lab
+  Test List / Lab Panel List, bulk-resolved for the whole page (not a per-row lookup). Fetch the full record (all fields,
   qualifications, experiences, the raw `branchLabTestListId`/`branchLabPanelListId`,
   derived `age`/`duration`) via "Get Referral Doctor".
 
@@ -65,4 +65,13 @@ docs {
     an active accessioning/technician-stage workflow; the client uses it to disable
     the Delete action (deletion returns **409 `REFERRAL_DOCTOR_IN_USE`**).
     Bulk-resolved for the whole page.
+
+  - `lastOrderCreatedAt` (ISO date-time | `null`) — when the most recent order using
+    this doctor was **created** (the order's `createdAt`, UTC; not the user-entered
+    order date). Counts every non-deleted order except drafts (`DRAFT`) and
+    quotations (`QUOTE`) — appointments and cancelled orders count. `null` when no
+    such order exists. Computed live for the whole page (one grouped query).
+
+  - `isB2bLoginEnabled` (boolean) — always `false` today: only referral panels can
+    have a B2B login. Sent so all four referral listings share one row shape.
 }

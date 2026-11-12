@@ -349,7 +349,9 @@ export class ExternalReferralService {
    * (whitespace-tokenised, with organisation name / mobile number / referral code as
    * fallbacks), a `status` filter, and a `branchId` filter.
    * Each row is enriched with the active branch's assigned Lab Test List / Lab
-   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row).
+   * Panel List (bulk-resolved in a fixed number of extra queries, never per-row),
+   * plus `hasActiveOrder`, `lastOrderCreatedAt` (latest counted order's creation
+   * time) and `isB2bLoginEnabled` (always false — only panels have B2B logins).
    * @param tenantId tenant scope
    * @param activeBranchId caller's active branch (from JWT); used to resolve the
    *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
@@ -394,23 +396,33 @@ export class ExternalReferralService {
       }),
       this.prisma.externalReferral.count({ where }),
     ]);
-    const assignments =
-      await this.listAssignmentService.getAssignmentsWithListNames(
+    const ids = rows.map((r) => r.id);
+    const [assignments, activeIds, lastOrderAt] = await Promise.all([
+      this.listAssignmentService.getAssignmentsWithListNames(
         tenantId,
         activeBranchId,
         ReferralType.EXTERNAL,
-        rows.map((r) => r.id),
-      );
-    const activeIds = await this.referralUsage.findActiveReferralIds(
-      tenantId,
-      'externalReferralId',
-      rows.map((r) => r.id),
-    );
+        ids,
+      ),
+      this.referralUsage.findActiveReferralIds(
+        tenantId,
+        'externalReferralId',
+        ids,
+      ),
+      this.referralUsage.findLastOrderCreatedAt(
+        tenantId,
+        'externalReferralId',
+        ids,
+      ),
+    ]);
     const data: ExternalReferralListItem[] = rows.map((r) => ({
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
       hasActiveOrder: activeIds.has(r.id),
+      lastOrderCreatedAt: lastOrderAt.get(r.id) ?? null,
+      // Only referral panels can have a B2B login today (see the entity doc).
+      isB2bLoginEnabled: false,
     }));
     return { data, total, page, limit };
   }

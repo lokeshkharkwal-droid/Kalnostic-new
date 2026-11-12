@@ -37,6 +37,7 @@ export const DEFAULT_LAB_TEST_FIELD_PERMISSIONS: LabTestFieldPermissionsMap = {
     'Mandatory Test',
     'Hide in Order Screen',
     'Repeat Interval Restriction',
+    'Age Restriction',
   ]),
   Pricing: allTrue([
     'Price MSRP',
