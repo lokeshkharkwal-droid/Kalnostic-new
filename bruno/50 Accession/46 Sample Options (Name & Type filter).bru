@@ -1,0 +1,68 @@
+meta {
+  name: 46 Sample Options (Name & Type filter)
+  type: http
+  seq: 46
+}
+
+get {
+  url: {{baseUrl}}/accession/order-samples/sample-options?field=name&page=1&limit=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  field: name
+  page: 1
+  limit: 20
+  ~search: serum
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the paginated options and the Not set count", function () {
+    const b = res.getBody();
+    expect(b.data).to.be.an("array");
+    expect(b.meta).to.have.property("total");
+    expect(b.meta).to.have.property("notSetCount");
+  });
+  test("each option carries key, label, values, count, isStandard", function () {
+    const d = res.getBody().data;
+    if (d.length) {
+      ["key", "label", "values", "count", "isStandard"].forEach((k) =>
+        expect(d[0]).to.have.property(k)
+      );
+    }
+  });
+}
+
+docs {
+  The choices of the In-House **Sample Name** / **Sample Type** filter. Reads the distinct values the
+  samples visible to the active branch really hold (samples held by this branch, plus samples moved
+  to / from it by a transfer), so the list is data-driven - sample name and type are free text and
+  many real values are not on the standard lists.
+
+  Query:
+  - `field` (required) — `name` or `type`.
+  - `search` — part of a name or of any stored spelling, case-insensitive (max 100).
+  - `page` / `limit` — usual offset paging (limit max 100, default 20).
+
+  Response `data` is the page of options; `meta` carries the paging fields plus `notSetCount`:
+  - `meta.notSetCount` — samples with no value at all (null or blank). The frontend shows this as the
+    "Not set" choice; picking it sends `sampleNameNotSet=true` / `sampleTypeNotSet=true` to the
+    list endpoints.
+  - option `key` — the normalised spelling (ignores capitals, spacing and punctuation).
+  - option `label` — the standard spelling when the value matches the standard list, else the most
+    used spelling. Standard entries are listed first, the others after ("Other"), each alphabetical.
+  - option `values` — EVERY spelling the entry stands for ("Serum (Plain)" and "Serum-Plain" are one
+    entry). Send all of them as repeated `sampleNames=` / `sampleTypes=` params; the list endpoints
+    match each exactly as stored.
+  - option `count` — samples holding any of the spellings; `isStandard` — matches the standard list.
+
+  A standard entry the branch does not have is not listed (nothing would match).
+}

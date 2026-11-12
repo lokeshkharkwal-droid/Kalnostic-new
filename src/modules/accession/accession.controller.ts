@@ -17,6 +17,7 @@ import type { Response } from 'express';
 import { OrderSampleService } from './accession-sample.service';
 import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
 import { ListSamplesDto } from './dto/list-samples.dto';
+import { ListSampleOptionsDto } from './dto/list-sample-options.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
 import { AcceptSampleDto } from './dto/accept-sample.dto';
@@ -110,6 +111,20 @@ export class AccessionController {
   }
 
   /**
+   * The choices of the Sample Name / Sample Type filter (`?field=name|type`): the
+   * distinct values this branch's samples hold, spelling variants merged, with the
+   * "Not set" count. Searchable + paginated. Declared before `:id`.
+   */
+  @Get('sample-options')
+  sampleOptions(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListSampleOptionsDto,
+  ) {
+    return this.sampleService.sampleOptions(tenantId, profile.branchId, query);
+  }
+
+  /**
    * Grouped in-house list — records grouped + paginated by group (10/page) per
    * the tenant's Grouping Settings (Sample/Order/Department/Department+Sample).
    * Declared before `:id` so `grouped` is never captured as an id.
@@ -143,6 +158,26 @@ export class AccessionController {
     @Param('orderId') orderId: string,
   ) {
     return this.sampleService.findOrderGrouped(tenantId, orderId);
+  }
+
+  /**
+   * The read-only Order Overview of the In-House list: every test of the order this branch's list
+   * shows, with each test's report status and where a sent sample is now. Declared before `:id`
+   * (3 segments - never captured as an id).
+   */
+  @Get('order/:orderId/overview')
+  findOrderOverview(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.sampleService.findOrderOverview(
+      tenantId,
+      profile.branchId,
+      personId,
+      orderId,
+    );
   }
 
   // ── Print Label (in-house/referral/external-referral orders) — declared

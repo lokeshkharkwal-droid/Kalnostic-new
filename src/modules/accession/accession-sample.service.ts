@@ -10,7 +10,6 @@ import {
   LabTestSample,
   OrderStatus,
   Prisma,
-  SamplePriority,
   SampleStatus,
   TransferKind,
   TransferStatus,
@@ -21,12 +20,9 @@ import { ReferralPanelAccessDeniedException } from '../../common/exceptions/refe
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { barcodeGroupKey } from './utils/barcode-group-key';
+import { escapeLike } from './utils/like-escape.util';
 import { NO_DEPARTMENT_FILTER } from './constants/department-filter.constant';
-import { timestampRange } from '../../common/utils/date-range.util';
-import {
-  buildCollectionProgressWhere,
-  collectionProgressByOrder,
-} from '../../common/utils/collection-progress.util';
+import { collectionProgressByOrder } from '../../common/utils/collection-progress.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
@@ -47,6 +43,7 @@ import {
   nextSampleStatus,
   FORCE_TARGET,
   COLLECTABLE_SAMPLE_STATUSES,
+  TRANSFERRED_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
   TAT_STATUSES,
@@ -63,7 +60,22 @@ import {
 } from './constants/transfer-close-reasons.constant';
 import { AccessionSettingsService } from './accession-settings.service';
 import { BarcodeService } from './barcode.service';
-import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
+import { ListSamplesDto } from './dto/list-samples.dto';
+import { ListSampleOptionsDto } from './dto/list-sample-options.dto';
+import { buildSampleOptions } from './utils/sample-options.util';
+import {
+  followCloneChain,
+  pickNotesAnchor,
+  reportForSample,
+} from './utils/order-overview.util';
+import { loadSampleReportLinks } from './utils/sample-report-links.util';
+import { OrderNotFoundException } from '../order/exceptions/order.exceptions';
+import type {
+  OrderOverview,
+  OrderOverviewTest,
+} from './entities/order-overview.entity';
+import { resolveAsyncSampleFilters } from './utils/sample-filter-resolvers.util';
+import type { SampleOption } from './utils/sample-options.util';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
@@ -78,6 +90,8 @@ import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import {
   SAMPLE_INCLUDE,
   SAMPLE_LIST_INCLUDE,
+  LIST_TRANSFER_SELECT,
+  ListRowTransfer,
   OrderSampleListItem,
   OrderSampleListRow,
   OrderSampleDetail,
@@ -120,7 +134,12 @@ import {
   isPreviousHolder,
 } from './utils/previous-holders.util';
 import { assertDestinationOffers } from './utils/destination-offers.util';
-import { escapeLike } from './utils/like-escape.util';
+import {
+  buildSampleFilterConditions,
+  transferMatches,
+  transferWhereOf,
+  ResolvedSampleFilters,
+} from './utils/sample-filters.util';
 import {
   findPanelMemberEntryFor,
   findSampleDefinitionAt,
@@ -143,6 +162,7 @@ import {
   RETURNED_BY_RECEIVER_ACTION,
 } from './utils/returned-by-receiver.util';
 import { isHiddenFromReceiver } from './utils/receiver-visibility.util';
+import { sortedOrderPage } from './utils/in-house-sort.query';
 import {
   BARCODE_AUDIT_ACTIONS,
   BARCODE_REMOVED_ACTION,
@@ -251,20 +271,7 @@ interface RecallAuditInfo {
   }>;
 }
 
-/**
- * The statuses a sample is in while it lives at another branch / partner / center
- * via an open transfer (Send/Forward/Outsource). A local action that moves a sample
- * OUT of one of these (Retrieve / Repeat) is a "recall": its outstanding
- * transfer(s) — and, for an accepted internal transfer, the clone materialised in
- * the receiving branch — must be unwound so no stale record is left cross-branch.
- */
-const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
-  SampleStatus.SENT_INTERNAL,
-  SampleStatus.FORWARD_EXTERNAL,
-  SampleStatus.OUTSOURCED,
-]);
-
-/** True while the sample lives at another branch/partner/center (see above). */
+/** True while the sample lives at another branch/partner/center (see `TRANSFERRED_STATUSES`). */
 function isTransferredStatus(status: SampleStatus): boolean {
   return TRANSFERRED_STATUSES.has(status);
 }
@@ -1327,19 +1334,13 @@ export class OrderSampleService {
       personId,
     );
 
-    const filterCtx = await this.resolveSampleFilterContext(
-      tenantId,
-      branchId,
-      query,
-    );
-    const where = this.buildSampleWhere(
+    const where = await this.buildScopedWhere(
       tenantId,
       branchId,
       query,
       tat,
       nowMs,
       scopeIds,
-      filterCtx,
     );
 
     // withTenant (not array-form $transaction) so the RLS tenant GUC is set for
@@ -1363,7 +1364,10 @@ export class OrderSampleService {
     );
     const named = await this.withDiscardMethods(
       tenantId,
-      await this.withTransferNames(tenantId, data),
+      await this.withTransferNames(
+        tenantId,
+        await this.withMatchedTransfers(tenantId, data, query),
+      ),
     );
     const items: OrderSampleListItem[] = named.map((row) => ({
       ...row,
@@ -1403,19 +1407,13 @@ export class OrderSampleService {
       tenantId,
       personId,
     );
-    const filterCtx = await this.resolveSampleFilterContext(
-      tenantId,
-      branchId,
-      query,
-    );
-    const where = this.buildSampleWhere(
+    const where = await this.buildScopedWhere(
       tenantId,
       branchId,
       query,
       tat,
       nowMs,
       scopeIds,
-      filterCtx,
     );
 
     const { orderIds, total, rows, mode, collectionByOrderId } =
@@ -1427,18 +1425,35 @@ export class OrderSampleService {
         const mode =
           tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
 
-        // Page of order ids (ordered by most-recent sample) + total order count.
-        const [pageGroups, allGroups] = await Promise.all([
-          tx.orderSample.groupBy({
-            by: ['orderId'],
+        // Page of order ids + total order count. Default: ordered by the most recent sample;
+        // with `sortBy`, ordered by that column (see `sortedOrderPage`).
+        let orderIds: string[];
+        let total: number;
+        if (query.sortBy) {
+          ({ orderIds, total } = await sortedOrderPage(tx, {
+            tenantId,
             where,
-            orderBy: { _max: { createdAt: 'desc' } },
-            skip: (page - 1) * limit,
-            take: limit,
-          }),
-          tx.orderSample.groupBy({ by: ['orderId'], where }),
-        ]);
-        const orderIds = pageGroups.map((g) => g.orderId);
+            sortBy: query.sortBy,
+            dir: query.sortOrder ?? 'asc',
+            page,
+            limit,
+            tat,
+            nowMs,
+          }));
+        } else {
+          const [pageGroups, allGroups] = await Promise.all([
+            tx.orderSample.groupBy({
+              by: ['orderId'],
+              where,
+              orderBy: { _max: { createdAt: 'desc' } },
+              skip: (page - 1) * limit,
+              take: limit,
+            }),
+            tx.orderSample.groupBy({ by: ['orderId'], where }),
+          ]);
+          orderIds = pageGroups.map((g) => g.orderId);
+          total = allGroups.length;
+        }
 
         // Fetch all samples belonging to this page's orders.
         const rows = await tx.orderSample.findMany({
@@ -1458,7 +1473,7 @@ export class OrderSampleService {
 
         return {
           orderIds,
-          total: allGroups.length,
+          total,
           rows,
           mode,
           collectionByOrderId,
@@ -1491,7 +1506,10 @@ export class OrderSampleService {
     // The destination / center names the "Send details" column shows (one lookup per page).
     const namedRows = await this.withDiscardMethods(
       tenantId,
-      await this.withTransferNames(tenantId, rows),
+      await this.withTransferNames(
+        tenantId,
+        await this.withMatchedTransfers(tenantId, rows, query),
+      ),
     );
 
     // Assemble one InHouseOrderGroup per paged order id (order-first).
@@ -1792,12 +1810,7 @@ export class OrderSampleService {
     );
     const tat = await this.tatThresholds(tenantId, branchId);
     const nowMs = Date.now();
-    const filterCtx = await this.resolveSampleFilterContext(
-      tenantId,
-      branchId,
-      query,
-    );
-    const where = this.buildSampleWhere(
+    const where = await this.buildScopedWhere(
       tenantId,
       branchId,
       {
@@ -1810,7 +1823,6 @@ export class OrderSampleService {
       tat,
       nowMs,
       scopeIds,
-      filterCtx,
     );
 
     const grouped = await this.prisma.orderSample.groupBy({
@@ -2149,7 +2161,7 @@ export class OrderSampleService {
    * codebase today. Falls back to `null` for either field rather than
    * guessing, e.g. if the person has no active profile at this branch anymore.
    */
-  private async enrichHistoryActors(
+  async enrichHistoryActors(
     rows: OrderSampleStatusHistory[],
     tenantId: string,
     branchId: string | null,
@@ -5219,6 +5231,302 @@ export class OrderSampleService {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   /**
+   * The read-only Order Overview behind the In-House list's Order ID: every test of the order that
+   * THIS branch's list shows (same rows, same department visibility - so the two cannot drift),
+   * each with its report status and, for a sample this branch sent on, where it is now. The notes
+   * anchor is the first report of the order held at this branch (see `pickNotesAnchor`).
+   * Read-only: it changes nothing. Its rows carry everything the list's status label reads
+   * (`transfers`, `status`), so the popup shows the same "Sent - Rejected" the list does.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId the active branch (from the JWT profile)
+   * @param personId the caller, for the department-visibility scope
+   * @param orderId the order to describe
+   */
+  async findOrderOverview(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    orderId: string,
+  ): Promise<OrderOverview> {
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const nowMs = Date.now();
+
+    const loaded = await this.prisma.withTenant(tenantId, async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id: orderId, tenantId, deletedAt: null },
+        select: { id: true, orderCode: true, status: true },
+      });
+      if (!order) return null;
+
+      const rows = await tx.orderSample.findMany({
+        where: {
+          tenantId,
+          branchId,
+          orderId,
+          deletedAt: null,
+          AND: [this.departmentScopeForSamples(scopeIds)],
+        },
+        include: SAMPLE_LIST_INCLUDE,
+        orderBy: { createdAt: 'asc' },
+      });
+      const reports = await tx.labReport.findMany({
+        where: { tenantId, deletedAt: null, orderItem: { orderId } },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          status: true,
+          branchId: true,
+          orderItemId: true,
+          labTestId: true,
+          memberBranchLabTestId: true,
+        },
+      });
+
+      // The links each sample needs to find its report, and where each sent sample is now: both
+      // follow the chain of copies (an accepted INTERNAL transfer makes a copy at the receiving
+      // branch, and the report is re-pointed at THAT copy's test).
+      const { linksBySample, cloneOf } = await loadSampleReportLinks(
+        tx,
+        tenantId,
+        rows.map((r) => r.id),
+      );
+      const holderIds = [
+        ...new Set(
+          rows
+            .map((r) => followCloneChain(r.id, cloneOf))
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+      const holders =
+        holderIds.length > 0
+          ? await tx.orderSample.findMany({
+              where: { id: { in: holderIds }, tenantId },
+              select: { id: true, status: true, branchId: true },
+            })
+          : [];
+
+      const branchIds = [
+        ...new Set(
+          [
+            ...holders.map((h) => h.branchId),
+            ...reports.map((r) => r.branchId),
+          ].filter((id): id is string => !!id),
+        ),
+      ];
+      const branches =
+        branchIds.length > 0
+          ? await tx.branch.findMany({
+              where: { id: { in: branchIds }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [];
+      const deptIds = [
+        ...new Set(
+          rows.map((r) => r.departmentId).filter((v): v is string => !!v),
+        ),
+      ];
+      const departments =
+        deptIds.length > 0
+          ? await tx.department.findMany({
+              where: { id: { in: deptIds }, tenantId, deletedAt: null },
+              select: { id: true, name: true },
+            })
+          : [];
+      return {
+        order,
+        rows,
+        reports,
+        linksBySample,
+        cloneOf,
+        holders,
+        branches,
+        departments,
+      };
+    });
+    if (!loaded) throw new OrderNotFoundException(orderId);
+
+    const {
+      order,
+      rows,
+      reports,
+      linksBySample,
+      cloneOf,
+      holders,
+      branches,
+      departments,
+    } = loaded;
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      rows.map((r) => r.id),
+    );
+    const named = await this.withTransferNames(tenantId, rows);
+
+    const branchName = new Map(branches.map((b) => [b.id, b.name]));
+    const deptName = new Map(departments.map((d) => [d.id, d.name]));
+    const holderById = new Map(holders.map((h) => [h.id, h]));
+
+    const tests: OrderOverviewTest[] = named.map((row) => {
+      const report = reportForSample(
+        linksBySample.get(row.id) ?? [],
+        reports,
+        branchId,
+      );
+      const holderId = followCloneChain(row.id, cloneOf);
+      const holder = holderId ? holderById.get(holderId) : undefined;
+      return {
+        sample: {
+          ...row,
+          tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+          itemRemoved: removedIds.has(row.id),
+        },
+        testName:
+          row.tests
+            .map((t) => t.testName)
+            .filter((n): n is string => !!n)
+            .join(', ') || '',
+        department: row.departmentId
+          ? (deptName.get(row.departmentId) ?? null)
+          : null,
+        report: report
+          ? {
+              id: report.id,
+              status: report.status,
+              heldHere: !!branchId && report.branchId === branchId,
+              heldAtBranchName: report.branchId
+                ? (branchName.get(report.branchId) ?? null)
+                : null,
+            }
+          : null,
+        holder: holder
+          ? {
+              branchId: holder.branchId,
+              branchName: holder.branchId
+                ? (branchName.get(holder.branchId) ?? null)
+                : null,
+              status: holder.status,
+            }
+          : null,
+      };
+    });
+
+    return {
+      orderId: order.id,
+      orderCode: order.orderCode,
+      orderCancelled: order.status === OrderStatus.CANCELLED,
+      notesReportId: pickNotesAnchor(reports, branchId),
+      tests,
+    };
+  }
+
+  /**
+   * The choices of the Sample Name / Sample Type filter: the distinct values the
+   * samples visible to this branch really hold, spelling variants merged into one
+   * entry (see `buildSampleOptions`), plus the "Not set" count - the number of samples
+   * with no value. Visible = held by this branch, or moved to / from it by a transfer.
+   * Searchable and paginated like every dropdown.
+   */
+  async sampleOptions(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSampleOptionsDto,
+  ): Promise<PaginatedResult<SampleOption> & { notSetCount: number }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const column = query.field === 'name' ? 'sampleName' : 'sampleType';
+    const where: Prisma.OrderSampleWhereInput = { tenantId, deletedAt: null };
+    if (branchId) {
+      where.OR = [
+        { branchId },
+        {
+          transfers: {
+            some: {
+              deletedAt: null,
+              OR: [
+                { originBranchId: branchId },
+                { destinationBranchId: branchId },
+              ],
+            },
+          },
+        },
+      ];
+    }
+    const rows = await this.prisma.orderSample.groupBy({
+      by: [column],
+      where,
+      _count: { _all: true },
+    });
+    const { notSetCount, options } = buildSampleOptions(
+      rows.map((r) => ({ value: r[column], count: r._count._all })),
+      query.field,
+      query.search,
+    );
+    const start = (page - 1) * limit;
+    return {
+      ...paginated(
+        options.slice(start, start + limit),
+        options.length,
+        page,
+        limit,
+      ),
+      notSetCount,
+    };
+  }
+
+  /**
+   * Resolve the list filters that need an extra query - category / subcategory and
+   * report status - into plain id lists, then build the scoped `where`. Every list
+   * and the summary go through here so the tabs, TAT cards and rows stay in step.
+   */
+  private async buildScopedWhere(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+    tat: TatThresholds,
+    nowMs: number,
+    scopeIds: string[],
+  ): Promise<Prisma.OrderSampleWhereInput> {
+    const resolved = await this.resolveAsyncFilters(tenantId, branchId, query);
+    const filterCtx = await this.resolveSampleFilterContext(
+      tenantId,
+      branchId,
+      query,
+    );
+    return this.buildSampleWhere(
+      tenantId,
+      branchId,
+      query,
+      tat,
+      nowMs,
+      scopeIds,
+      resolved,
+      filterCtx,
+    );
+  }
+
+  /**
+   * The filters a plain relation condition cannot express (category, report status,
+   * order status), resolved with one tenant-scoped query each - see
+   * `resolveAsyncSampleFilters`, shared with the transfer queues. This screen shows the
+   * active branch's samples, so that is the scope the reports / orders are read in.
+   */
+  private resolveAsyncFilters(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<ResolvedSampleFilters> {
+    return resolveAsyncSampleFilters(this.prisma, tenantId, query, {
+      tenantId,
+      branchId,
+      deletedAt: null,
+    });
+  }
+
+  /**
    * Look up what the Department / Lab Test / Lab Panel filters depend on:
    *  - the grouping mode (ORDER keeps a qualifying order whole; the other modes match the sample),
    *  - the Lab Test dropdown row's master test id (the dropdown sends a branch test id),
@@ -5282,11 +5590,16 @@ export class OrderSampleService {
   }
 
   /**
-   * Build the tenant/branch-scoped `where` for the sample list from the §A.3
-   * filter panel. Order-level filters (date range, department, lab test/panel,
-   * order mode, home-collection) are applied through the `order` relation; the
-   * TAT band is translated to a `createdAt` range. `AND` holds the composite
-   * conditions (search + urgent + outsource) so they don't clobber each other.
+   * Build the tenant/branch-scoped `where` for the sample list: the user-chosen
+   * filters (see {@link buildSampleFilterConditions}, shared with other lists) plus
+   * the mandatory SCOPE - tenant, active branch, not deleted and the caller's
+   * department visibility. `AND` holds the composite conditions so they never
+   * clobber each other; the department scope is pushed last.
+   *
+   * Three things are In-House-only and are applied HERE instead of in the shared
+   * builder, so the transfer queues (which use the shared builder) keep their own
+   * matching: the sample-level Department / Lab Test / Lab Panel filters (see
+   * {@link SampleFilterContext}) and the Global Search.
    */
   private buildSampleWhere(
     tenantId: string,
@@ -5295,40 +5608,30 @@ export class OrderSampleService {
     tat: TatThresholds,
     nowMs: number,
     scopeIds: string[],
+    resolved: ResolvedSampleFilters = {},
     filterCtx: SampleFilterContext = {},
   ): Prisma.OrderSampleWhereInput {
+    // The In-House-only filters (Department / Lab Test / Lab Panel and the Global
+    // Search) are left out of the shared builder - they are applied below. The transfer
+    // queues call the shared builder with these set and keep their own matching.
+    const { sample, order, and } = buildSampleFilterConditions(
+      {
+        ...query,
+        search: undefined,
+        departmentId: undefined,
+        branchLabTestId: undefined,
+        branchLabPanelId: undefined,
+      },
+      tat,
+      nowMs,
+      resolved,
+    );
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
+      ...sample,
     };
-    if (query.status) where.status = query.status;
-    if (query.priority) where.priority = query.priority;
-    if (query.orderId) where.orderId = query.orderId;
-    if (query.originBranchId) where.originBranchId = query.originBranchId;
-    if (query.processingBranchId) {
-      where.processingBranchId = query.processingBranchId;
-    }
-    if (query.reportStatus) where.reportStatus = query.reportStatus;
-    if (query.tatStatus) {
-      where.createdAt = tatCreatedAtRange(query.tatStatus, tat, nowMs);
-      if (!query.status) {
-        where.status = { notIn: [...TERMINAL_SAMPLE_STATUSES] };
-      }
-    }
-
-    const order: Prisma.OrderWhereInput = {};
-    if (query.patientId) order.patientId = query.patientId;
-    if (query.referredByDoctorId) {
-      order.referredByDoctorId = query.referredByDoctorId;
-    }
-    if (query.referralPanelId) order.referralPanelId = query.referralPanelId;
-    if (query.dateFrom || query.dateTo) {
-      order.orderDate = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-      };
-    }
     // Department / Lab Test / Lab Panel are INDEPENDENT filters: an order qualifies
     // when it satisfies each one that is set (they need not be satisfied by the same
     // line or sample). Collected here and ANDed onto the order below.
@@ -5425,44 +5728,24 @@ export class OrderSampleService {
         },
       });
     }
-    if (query.isHomeCollection) {
-      order.diagnostics = { is: { isHomeVisit: true } };
+    if (orderAnd.length > 0) {
+      // The shared builder may already have put the collection-status rule on `order.AND`.
+      order.AND = [
+        ...(Array.isArray(order.AND)
+          ? order.AND
+          : order.AND
+            ? [order.AND]
+            : []),
+        ...orderAnd,
+      ];
     }
-    if (query.internalReferralId) {
-      order.internalReferralId = query.internalReferralId;
-    }
-    if (query.externalReferralId) {
-      order.externalReferralId = query.externalReferralId;
-    }
-    if (query.internalReferralBranchId) {
-      order.internalReferral = {
-        is: { branchId: query.internalReferralBranchId },
-      };
-    }
-    if (query.externalReferralOrganisation) {
-      order.externalReferral = {
-        is: {
-          organisationName: {
-            equals: query.externalReferralOrganisation,
-            mode: 'insensitive',
-          },
-        },
-      };
-    }
-    if (query.collectionStatus) {
-      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived from
-      // the order's workflow items — the same rule as the Order Console's
-      // `sampleStatus`, applied here through the sample's to-one `order` relation.
-      orderAnd.push(buildCollectionProgressWhere(query.collectionStatus));
-    }
-    if (orderAnd.length > 0) order.AND = orderAnd;
 
-    const and: Prisma.OrderSampleWhereInput[] = [];
-    // Global Search — the same matching as Technician → Reporting's search, plus the
-    // Accession-only keys (Accession No, UHID, Mobile). The text is trimmed (a scanner or
-    // a stray space must not make it match nothing), a blank search is no search, and
-    // `%`, `_` and `\` are matched as typed (Prisma hands `contains` to LIKE as it is, so
-    // an unescaped `%` would match every row).
+    // Global Search - the same matching as Technician → Reporting's search (patient name,
+    // Order ID, barcode, test / panel name, referral panel) plus UHID and Mobile. The
+    // Accession No is deliberately NOT searched. The text is trimmed (a scanner or a stray
+    // space must not make it match nothing), a blank search is no search, and `%`, `_` and
+    // `\` are matched as typed (Prisma hands `contains` to LIKE as it is, so an unescaped
+    // `%` would match every row).
     const typedSearch = query.search?.trim();
     if (typedSearch) {
       const s = escapeLike(typedSearch);
@@ -5484,7 +5767,6 @@ export class OrderSampleService {
       };
       and.push({
         OR: [
-          { accessionNo: { contains: s, mode: 'insensitive' } },
           { barcode: { contains: s, mode: 'insensitive' } },
           {
             order: {
@@ -5550,80 +5832,9 @@ export class OrderSampleService {
         ],
       });
     }
-    if (query.isOutsource) and.push({ status: SampleStatus.OUTSOURCED });
-    // Logistics: how a sample TRAVELS is recorded on its transfer (a Send / Forward / Outsource
-    // writes it there, never on the sample), so match the transfer of a sample that is out
-    // now; the sample's own column is kept as an alternative for older rows.
-    if (query.logisticsType) {
-      and.push({
-        OR: [
-          { logisticsType: query.logisticsType },
-          {
-            status: { in: [...TRANSFERRED_STATUSES] },
-            transfers: {
-              some: { deletedAt: null, logisticsType: query.logisticsType },
-            },
-          },
-        ],
-      });
-    }
-    // "Sent to": the sample is Sent right now and its transfer is addressed to that branch.
-    if (query.destinationBranchId) {
-      and.push(
-        this.heldTransfer(SampleStatus.SENT_INTERNAL, TransferKind.INTERNAL, {
-          destinationBranchId: query.destinationBranchId,
-        }),
-      );
-    }
-    // "Forward partner": the sample is Forwarded right now to a partner with this name.
-    const partner = query.externalPartnerName?.trim();
-    if (partner) {
-      and.push(
-        this.heldTransfer(
-          SampleStatus.FORWARD_EXTERNAL,
-          TransferKind.EXTERNAL,
-          {
-            // literal text: `%` and `_` typed by the user are not wildcards
-            externalPartnerName: {
-              contains: escapeLike(partner),
-              mode: 'insensitive',
-            },
-          },
-        ),
-      );
-    }
-    if (query.outsourceCenterId) {
-      and.push({
-        transfers: {
-          some: {
-            deletedAt: null,
-            kind: TransferKind.OUTSOURCE,
-            outsourceCenterId: query.outsourceCenterId,
-          },
-        },
-      });
-    }
-    // Send / Forward / Outsource date: the sample has a transfer of that kind
-    // dispatched on the chosen day (its `sendDate`, else when it was created).
-    for (const [kind, day] of [
-      [TransferKind.INTERNAL, query.sendDate],
-      [TransferKind.EXTERNAL, query.forwardDate],
-      [TransferKind.OUTSOURCE, query.outsourceDate],
-    ] as const) {
-      if (day) and.push(this.transferOnDay(kind, day));
-    }
-    if (query.isUrgent) {
-      and.push({
-        OR: [
-          { priority: { in: [SamplePriority.URGENT, SamplePriority.STAT] } },
-          { order: { is: { isUrgentBill: true } } },
-        ],
-      });
-    }
-    this.applyOrderMode(query.orderMode, order, and);
 
     // Department visibility scope (mandatory, not a user filter): a sample is
-    // visible when its department is unassigned (NULL → everyone) or one of the
+    // visible when its department is unassigned (NULL -> everyone) or one of the
     // caller's mapped departments. Pushed into `and` so it never clobbers the
     // search/urgent/outsource conditions and is applied before pagination.
     and.push(this.departmentScopeForSamples(scopeIds));
@@ -5645,8 +5856,10 @@ export class OrderSampleService {
   ): Promise<OrderSampleListRow[]> {
     const branchIds = new Set<string>();
     const centerIds = new Set<string>();
+    const transfersOf = (r: OrderSampleListRow): ListRowTransfer[] =>
+      r.matchedTransfer ? [...r.transfers, r.matchedTransfer] : r.transfers;
     for (const r of rows) {
-      for (const t of r.transfers) {
+      for (const t of transfersOf(r)) {
         if (t.destinationBranchId) branchIds.add(t.destinationBranchId);
         if (t.outsourceCenterId) centerIds.add(t.outsourceCenterId);
       }
@@ -5670,18 +5883,79 @@ export class OrderSampleService {
     }));
     const branchName = new Map(names.branches.map((b) => [b.id, b.name]));
     const centerName = new Map(names.centers.map((c) => [c.id, c.name]));
+    const named = (t: ListRowTransfer): ListRowTransfer => ({
+      ...t,
+      destinationBranchName: t.destinationBranchId
+        ? (branchName.get(t.destinationBranchId) ?? null)
+        : null,
+      outsourceCenterName: t.outsourceCenterId
+        ? (centerName.get(t.outsourceCenterId) ?? null)
+        : null,
+    });
     return rows.map((r) => ({
       ...r,
-      transfers: r.transfers.map((t) => ({
-        ...t,
-        destinationBranchName: t.destinationBranchId
-          ? (branchName.get(t.destinationBranchId) ?? null)
-          : null,
-        outsourceCenterName: t.outsourceCenterId
-          ? (centerName.get(t.outsourceCenterId) ?? null)
-          : null,
-      })),
+      transfers: r.transfers.map(named),
+      ...(r.matchedTransfer
+        ? { matchedTransfer: named(r.matchedTransfer) }
+        : {}),
     }));
+  }
+
+  /**
+   * While a transfer filter (Sent To, Forwarded To, outsource center, send / forward / outsource
+   * date) is active, attach to each row the transfer that MET it (`matchedTransfer`). The list only
+   * carries the latest transfer, which can be a different one: a sample sent to B on the 28th,
+   * rejected, and sent to C on the 30th is found by "B + 28th", so its row must describe the
+   * transfer to B. One batched query per kind per page; the latest match of the kind that fits the
+   * row's status wins (else the newest of any asked kind). Without a transfer filter nothing is added.
+   */
+  private async withMatchedTransfers(
+    tenantId: string,
+    rows: OrderSampleListRow[],
+    query: ListSamplesDto,
+  ): Promise<OrderSampleListRow[]> {
+    const matches = transferMatches(query);
+    if (matches.length === 0 || rows.length === 0) return rows;
+    const sampleIds = rows.map((r) => r.id);
+    const perKind = await this.prisma.withTenant(tenantId, (tx) =>
+      Promise.all(
+        matches.map((m) =>
+          tx.sampleTransfer.findMany({
+            where: {
+              tenantId,
+              sampleId: { in: sampleIds },
+              ...transferWhereOf(m),
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            select: { ...LIST_TRANSFER_SELECT, sampleId: true },
+          }),
+        ),
+      ),
+    );
+    // sample id -> kind -> its newest matching transfer (rows arrive newest first)
+    const bySample = new Map<string, Map<TransferKind, ListRowTransfer>>();
+    perKind.flat().forEach(({ sampleId, ...transfer }) => {
+      const kinds =
+        bySample.get(sampleId) ?? new Map<TransferKind, ListRowTransfer>();
+      if (!kinds.has(transfer.kind)) kinds.set(transfer.kind, transfer);
+      bySample.set(sampleId, kinds);
+    });
+    const kindOfStatus = new Map<SampleStatus, TransferKind>([
+      [SampleStatus.SENT_INTERNAL, TransferKind.INTERNAL],
+      [SampleStatus.FORWARD_EXTERNAL, TransferKind.EXTERNAL],
+      [SampleStatus.OUTSOURCED, TransferKind.OUTSOURCE],
+    ]);
+    return rows.map((r) => {
+      const kinds = bySample.get(r.id);
+      if (!kinds) return r;
+      const fitting = kindOfStatus.get(r.status);
+      const matched =
+        (fitting ? kinds.get(fitting) : undefined) ??
+        [...kinds.values()].sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        )[0];
+      return matched ? { ...r, matchedTransfer: matched } : r;
+    });
   }
 
   /**
@@ -5724,44 +5998,6 @@ export class OrderSampleService {
   }
 
   /**
-   * "The sample is out on a `kind` transfer right now": its status is the matching
-   * transferred one (`status`) and it has a live (not recalled) transfer of that kind
-   * matching `transfer`. A transfer the other side closed as repeated / rejected stays live, so
-   * a sample that is still "Sent - Repeated" is found; once the sender repeats or retrieves it,
-   * its status changes and it is not.
-   */
-  private heldTransfer(
-    status: SampleStatus,
-    kind: TransferKind,
-    transfer: Prisma.SampleTransferWhereInput,
-  ): Prisma.OrderSampleWhereInput {
-    return {
-      status,
-      transfers: { some: { deletedAt: null, kind, ...transfer } },
-    };
-  }
-
-  /**
-   * "Has a `kind` transfer dispatched on `day`" (YYYY-MM-DD, whole day). Uses the
-   * transfer's `sendDate`, falling back to `createdAt` when no send date was set.
-   */
-  private transferOnDay(
-    kind: TransferKind,
-    day: string,
-  ): Prisma.OrderSampleWhereInput {
-    const range = timestampRange(day, day);
-    return {
-      transfers: {
-        some: {
-          deletedAt: null,
-          kind,
-          OR: [{ sendDate: range }, { sendDate: null, createdAt: range }],
-        },
-      },
-    };
-  }
-
-  /**
    * The department-visibility condition for `OrderSample.departmentId` (a
    * denormalized, indexed snapshot). A caller mapped to one or more departments
    * sees a sample only when its department is unassigned (NULL → everyone) or one
@@ -5778,36 +6014,6 @@ export class OrderSampleService {
     return scopeIds.length > 0
       ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
       : {};
-  }
-
-  /** Translate the §A.3 "Order Mode" filter into order/sample conditions. */
-  private applyOrderMode(
-    mode: OrderMode | undefined,
-    order: Prisma.OrderWhereInput,
-    and: Prisma.OrderSampleWhereInput[],
-  ): void {
-    switch (mode) {
-      case 'Home Visit':
-        order.diagnostics = { is: { isHomeVisit: true } };
-        break;
-      case 'Emergency':
-        order.isUrgentBill = true;
-        break;
-      case 'Referral':
-        order.OR = [
-          { internalReferralId: { not: null } },
-          { externalReferralId: { not: null } },
-        ];
-        break;
-      case 'Outsource':
-        and.push({ status: SampleStatus.OUTSOURCED });
-        break;
-      case 'Walk-in':
-        order.diagnostics = { is: { isHomeVisit: false } };
-        break;
-      default:
-        break;
-    }
   }
 
   /**

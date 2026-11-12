@@ -14,10 +14,12 @@ params:query {
   page: 1
   ~status: NEW
   ~collectionStatus: PENDING
-  ~search: ACC-00001
+  ~search: ORD-00717
   ~tatStatus: WITHIN
   ~dateFrom: 2026-07-01
   ~dateTo: 2026-07-31
+  ~sortBy: barcode
+  ~sortOrder: asc
 }
 
 auth:bearer {
@@ -27,6 +29,11 @@ auth:bearer {
 tests {
   test("200 OK", function () {
     expect(res.getStatus()).to.equal(200);
+  });
+  test("a sort keeps each order once and the total unchanged", function () {
+    const b = res.getBody();
+    const ids = b.data.map((o) => o.orderId);
+    expect(new Set(ids).size).to.equal(ids.length);
   });
   test("order-first: each order carries orderId + groups + sampleIds", function () {
     const d = res.getBody().data;
@@ -61,6 +68,8 @@ docs {
   - `DEPARTMENT_SAMPLE_NAME` (Department + Sample-wise) — one per
     Order + Department + Sample (default).
 
+  Each sample item carries `matchedTransfer` while a transfer filter is on (see `01 List Samples`).
+
   Supports the same filters as `01 List Samples`, including `collectionStatus`
   (`PENDING` | `PARTIAL` | `COLLECTED`) — order-level collection progress derived
   from the order's workflow items' `collectedAt`, independent of the 15-stage
@@ -88,6 +97,22 @@ docs {
     `bulk/<action>`); a status change cascades to every sample in the group.
 
   `meta.total` / `meta.totalPages` count **orders**, not groups or samples.
+
+  **Sorting.** `sortBy` + `sortOrder` (`asc` default | `desc`) sort the WHOLE matching list before paging (changing
+  the sort should send the user back to page 1). Without `sortBy` the list is newest first. The list pages by ORDER,
+  so what is sorted is the order: an order is ranked by the smallest value among its samples when ascending and the
+  largest when descending. Orders with no value in the column are always last, whichever way. Equal orders keep newest
+  first, then the id, so paging never repeats or skips an order. Allowed `sortBy`:
+
+  - from the order: `orderCode`, `orderDate`, `patientName` (first, then last name)
+  - from the order's doctor / panel: `referredBy` (first, then last name), `referralPanel`
+  - from the samples: `collectionStatus` (Pending, Partial, Collected), `barcode`, `testName` (the sample's first
+    test name A-Z), `department` (the NAME), `sampleStatus` (workflow order: New, Collected, Accepted ... Outsourced),
+    `sendDetails` (the latest transfer's send date and time, only for a Sent / Forwarded / Outsourced sample),
+    `tat` (age of a sample still being worked on: ascending = oldest first; a finished sample has no TAT)
+
+  Text sorts ignore capitals and accents and read numbers inside text by size (2 before 10). The same sort is
+  applied by the Export PDF / CSV, which page through this endpoint.
 
   **Where did I send it (sender's filters).** `destinationBranchId` (UUID): only samples Sent RIGHT NOW to that
   branch (status Sent + a live INTERNAL transfer to it; a sample the receiving branch sent back, "Sent - Repeated",

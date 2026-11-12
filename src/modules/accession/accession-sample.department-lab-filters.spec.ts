@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { OrderSampleService } from './accession-sample.service';
 import { ListSamplesDto } from './dto/list-samples.dto';
+import { ListTransfersDto } from './dto/list-transfers.dto';
 
 /**
  * Accession → In-House Orders: the Department / Lab Test / Lab Panel filters.
@@ -239,6 +240,31 @@ describe('OrderSampleService — Department / Lab Test / Lab Panel filters', () 
           (e) => e.property === 'departmentId',
         ),
       ).toHaveLength(0);
+    });
+
+    // `none` is an In-House-only choice. The transfer queues (Internal / External / Outsourced)
+    // share the parent DTO and must keep rejecting it, or it would reach a UUID column.
+    describe('the transfer queues (ListTransfersDto)', () => {
+      const transferErrorsFor = (departmentId: unknown) =>
+        validateSync(
+          plainToInstance(ListTransfersDto, { departmentId }),
+        ).filter((e) => e.property === 'departmentId');
+
+      it('still accepts a department id', () => {
+        expect(transferErrorsFor(DEPT)).toHaveLength(0);
+      });
+
+      it.each(['none', 'None', 'xyz', ''])('still rejects %p', (v) => {
+        expect(transferErrorsFor(v).length).toBeGreaterThan(0);
+      });
+
+      it('accepts no department filter at all', () => {
+        expect(
+          validateSync(plainToInstance(ListTransfersDto, {})).filter(
+            (e) => e.property === 'departmentId',
+          ),
+        ).toHaveLength(0);
+      });
     });
   });
 

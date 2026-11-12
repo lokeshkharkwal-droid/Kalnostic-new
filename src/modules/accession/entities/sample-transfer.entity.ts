@@ -46,7 +46,9 @@ export type SampleTransferWithRelations = Prisma.SampleTransferGetPayload<{
 
 /**
  * A transfer with its sample enriched with `departmentLabel` (distinct test
- * department names joined with ", "; null when none resolve).
+ * department names joined with ", "; null when none resolve) and `departmentNames`
+ * (the same names as a list, so a client never has to split the text - a name may
+ * itself contain a comma).
  */
 export type SampleTransferDeptRow = Omit<
   SampleTransferWithRelations,
@@ -54,6 +56,7 @@ export type SampleTransferDeptRow = Omit<
 > & {
   sample: SampleTransferWithRelations['sample'] & {
     departmentLabel: string | null;
+    departmentNames: string[];
   };
 };
 
