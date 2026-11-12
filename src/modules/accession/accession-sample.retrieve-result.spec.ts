@@ -2,7 +2,7 @@ import { SampleStatus } from '@prisma/client';
 import { OrderSampleService } from './accession-sample.service';
 import {
   InvalidSampleTransitionException,
-  SampleRetrieveBlockedByResultException,
+  SampleRetrieveBlockedByReportException,
   refusalMessage,
 } from './exceptions/accession.exceptions';
 
@@ -20,8 +20,8 @@ interface Opts {
   from?: SampleStatus | null;
   /** the reports the sample serves */
   reportIds?: string[];
-  /** a report has a validated result */
-  validated?: boolean;
+  /** a report the sample serves is already past Pending (saved, submitted, rejected, validated, error reported) */
+  started?: boolean;
   tests?: { orderItemId: string; labTestId: string | null }[];
 }
 
@@ -53,15 +53,20 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
     },
     orderSampleTest: { findMany: jest.fn().mockResolvedValue(tests) },
     orderSampleStatusHistory: {
-      findFirst: jest
-        .fn()
-        .mockResolvedValue(
-          opts.from === undefined
-            ? { fromStatus: SampleStatus.COLLECTED }
-            : opts.from === null
-              ? null
-              : { fromStatus: opts.from },
-        ),
+      // the sample's whole history: the one move it made INTO its current status (none when `from` is null)
+      findMany: jest.fn().mockResolvedValue(
+        opts.from === null
+          ? []
+          : [
+              {
+                action: 'move',
+                fromStatus: opts.from ?? SampleStatus.COLLECTED,
+                toStatus: sample.status,
+              },
+            ],
+      ),
+      // the "barcode removed" line a Retrieve out of Repeat looks for: none
+      findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({}),
     },
     sampleTransfer: {
@@ -76,7 +81,8 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
       .fn()
       .mockResolvedValue(opts.reportIds ?? ['r1']),
     lockReports: jest.fn().mockResolvedValue(undefined),
-    canReturnToSender: jest.fn().mockResolvedValue(!opts.validated),
+    canReturnToSender: jest.fn().mockResolvedValue(!opts.started),
+    hasStartedReport: jest.fn().mockResolvedValue(!!opts.started),
     resetReportsForReturn: jest.fn().mockResolvedValue(undefined),
   };
   const service = new OrderSampleService(
@@ -130,35 +136,35 @@ const BEFORE_ACCEPTANCE = [
   SampleStatus.REPEAT,
 ];
 
-describe('Retrieve - a validated result stops an undo back to before acceptance', () => {
+describe('Retrieve - a report past Pending stops the undo (manager rule)', () => {
   it.each(BEFORE_ACCEPTANCE)(
     'refused when the undo would land on %s',
     async (target) => {
-      const m = build({}, { from: target, validated: true });
+      const m = build({}, { from: target, started: true });
       await expect(m.run()).rejects.toBeInstanceOf(
-        SampleRetrieveBlockedByResultException,
+        SampleRetrieveBlockedByReportException,
       );
       m.nothingWritten();
     },
   );
 
   it('the refusal is a skippable 422 with its own code and points to Re-run', async () => {
-    const m = build({}, { validated: true });
+    const m = build({}, { started: true });
     const e = await m.run().catch((x: unknown) => x);
     expect(e).toBeInstanceOf(InvalidSampleTransitionException);
-    const err = e as SampleRetrieveBlockedByResultException;
+    const err = e as SampleRetrieveBlockedByReportException;
     expect(err.getStatus()).toBe(422);
-    expect(err.errorCode).toBe('SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE');
+    expect(err.errorCode).toBe('SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED');
     // the sentence lives in the response body (`e.message` is only the class name)
     expect(refusalMessage(err)).toContain('Re-run');
     expect(err.message).not.toContain('Re-run');
   });
 
   it('the reports are locked BEFORE the check, so a validation in flight cannot slip in', async () => {
-    const m = build({}, { validated: true });
+    const m = build({}, { started: true });
     await m.run().catch(() => undefined);
     const lock = m.lab.lockReports.mock.invocationCallOrder[0]!;
-    const check = m.lab.canReturnToSender.mock.invocationCallOrder[0]!;
+    const check = m.lab.hasStartedReport.mock.invocationCallOrder[0]!;
     expect(lock).toBeLessThan(check);
   });
 
@@ -167,7 +173,7 @@ describe('Retrieve - a validated result stops an undo back to before acceptance'
       { orderItemId: 'oi1', labTestId: 'lt1' },
       { orderItemId: 'oi2', labTestId: null },
     ];
-    const m = build({ branchId: 'A' }, { tests, validated: true });
+    const m = build({ branchId: 'A' }, { tests, started: true });
     await m.run().catch(() => undefined);
     expect(m.lab.findReportIdsForSampleTests).toHaveBeenCalledWith(
       m.tx,
@@ -177,17 +183,17 @@ describe('Retrieve - a validated result stops an undo back to before acceptance'
     );
   });
 
-  it('every report of the sample is checked together (one validated test among several is enough)', async () => {
-    const m = build({}, { reportIds: ['r1', 'r2', 'r3'], validated: true });
+  it('every report of the sample is checked together (one started test among several is enough)', async () => {
+    const m = build({}, { reportIds: ['r1', 'r2', 'r3'], started: true });
     await expect(m.run()).rejects.toBeInstanceOf(
-      SampleRetrieveBlockedByResultException,
+      SampleRetrieveBlockedByReportException,
     );
     expect(m.lab.lockReports).toHaveBeenCalledWith(m.tx, 't1', [
       'r1',
       'r2',
       'r3',
     ]);
-    expect(m.lab.canReturnToSender).toHaveBeenCalledWith(m.tx, 't1', [
+    expect(m.lab.hasStartedReport).toHaveBeenCalledWith(m.tx, 't1', [
       'r1',
       'r2',
       'r3',
@@ -195,18 +201,18 @@ describe('Retrieve - a validated result stops an undo back to before acceptance'
   });
 });
 
-describe('Retrieve - everything that is not a validated result still works as before', () => {
-  it('no validated result: Accepted goes back to Collected, nothing deleted', async () => {
-    const m = build({}, { validated: false });
+describe('Retrieve - everything outside the rule still works as before', () => {
+  it('every report still Pending: Accepted goes back to Collected, nothing deleted', async () => {
+    const m = build({}, { started: false });
     await m.run();
     expect(m.updatedData().status).toBe(SampleStatus.COLLECTED);
-    expect(m.lab.canReturnToSender).toHaveBeenCalledTimes(1);
+    expect(m.lab.hasStartedReport).toHaveBeenCalledTimes(1);
     // the rule only looks: no report is reset or changed by a Retrieve
     expect(m.lab.resetReportsForReturn).not.toHaveBeenCalled();
   });
 
   it('a sample with no report at all can be retrieved', async () => {
-    const m = build({}, { reportIds: [], validated: false });
+    const m = build({}, { reportIds: [], started: false });
     await expect(m.run()).resolves.toBeDefined();
     expect(m.updatedData().status).toBe(SampleStatus.COLLECTED);
   });
@@ -214,32 +220,32 @@ describe('Retrieve - everything that is not a validated result still works as be
   it('an undo that does not go back before acceptance is not consulted (Stored -> Accepted)', async () => {
     const m = build(
       { status: SampleStatus.STORED },
-      { from: SampleStatus.ACCEPTED, validated: true },
+      { from: SampleStatus.ACCEPTED, started: true },
     );
     await m.run();
     expect(m.updatedData().status).toBe(SampleStatus.ACCEPTED);
-    expect(m.lab.canReturnToSender).not.toHaveBeenCalled();
+    expect(m.lab.hasStartedReport).not.toHaveBeenCalled();
     expect(m.lab.lockReports).not.toHaveBeenCalled();
   });
 
   it('Halted -> Accepted is not consulted either', async () => {
     const m = build(
       { status: SampleStatus.HALT },
-      { from: SampleStatus.ACCEPTED, validated: true },
+      { from: SampleStatus.ACCEPTED, started: true },
     );
     await m.run();
     expect(m.updatedData().status).toBe(SampleStatus.ACCEPTED);
-    expect(m.lab.canReturnToSender).not.toHaveBeenCalled();
+    expect(m.lab.hasStartedReport).not.toHaveBeenCalled();
   });
 
   it('Discarded -> Stored is not consulted either', async () => {
     const m = build(
       { status: SampleStatus.DISCARDED },
-      { from: SampleStatus.STORED, validated: true },
+      { from: SampleStatus.STORED, started: true },
     );
     await m.run();
     expect(m.updatedData().status).toBe(SampleStatus.STORED);
-    expect(m.lab.canReturnToSender).not.toHaveBeenCalled();
+    expect(m.lab.hasStartedReport).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -247,30 +253,47 @@ describe('Retrieve - everything that is not a validated result still works as be
     SampleStatus.FORWARD_EXTERNAL,
     SampleStatus.OUTSOURCED,
   ])(
-    'a sample that is out (%s) keeps its own transfer rules: the report check is not applied',
+    'a sample that is out (%s): the recall is refused once a report is past Pending (the partner result is in), and nothing is written',
     async (status) => {
       const m = build(
         { status, previousStatus: SampleStatus.COLLECTED },
-        { validated: true },
+        { started: true },
+      );
+      const e = await m.run().catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(SampleRetrieveBlockedByReportException);
+      expect(m.lab.lockReports).toHaveBeenCalled();
+      m.nothingWritten();
+    },
+  );
+
+  it.each([
+    SampleStatus.SENT_INTERNAL,
+    SampleStatus.FORWARD_EXTERNAL,
+    SampleStatus.OUTSOURCED,
+  ])(
+    'a sample that is out (%s) with every report still Pending is recalled as before',
+    async (status) => {
+      const m = build(
+        { status, previousStatus: SampleStatus.COLLECTED },
+        { started: false },
       );
       await m.run();
-      expect(m.lab.canReturnToSender).not.toHaveBeenCalled();
-      expect(m.lab.lockReports).not.toHaveBeenCalled();
+      expect(m.lab.hasStartedReport).toHaveBeenCalledTimes(1);
       expect(m.updatedData().status).toBe(SampleStatus.COLLECTED);
     },
   );
 
   it('a system-driven move is not subject to it', async () => {
-    const m = build({}, { validated: true });
+    const m = build({}, { started: true });
     await expect(m.run({ system: true })).resolves.toBeDefined();
-    expect(m.lab.canReturnToSender).not.toHaveBeenCalled();
+    expect(m.lab.hasStartedReport).not.toHaveBeenCalled();
   });
 
   it('with no previous status to go back to it is an ordinary invalid transition, and no report is looked at', async () => {
-    const m = build({}, { from: null, validated: true });
+    const m = build({}, { from: null, started: true });
     const e = await m.run().catch((x: unknown) => x);
     expect(e).toBeInstanceOf(InvalidSampleTransitionException);
-    expect(e).not.toBeInstanceOf(SampleRetrieveBlockedByResultException);
+    expect(e).not.toBeInstanceOf(SampleRetrieveBlockedByReportException);
     expect(m.lab.lockReports).not.toHaveBeenCalled();
     m.nothingWritten();
   });
@@ -329,7 +352,7 @@ describe('Retrieve in a group action', () => {
       .mockImplementation((_tx: unknown, _t: string, _p: string, id: string) =>
         id === 'done'
           ? Promise.reject(
-              new SampleRetrieveBlockedByResultException(SampleStatus.ACCEPTED),
+              new SampleRetrieveBlockedByReportException(SampleStatus.ACCEPTED),
             )
           : Promise.resolve({ id, status: SampleStatus.COLLECTED }),
       );
@@ -357,7 +380,7 @@ describe('Retrieve in a group action', () => {
     expect(r.skipped[0]).toMatchObject({ id: 'done', accessionNo: 'ACC-2' });
     expect(r.skipped[0]!.reason).toContain('Re-run');
     // the machine-readable reason: the strict call's own code
-    expect(r.skipped[0]!.code).toBe('SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE');
+    expect(r.skipped[0]!.code).toBe('SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED');
     expect(r.skipped[0]!.reason).not.toContain('is not allowed from status');
   });
 
@@ -399,6 +422,6 @@ describe('Retrieve in a group action', () => {
         () => ({ data: {} }),
         {},
       ),
-    ).rejects.toBeInstanceOf(SampleRetrieveBlockedByResultException);
+    ).rejects.toBeInstanceOf(SampleRetrieveBlockedByReportException);
   });
 });

@@ -25,8 +25,8 @@ import {
 
 /**
  * Re-Run worklist (LABORATORY.docx §5.5, §8.1). Raising a re-run both resets
- * the LabReport (any status -> Pending, results cleared, via
- * `LabReportService.resetForRerun`) and creates this tracking row, so the
+ * the LabReport (Result Done / Result Rejected / Error Reported -> Pending, results
+ * cleared, via `LabReportService.resetForRerun`) and creates this tracking row, so the
  * report-side reset and the worklist-tracking-to-completion stay independent
  * concerns, matching the spec's "Re-Run Status reflects the current report
  * status ... independently". Uses `ReRunStatus`

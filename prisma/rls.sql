@@ -1294,6 +1294,11 @@ CREATE POLICY orders_tenant_isolation ON orders
 -- is reusable). `order_code` is system-generated (ORD-00001…) & immutable.
 CREATE UNIQUE INDEX IF NOT EXISTS orders_tenant_code_active_unique
   ON orders (tenant_id, order_code) WHERE deleted_at IS NULL;
+-- Per-tenant unique order BARCODE value among ACTIVE rows. Numbers come from
+-- the tenant-wide `tenant_barcode_counters` row (kind ORDER), so two branches can
+-- never hold the same order barcode; this index is the database-level guarantee.
+CREATE UNIQUE INDEX IF NOT EXISTS orders_tenant_order_barcode_active_unique
+  ON orders (tenant_id, order_id_barcode) WHERE deleted_at IS NULL;
 
 -- ── order_notes ───────────────────────────────────────────────────────────────
 -- Append-only Order Overview notes (Order / Sample / Tech tabs).
@@ -1805,6 +1810,16 @@ ALTER TABLE registration_id_sequences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE registration_id_sequences FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS registration_id_sequences_tenant_isolation ON registration_id_sequences;
 CREATE POLICY registration_id_sequences_tenant_isolation ON registration_id_sequences
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());
+
+-- ── tenant_barcode_counters ──────────────────────────────────────────────────
+-- Tenant-wide running number for order / sample barcodes (one row per tenant +
+-- kind); incremented atomically by BarcodeService inside the caller's tx.
+ALTER TABLE tenant_barcode_counters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_barcode_counters FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_barcode_counters_tenant_isolation ON tenant_barcode_counters;
+CREATE POLICY tenant_barcode_counters_tenant_isolation ON tenant_barcode_counters
   USING (tenant_id = current_tenant_id())
   WITH CHECK (tenant_id = current_tenant_id());
 

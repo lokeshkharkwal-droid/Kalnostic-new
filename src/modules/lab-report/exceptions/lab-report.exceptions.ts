@@ -102,6 +102,31 @@ export class LabReportParameterNoteNotEditableException extends KaltrosException
   }
 }
 
+/**
+ * 409 — a Re-run is only possible from Result Done, Result Rejected or Error Reported. The message says what to do
+ * first for the statuses a technician is most likely to be on (Validation Pending, Approved, Published).
+ */
+export class LabReportRerunNotAllowedException extends KaltrosException {
+  constructor(
+    id: string,
+    currentStatus: string,
+    allowedFrom: readonly string[],
+  ) {
+    const hint =
+      currentStatus === 'VALIDATION_PENDING'
+        ? 'Reject the result first, then re-run it.'
+        : currentStatus === 'APPROVED' || currentStatus === 'PUBLISHED'
+          ? 'Report an error on it first (Error Reported), then re-run it.'
+          : 'A re-run is possible once the result is Result Done, Result Rejected or Error Reported.';
+    super(
+      'LAB_REPORT_RERUN_NOT_ALLOWED',
+      `This report cannot be re-run in its current status. ${hint}`,
+      { id, currentStatus, allowedFrom },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 409 — a locked report cannot be edited (results, save, submit, etc.). */
 export class LabReportLockedException extends KaltrosException {
   constructor(id: string) {
@@ -138,10 +163,17 @@ export class LabReportSentOutException extends KaltrosException {
  * accepts the sample again.
  */
 export class LabReportSampleAwaitingException extends KaltrosException {
-  constructor(id: string) {
+  /**
+   * @param id the report
+   * @param outsourcedSentBack the sample is at an outside lab that sent it back ("Outsourced – Repeated"): the sample is
+   *   neither on Repeat nor cancelled, so the message says what really happened and what has to be done
+   */
+  constructor(id: string, outsourcedSentBack = false) {
     super(
       'LAB_REPORT_SAMPLE_AWAITING',
-      'This test’s sample is on Repeat or waiting to be accepted again, so the report is view-only until the sample is accepted.',
+      outsourcedSentBack
+        ? 'The outside lab sent this sample back (Outsourced – Repeated), so the report is view-only. Accession has to repeat the sample (and accept the new one) or retrieve it first.'
+        : 'This test’s sample is on Repeat, cancelled or waiting to be accepted again, so the report is view-only until the sample is accepted.',
       { id },
       HttpStatus.CONFLICT,
     );
