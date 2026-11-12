@@ -2815,6 +2815,16 @@ model LabTest {
   /// explicitly set to No, which auto-accepts it and skips collection.
   isSampleFlow        Boolean @default(true) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+  /// Age Restriction: when true the test may only be ordered for a patient whose
+  /// age on the order date lies inside minAge..maxAge (min inclusive, max covers
+  /// its whole unit — the reference-range calendar rule). All four bound columns
+  /// are NULL when the flag is false (= no age limit). Mirrored onto
+  /// branch_lab_tests via the normal Master Data import/sync.
+  isAgeRestricted     Boolean  @default(false) @map("is_age_restricted")
+  minAgeValue         Int?     @map("min_age_value")
+  minAgeUnit          AgeUnit? @map("min_age_unit")
+  maxAgeValue         Int?     @map("max_age_value")
+  maxAgeUnit          AgeUnit? @map("max_age_unit")
 
   // Mandatory-test classification — real relations to the catalogue tables
   // (FK to departments / categories / sub_categories). Distinct from the
@@ -3364,6 +3374,13 @@ model BranchLabTest {
   // straight to the technician. Default TRUE = normal collection flow.
   isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
   isSampleFlow        Boolean @default(true) @map("is_sample_flow")
+  // Age Restriction mirrored from the source LabTest (propagated on import/sync);
+  // enforced on Create Order for the test and for any panel containing it.
+  isAgeRestricted     Boolean  @default(false) @map("is_age_restricted")
+  minAgeValue         Int?     @map("min_age_value")
+  minAgeUnit          AgeUnit? @map("min_age_unit")
+  maxAgeValue         Int?     @map("max_age_value")
+  maxAgeUnit          AgeUnit? @map("max_age_unit")
 
   // Mandatory-test classification (logical refs)
   mandatoryDeptId             String?             @map("mandatory_dept_id")
@@ -6566,9 +6583,10 @@ model Order {
   // when the format is NONE. Unique per branch among active rows (enforced in the
   // service). Quotes (status QUOTE) reuse this column with their own format/counter.
   externalOrderId String?       @map("external_order_id")
-  // Order-level barcode, generated at creation from the branch's dedicated
-  // order-barcode counter/format (AccessionSetting.OrderBarcodeSettings_*, via
-  // BarcodeService.allocateOrderNumberInTx). A SEPARATE entity from sample
+  // Order-level barcode, generated at creation: the number comes from the
+  // tenant-wide order-barcode counter (TenantBarcodeCounter, kind ORDER) and the
+  // format from the branch (AccessionSetting.OrderBarcodeSettings_*), via
+  // BarcodeService.allocateOrderNumberInTx. A SEPARATE entity from sample
   // barcodes — the two have independent counters and may share the same number.
   // `orderIdBarcode` holds the barcode VALUE (e.g. "10001"); `orderIdQrCode`
   // holds the S3 URL of the rendered Code39 PNG (name kept for the print-template
@@ -6749,10 +6767,10 @@ model Order {
   @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
-  // Per-branch uniqueness of the order barcode VALUE among orders only (NULLs are
-  // distinct in Postgres). Does NOT constrain against sample barcodes, so an order
-  // and a sample may legitimately share the same number.
-  @@unique([branchId, orderIdBarcode])
+  // The order barcode VALUE is unique per TENANT among active orders, enforced by
+  // the partial unique index `orders_tenant_order_barcode_active_unique` (in
+  // prisma/rls.sql — Prisma can't express `WHERE deleted_at IS NULL`). It does NOT
+  // constrain against sample barcodes, so an order and a sample may share a number.
   @@index([deletedAt])
   @@map("orders")
 }
@@ -7806,6 +7824,14 @@ enum ReRunStatus {
   CANCELLED
 }
 
+/// How a re-run is carried out: SAME = the test is processed again on the sample it already has (the report goes
+/// back to Pending, nothing changes in Accession); FRESH = the test's sample goes back for a fresh collection
+/// (Repeat) with a new barcode, and the report stays locked until that sample is accepted again.
+enum ReRunSampleMode {
+  SAME
+  FRESH
+}
+
 /// Status vocabulary for the Schedule Test worklist (LABORATORY.docx §8.5) — a
 /// test is Scheduled, moves to In Progress, may be Rescheduled, then Completed.
 enum ScheduledTestStatus {
@@ -7838,6 +7864,12 @@ model ReRunRequest {
   status       ReRunStatus @default(PENDING)
   requestedBy  String      @map("requested_by")
   requestNotes String?     @map("request_notes")
+
+  /// SAME sample (default) or a FRESH sample (the tube is repeated and recollected).
+  sampleMode ReRunSampleMode @default(SAME) @map("sample_mode")
+  /// For a FRESH re-run: the batch tag given to the repeated sample rows (`OrderSample.repeatBatchId`), so the
+  /// request can be traced to the rows that were repeated together.
+  repeatBatchId String? @map("repeat_batch_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -8192,6 +8224,32 @@ model OrderFieldConfig {
   @@index([tenantId])
   @@index([branchId])
   @@map("order_field_configs")
+}
+
+/// A user's own default date filter for one list screen (Registration Billings,
+/// Finance Billings, Registration Order Console). Personal UI preference:
+/// one row per (tenant, person, screen), set from the screen's "Default date
+/// filter" pop-up and applied whenever that user opens the screen. `preset` is
+/// a relative range (`TODAY`, `LAST_7_DAYS`, …) resolved against the business
+/// day at open time; only `CUSTOM` stores fixed `dateFrom`/`dateTo`.
+model UserDateFilterPreference {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  personId  String @map("person_id")
+  screenKey String @map("screen_key")
+
+  preset   String
+  dateFrom DateTime? @map("date_from") @db.Date
+  dateTo   DateTime? @map("date_to") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, personId, screenKey])
+  @@index([tenantId])
+  @@index([personId])
+  @@map("user_date_filter_preferences")
 }
 
 /// A payment/ledger entry against an order (1:many). Amounts are integer minor
@@ -8583,6 +8641,11 @@ model OrderSample {
   // origin branch are implied). A sample may never be sent to any of these again.
   heldBranchIds String[] @default([]) @map("held_branch_ids")
 
+  /// Set when this row was sent back for a fresh collection (Repeat / Re-run with a fresh sample): the rows
+  /// repeated together in one action share the tag. It is part of the barcode group key, so they form their own
+  /// group with their own new barcode and never borrow the old group's barcode. Null = never repeated this way.
+  repeatBatchId String? @map("repeat_batch_id")
+
   tests         OrderSampleTest[]
   statusHistory OrderSampleStatusHistory[]
   transfers     SampleTransfer[]
@@ -8803,22 +8866,32 @@ model AccessionSetting {
   SampleBarcodeSettings_Suffix        String                     @default("") @map("sample_barcode_settings_suffix") @db.VarChar(24)
   SampleBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("sample_barcode_settings_separator")
   SampleBarcodeSettings_NumberLength  Int                        @default(5) @map("sample_barcode_settings_number_length")
+  /// DEPRECATED (2026-11): barcode numbers come from the tenant-wide
+  /// `TenantBarcodeCounter`, which never resets (a reset would re-issue numbers
+  /// already printed on samples). Always NEVER; kept so older clients that still
+  /// send it don't fail validation.
   SampleBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("sample_barcode_settings_reset_interval")
-  /// System-managed running counter — never accepted from the client.
+  /// DEPRECATED (2026-11): no longer written. The running number lives in
+  /// `TenantBarcodeCounter` (kind SAMPLE); kept for history.
   SampleBarcodeSettings_CurrentNumber Int                        @default(0) @map("sample_barcode_settings_current_number")
+  /// DEPRECATED (2026-11): no longer written (see ResetInterval above).
   SampleBarcodeSettings_LastResetAt   DateTime?                  @map("sample_barcode_settings_last_reset_at")
 
   // ── Order Barcode Settings ──
-  // Dedicated to the ORDER-level barcode (generated at order creation). A separate
+  // Format of the ORDER-level barcode (generated at order creation). A separate
   // entity/counter/format from the sample barcode above — order and sample numbers
-  // may coincide. Same field convention + reuses the shared BarcodeService logic.
+  // may coincide. The branch sets the format (prefix/suffix/separator/length);
+  // the number comes from the tenant-wide `TenantBarcodeCounter` (kind ORDER).
   OrderBarcodeSettings_Prefix        String                     @default("") @map("order_barcode_settings_prefix") @db.VarChar(24)
   OrderBarcodeSettings_Suffix        String                     @default("") @map("order_barcode_settings_suffix") @db.VarChar(24)
   OrderBarcodeSettings_Separator     AccessionBarcodeSeparator  @default(NONE) @map("order_barcode_settings_separator")
   OrderBarcodeSettings_NumberLength  Int                        @default(5) @map("order_barcode_settings_number_length")
+  /// DEPRECATED (2026-11): see SampleBarcodeSettings_ResetInterval. Always NEVER.
   OrderBarcodeSettings_ResetInterval AccessionBarcodeResetCycle @default(NEVER) @map("order_barcode_settings_reset_interval")
-  /// System-managed running counter — never accepted from the client.
+  /// DEPRECATED (2026-11): no longer written. The running number lives in
+  /// `TenantBarcodeCounter` (kind ORDER); kept for history.
   OrderBarcodeSettings_CurrentNumber Int                        @default(0) @map("order_barcode_settings_current_number")
+  /// DEPRECATED (2026-11): no longer written.
   OrderBarcodeSettings_LastResetAt   DateTime?                  @map("order_barcode_settings_last_reset_at")
 
   // ── Accession (TAT / acceptance-window / barcode-mapping toggles) ──
@@ -8845,6 +8918,40 @@ model AccessionSetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("accession_settings")
+}
+
+/// Which barcode a `TenantBarcodeCounter` row numbers.
+enum BarcodeCounterKind {
+  /// Order-level barcode (`Order.orderIdBarcode`), issued at order creation.
+  ORDER
+  /// Sample barcode (`OrderSample.barcode`), issued at collection.
+  SAMPLE
+}
+
+/// Tenant-wide running number for order and sample barcodes: one row per
+/// (tenant, kind). Barcodes must be unique across all of a tenant's branches,
+/// so the number comes from one tenant-level counter; each branch only chooses
+/// the format (prefix/suffix/separator/length in `AccessionSetting`).
+///
+/// Allocation (`BarcodeService`) increments `currentNumber` with a single
+/// `INSERT … ON CONFLICT DO UPDATE SET current_number = current_number + 1
+/// RETURNING` inside the caller's transaction. That statement locks the row
+/// until commit, so concurrent allocations from any branch queue on it and each
+/// gets a distinct number, and a rolled-back transaction gives its number back.
+/// Never reset: a reset would re-issue numbers already printed on orders/samples.
+/// Starts at 10000 so the first issued number is 10001.
+model TenantBarcodeCounter {
+  id            String             @id @default(uuid())
+  tenantId      String             @map("tenant_id")
+  kind          BarcodeCounterKind
+  /// Last number issued (system-managed — never accepted from the client).
+  currentNumber Int                @default(10000) @map("current_number")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, kind])
+  @@map("tenant_barcode_counters")
 }
 
 /// Per-branch Registration › Appointment Settings (slot/capacity, working

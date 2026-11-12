@@ -1,5 +1,6 @@
 import {
   worklistRowBranchWhere,
+  worklistRowDateWhere,
   type WorklistBranchScope,
 } from './access/worklist-branch-scope';
 import { Injectable } from '@nestjs/common';
@@ -141,9 +142,21 @@ export class DeltaCheckService {
    * default; several branches for "All Branches" — see
    * `TechnicianBranchAccessService.resolveScope`).
    */
-  async findAll(tenantId: string, scope: WorklistBranchScope) {
+  /**
+   * @param dates optional order-date range (the Reporting screen's date filter)
+   */
+  async findAll(
+    tenantId: string,
+    scope: WorklistBranchScope,
+    dates?: { dateFrom?: string; dateTo?: string },
+  ) {
     const rows = await this.prisma.deltaCheck.findMany({
-      where: { tenantId, ...worklistRowBranchWhere(scope), deletedAt: null },
+      where: {
+        tenantId,
+        ...worklistRowBranchWhere(scope),
+        ...worklistRowDateWhere(dates),
+        deletedAt: null,
+      },
       include: DELTA_CHECK_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });

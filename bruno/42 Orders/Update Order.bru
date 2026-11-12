@@ -125,6 +125,17 @@ docs {
   sends `false` whenever gender isn't Female, so changing gender away from Female
   and saving clears it.
 
+  ## Lab test Age Restriction
+
+  Same rule as Create Order (422 `ORDER_TEST_AGE_RESTRICTED` /
+  `ORDER_PATIENT_AGE_REQUIRED`), checked against the patient's current age on
+  the order date. Only lines **new** to the order are checked (no `id`, or an
+  `id` whose test/panel changed), so editing an older order is never blocked by
+  a restriction added later — EXCEPT when this patch finalizes the order
+  (`status: "ORDER"` from DRAFT / APPOINTMENT), where every effective line is
+  checked, including the stored ones when `items` is omitted. Quotes are
+  skipped (checked when converted into an order).
+
   ## payments[] — immutable history, reconcile-in-place
 
   Payment transactions are **immutable historical records**: an update NEVER

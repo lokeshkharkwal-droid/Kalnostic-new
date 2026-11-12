@@ -51,6 +51,13 @@ docs {
   (expected approval turnaround, value+unit — distinct from the existing
   `approvalTimeFrom`/`approvalTimeTo` time-of-day window).
   
+  **Age Restriction:** `isAgeRestricted` + `minAgeValue`/`minAgeUnit`/
+  `maxAgeValue`/`maxAgeUnit` (units `DAYS`/`MONTHS`/`YEARS`). Omit all five to
+  leave the stored restriction untouched; a partial patch is merged with the
+  stored values before validation. `isAgeRestricted: false` clears the bounds;
+  `true` requires all four (merged) bounds with Minimum ≤ Maximum, otherwise 422
+  `VALIDATION_ERROR`. Example to disable: `{ "isAgeRestricted": false }`.
+
   Child sets are REPLACED when provided: include a full `samples` array and/or
   `resultParams` array (each param with its `referenceRanges`/`referenceValues`)
   to swap the whole set, in one transaction. Omit a child array to leave it untouched.

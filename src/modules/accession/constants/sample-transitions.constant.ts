@@ -110,12 +110,14 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.ERROR]: SampleStatus.RETURNED,
     [SampleStatus.STORED]: SampleStatus.RETURNED,
   },
-  // Cancel — cancel the order/sample.
+  // Cancel — cancel the order/sample. Not from REPEAT: a sample waiting to be collected
+  // again for a Repeat / Re-run with a fresh sample must not be cancelled (its report was
+  // reset and is locked until the sample is accepted again; a cancelled sample would
+  // leave that report with no sample behind it). Retrieve is the way to undo a Repeat.
   cancel: {
     [SampleStatus.NEW]: SampleStatus.CANCELLED,
     [SampleStatus.COLLECTED]: SampleStatus.CANCELLED,
     [SampleStatus.HOLD]: SampleStatus.CANCELLED,
-    [SampleStatus.REPEAT]: SampleStatus.CANCELLED,
   },
   // Send — Internal Transfer (branch↔branch).
   send: {

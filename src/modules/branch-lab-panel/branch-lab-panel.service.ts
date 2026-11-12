@@ -39,7 +39,11 @@ import {
   BranchLabPanelSyncResult,
   BranchLabPanelWithTests,
 } from './entities/branch-lab-panel.entity';
-import { BranchLabTestConfigSnapshot } from '../branch-lab-test/entities/branch-lab-test.entity';
+import {
+  AGE_RESTRICTION_SELECT,
+  AgeRestrictedPanelMember,
+  BranchLabTestConfigSnapshot,
+} from '../branch-lab-test/entities/branch-lab-test.entity';
 
 /** Result of a bulk-edit: the number of branch lab panels updated. */
 export interface BranchLabPanelBulkEditResult {
@@ -65,6 +69,12 @@ export interface BranchLabPanelOption {
   tatMinUnit: TatUnit | null;
   tatMaxValue: number | null;
   tatMaxUnit: TatUnit | null;
+  /**
+   * The panel's age-restricted member tests (empty when none), so Create Order
+   * can block the panel before it is added when the patient's age is outside
+   * any member's allowed range.
+   */
+  ageRestrictedTests: AgeRestrictedPanelMember[];
 }
 
 /**
@@ -946,18 +956,21 @@ export class BranchLabPanelService {
       tatMaxUnit: true,
     } as const;
     const orderBy = { panelName: 'asc' } as const;
-    const toOption = (r: {
-      id: string;
-      panelName: string;
-      listPrice: number;
-      isFastingRequired: boolean;
-      isDisableDiscount: boolean;
-      isBillOnlyTest: boolean;
-      tatMinValue: number | null;
-      tatMinUnit: TatUnit | null;
-      tatMaxValue: number | null;
-      tatMaxUnit: TatUnit | null;
-    }): BranchLabPanelOption => ({
+    const toOption = (
+      r: {
+        id: string;
+        panelName: string;
+        listPrice: number;
+        isFastingRequired: boolean;
+        isDisableDiscount: boolean;
+        isBillOnlyTest: boolean;
+        tatMinValue: number | null;
+        tatMinUnit: TatUnit | null;
+        tatMaxValue: number | null;
+        tatMaxUnit: TatUnit | null;
+      },
+      restricted: Map<string, AgeRestrictedPanelMember[]>,
+    ): BranchLabPanelOption => ({
       id: r.id,
       name: r.panelName,
       price: r.listPrice,
@@ -969,6 +982,7 @@ export class BranchLabPanelService {
       tatMinUnit: r.tatMinUnit,
       tatMaxValue: r.tatMaxValue,
       tatMaxUnit: r.tatMaxUnit,
+      ageRestrictedTests: restricted.get(r.id) ?? [],
     });
 
     if (filters.page === undefined) {
@@ -977,7 +991,11 @@ export class BranchLabPanelService {
         select,
         orderBy,
       });
-      return rows.map(toOption);
+      const restricted = await this.findAgeRestrictedMembers(
+        tenantId,
+        rows.map((r) => r.id),
+      );
+      return rows.map((r) => toOption(r, restricted));
     }
 
     const page = filters.page;
@@ -992,7 +1010,76 @@ export class BranchLabPanelService {
       }),
       this.prisma.branchLabPanel.count({ where }),
     ]);
-    return { data: rows.map(toOption), total, page, limit };
+    const restricted = await this.findAgeRestrictedMembers(
+      tenantId,
+      rows.map((r) => r.id),
+    );
+    return {
+      data: rows.map((r) => toOption(r, restricted)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
+   * The age-restricted member tests of each given branch panel, for the
+   * Create-Order panel options. Batched: two queries for the whole page.
+   * @param tenantId tenant scope
+   * @param panelIds branch panel ids (one options page)
+   * @returns panel id → its restricted members, ordered by the panel's own
+   *          `sortOrder` (panels without one are absent)
+   */
+  private async findAgeRestrictedMembers(
+    tenantId: string,
+    panelIds: string[],
+  ): Promise<Map<string, AgeRestrictedPanelMember[]>> {
+    const result = new Map<string, AgeRestrictedPanelMember[]>();
+    if (panelIds.length === 0) return result;
+    const junctions = await this.prisma.branchLabPanelTest.findMany({
+      where: { tenantId, branchLabPanelId: { in: panelIds }, deletedAt: null },
+      select: { branchLabPanelId: true, branchLabTestId: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    if (junctions.length === 0) return result;
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        id: { in: [...new Set(junctions.map((j) => j.branchLabTestId))] },
+        deletedAt: null,
+        isAgeRestricted: true,
+      },
+      select: { id: true, testName: true, ...AGE_RESTRICTION_SELECT },
+    });
+    const byId = new Map<string, AgeRestrictedPanelMember>();
+    for (const t of tests) {
+      // A flagged row always carries all four bounds (LabTestService rule);
+      // skip a malformed one rather than block on a half-set range.
+      if (
+        t.minAgeValue === null ||
+        t.minAgeUnit === null ||
+        t.maxAgeValue === null ||
+        t.maxAgeUnit === null
+      ) {
+        continue;
+      }
+      byId.set(t.id, {
+        branchLabTestId: t.id,
+        testName: t.testName,
+        minAgeValue: t.minAgeValue,
+        minAgeUnit: t.minAgeUnit,
+        maxAgeValue: t.maxAgeValue,
+        maxAgeUnit: t.maxAgeUnit,
+      });
+    }
+    for (const j of junctions) {
+      const member = byId.get(j.branchLabTestId);
+      if (!member) continue;
+      const list = result.get(j.branchLabPanelId) ?? [];
+      list.push(member);
+      result.set(j.branchLabPanelId, list);
+    }
+    return result;
   }
 
   /**
