@@ -123,6 +123,21 @@ import {
   recomputeBillStatusInTx,
 } from './utils/bill-status';
 import { CANCEL_BLOCKING_REPORT_STATUSES } from './utils/cancel-rules.util';
+import {
+  AgeGateLine,
+  AgeGateLookup,
+  RestrictedTest,
+  ageViolationMessage,
+  findAgeViolations,
+  linesToAgeCheck,
+  restrictedTestsOf,
+} from './utils/order-age-restriction.util';
+import {
+  formatAgeOn,
+  orderDayOf,
+  toAgeLimit,
+} from '../../common/utils/age-restriction.util';
+import { exactBirthDate } from '../../common/utils/age-dob.util';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -237,6 +252,8 @@ import {
   OrderPatientNotFoundException,
   OrderPersonNotFoundException,
   OrderPregnancyRequiresFemalePatientException,
+  OrderTestAgeRestrictedException,
+  OrderPatientAgeRequiredException,
   OrderReferralDoctorNotFoundException,
   OrderReferralPanelNotFoundException,
   NoActiveOrderPrintTemplateException,
@@ -551,6 +568,16 @@ export class OrderService {
     const patientGender = await this.assertPatient(tenantId, dto.patientId);
     this.assertPregnancyAllowed(dto.isPregnant, dto.patientId, patientGender);
     await this.assertItems(tenantId, dto.items);
+    // Lab test Age Restriction — every saved order except a quotation (a quote
+    // is checked when it is converted into an order).
+    if ((dto.status ?? OrderStatus.DRAFT) !== OrderStatus.QUOTE) {
+      await this.assertAgeRestrictions(
+        tenantId,
+        dto.patientId,
+        dto.items ?? [],
+        dto.orderDate,
+      );
+    }
     await this.assertReferrals(tenantId, dto);
     // Referral Panel Settings credit gate (Section 4): block a NEW finalized
     // order when a linked referral (B2B panel / doctor / internal / external) on
@@ -6204,6 +6231,19 @@ export class OrderService {
       );
     }
     await this.assertItems(tenantId, dto.items);
+    // Lab test Age Restriction: new lines only, or every line when this update
+    // finalizes the order (draft → ORDER, appointment check-in). Quotes skip it.
+    if ((dto.status ?? current.status) !== OrderStatus.QUOTE) {
+      const becomesOrder =
+        dto.status === OrderStatus.ORDER &&
+        current.status !== OrderStatus.ORDER;
+      await this.assertAgeRestrictions(
+        tenantId,
+        current.patientId,
+        linesToAgeCheck(dto.items, current.items, becomesOrder),
+        dto.orderDate ?? current.orderDate,
+      );
+    }
     await this.assertReferrals(tenantId, dto);
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
@@ -8036,6 +8076,142 @@ export class OrderService {
    * @throws InvalidOrderItemException / OrderBranchLabTestNotFoundException /
    *         OrderBranchLabPanelNotFoundException
    */
+  /**
+   * Lab test "Age Restriction" gate. Every restricted test among `lines` — a
+   * test line's own test, and every member of a panel line — must admit the
+   * patient's age on the order date (min inclusive, max covers its whole unit).
+   * Returns without touching the patient when no line is restricted, so orders
+   * of unrestricted tests pay nothing extra.
+   * @param tenantId tenant scope
+   * @param patientId the order's patient
+   * @param lines the catalogue lines to check (direct lines are ignored)
+   * @param orderDate the order date (DTO ISO string or stored `Date`)
+   * @throws OrderTestAgeRestrictedException when the age is outside a range
+   * @throws OrderPatientAgeRequiredException when the patient has no DOB/age
+   */
+  private async assertAgeRestrictions(
+    tenantId: string,
+    patientId: string,
+    lines: AgeGateLine[],
+    orderDate: string | Date | null | undefined,
+  ): Promise<void> {
+    const lookup = await this.loadAgeGateLookup(tenantId, lines);
+    const restricted = restrictedTestsOf(lines, lookup);
+    const first = restricted[0];
+    if (!first) return;
+
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, tenantId, deletedAt: null },
+      select: { dateOfBirth: true, age: true, ageType: true, createdAt: true },
+    });
+    // The order's own day (back-dated orders age the patient on that day).
+    const today = new Date();
+    const onDay =
+      (orderDate ? orderDayOf(orderDate) : null) ??
+      new Date(
+        Date.UTC(
+          today.getUTCFullYear(),
+          today.getUTCMonth(),
+          today.getUTCDate(),
+        ),
+      );
+    // The tenant zone is only needed to read the creation day of an age-only
+    // patient (DOB implied from the age told on that day).
+    const timeZone =
+      patient && !patient.dateOfBirth
+        ? (await this.tenantService.getLocale(tenantId)).timezone
+        : null;
+    const dob = patient ? exactBirthDate(patient, onDay, timeZone) : null;
+    if (!dob) {
+      throw new OrderPatientAgeRequiredException(
+        patientId,
+        first.panelName ?? first.test.testName,
+      );
+    }
+    const violations = findAgeViolations(lines, lookup, dob, onDay);
+    if (violations.length > 0) {
+      const patientAge = formatAgeOn(dob, onDay) ?? 'unknown';
+      throw new OrderTestAgeRestrictedException(
+        ageViolationMessage(patientAge, violations),
+        { patientId, patientAge, violations },
+      );
+    }
+  }
+
+  /**
+   * Restricted branch tests behind `lines` plus each panel line's members and
+   * name — what {@link assertAgeRestrictions} needs. Batched: at most three
+   * queries, none when there are no catalogue lines.
+   * @param tenantId tenant scope
+   * @param lines the catalogue lines to check
+   */
+  private async loadAgeGateLookup(
+    tenantId: string,
+    lines: AgeGateLine[],
+  ): Promise<AgeGateLookup> {
+    const lookup: AgeGateLookup = {
+      restricted: new Map<string, RestrictedTest>(),
+      panelMembers: new Map<string, string[]>(),
+      panelNames: new Map<string, string>(),
+    };
+    const testIds = new Set<string>();
+    const panelIds = new Set<string>();
+    for (const line of lines) {
+      if (line.branchLabTestId) testIds.add(line.branchLabTestId);
+      else if (line.branchLabPanelId) panelIds.add(line.branchLabPanelId);
+    }
+    if (testIds.size === 0 && panelIds.size === 0) return lookup;
+
+    if (panelIds.size > 0) {
+      const junctions = await this.prisma.branchLabPanelTest.findMany({
+        where: {
+          tenantId,
+          branchLabPanelId: { in: [...panelIds] },
+          deletedAt: null,
+        },
+        select: { branchLabPanelId: true, branchLabTestId: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      for (const j of junctions) {
+        const members = lookup.panelMembers.get(j.branchLabPanelId) ?? [];
+        members.push(j.branchLabTestId);
+        lookup.panelMembers.set(j.branchLabPanelId, members);
+        testIds.add(j.branchLabTestId);
+      }
+    }
+    if (testIds.size === 0) return lookup;
+
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        id: { in: [...testIds] },
+        deletedAt: null,
+        isAgeRestricted: true,
+      },
+      select: {
+        id: true,
+        testName: true,
+        isAgeRestricted: true,
+        minAgeValue: true,
+        minAgeUnit: true,
+        maxAgeValue: true,
+        maxAgeUnit: true,
+      },
+    });
+    for (const t of tests) {
+      const limit = toAgeLimit(t);
+      if (limit) lookup.restricted.set(t.id, { testName: t.testName, limit });
+    }
+    if (lookup.restricted.size === 0 || panelIds.size === 0) return lookup;
+
+    const panels = await this.prisma.branchLabPanel.findMany({
+      where: { tenantId, id: { in: [...panelIds] } },
+      select: { id: true, panelName: true },
+    });
+    for (const p of panels) lookup.panelNames.set(p.id, p.panelName);
+    return lookup;
+  }
+
   private async assertItems(
     tenantId: string,
     items?: OrderItemDto[],

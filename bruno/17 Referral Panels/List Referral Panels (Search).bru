@@ -48,14 +48,26 @@ docs {
 
   ## Row shape
 
-  Each row is the referral-panel record (scalar columns only), plus `hasActiveOrder`
-  (boolean) and `labTestList` / `labPanelList` — `{ id, name } | null` — the caller's
-  active branch's assigned Lab Test List / Lab Panel List, bulk-resolved for the whole
-  page (not a per-row lookup). The raw `branchLabTestListId` / `branchLabPanelListId`
+  Each row is the referral-panel record (scalar columns only), plus `hasActiveOrder`,
+  `lastOrderCreatedAt`, `isB2bLoginEnabled` and `labTestList` / `labPanelList` —
+  `{ id, name } | null` — the caller's active branch's assigned Lab Test List / Lab
+  Panel List, bulk-resolved for the whole page (not a per-row lookup). The raw `branchLabTestListId` / `branchLabPanelListId`
   ids are still only on the single-item response — see *Get Referral Panel*.
 
   - `hasActiveOrder` — `true` when the panel is used by an order still in an active
     accessioning/technician-stage workflow; the client uses it to disable the Delete
     action (deletion returns **409 `REFERRAL_PANEL_IN_USE`**). Bulk-resolved for the
     whole page.
+
+  - `lastOrderCreatedAt` (ISO date-time | `null`) — when the most recent order using
+    this panel was **created** (the order's `createdAt`, UTC; not the user-entered
+    order date). Counts every non-deleted order except drafts (`DRAFT`) and
+    quotations (`QUOTE`) — appointments and cancelled orders count. `null` when no
+    such order exists. Computed live for the whole page (one grouped query).
+
+  - `isB2bLoginEnabled` (boolean) — `true` when the panel has a dedicated B2B login
+    (see *Create Referral Panel User*) whose user can sign in: the
+    `b2b_referring_panel` profile is active (branch status ACTIVE, not deleted), the
+    person is active, and the tenant membership is not `INACTIVE`. `false` when no
+    login exists or it has been deactivated. Bulk-resolved for the whole page.
 }
