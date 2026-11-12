@@ -506,10 +506,15 @@ export class SampleTransferService {
                   tenantId,
                   deletedAt: null,
                 },
-                select: { id: true, status: true },
+                select: { id: true, status: true, branchId: true },
               });
               if (clone) {
-                if (clone.status !== SampleStatus.ACCEPTED) {
+                // Undoing the acceptance sends the copy's report back to the sender as it is: refused when the receiver
+                // already worked it (anything past Pending), the same rule as Retrieve on a tube.
+                if (
+                  clone.status !== SampleStatus.ACCEPTED ||
+                  (await this.samples.hasStartedReport(tx, tenantId, clone))
+                ) {
                   const refusal = new TransferRetrieveBlockedException(
                     transfer.id,
                     clone.status,

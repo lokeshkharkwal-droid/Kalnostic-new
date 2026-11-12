@@ -214,7 +214,14 @@ export type GroupedSampleItem = OrderSampleListItem & {
  */
 export interface InHouseSampleGroup {
   groupKey: string;
+  /** The one barcode every member carries, else null (blank, or several values: see `barcodes`). */
   barcode: string | null;
+  /**
+   * Every distinct barcode value among the members (null = a member with no barcode yet). One entry when all agree. Two or
+   * more when part of the group was repeated: the repeated samples have no barcode until they are collected again, then
+   * carry a new one, while their group mates keep the old one.
+   */
+  barcodes: (string | null)[];
   department: { id: string | null; name: string } | null;
   sampleLabel: string | null;
   sampleIds: string[];

@@ -1,0 +1,44 @@
+meta {
+  name: 49 Re-run Fresh Eligibility
+  type: http
+  seq: 49
+}
+
+get {
+  url: {{baseUrl}}/accession/re-run-fresh/eligibility?reportId={{labReportId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("lists the tests of the clicked test's group", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 404]);
+    if (res.getStatus() === 200) {
+      const d = res.getBody().data;
+      expect(d.tests).to.be.an("array");
+      expect(d.tests[0].isClicked).to.equal(true);
+      expect(d.repeatReasons).to.be.an("array");
+    }
+  });
+}
+
+docs {
+  Feeds the pop-up of the Technician Re-run dialog (Fresh sample). Needs the Re-run
+  permission (`LAB_MARK_RE_RUN`). `reportId` is the report (test) the technician clicked,
+  at the active branch (404 `LAB_REPORT_NOT_FOUND` otherwise).
+
+  Returns `{ repeatReasons, orderId, orderCode, barcode, tests }`:
+  - `repeatReasons` - the branch's configured repeat reasons (the technician may not be
+    allowed to read the Accession settings).
+  - `tests` - the clicked test first, then the other tests of the order whose sample shares
+    its barcode (same tube) at this branch. Each has `eligible` and, when not, a `reason`
+    in words, plus `kind` (`IN_HOUSE` | `COPY` | `OUTSOURCED`), `sampleIds`, `sampleStatuses`.
+
+  A test is eligible when its report is Result Done / Result Rejected / Error Reported, the
+  report is not locked, the order is not cancelled, the test is not removed, and its
+  sample is Accepted (in-house, or a copy received from another branch) or Outsourced.
+}

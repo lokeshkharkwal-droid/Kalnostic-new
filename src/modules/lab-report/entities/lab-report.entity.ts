@@ -428,6 +428,11 @@ export interface LabReportWorklistRow {
     reason: string | null;
   } | null;
 
+  /** Set when the holder branch's sample is OUTSOURCED and the outside lab sent it back (its outsource transfer is closed
+   * as REPEAT / REJECTED): the report is reset and view-only until the sender confirms a Repeat or Retrieves the sample
+   * ("Outsourced – Repeated"). Set by `attachOutsourceSentBack`; false otherwise. */
+  outsourceSentBack?: boolean;
+
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
    * through Grossing→Sectioning→Staining→Reporting), and if so, which
@@ -664,6 +669,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     sampleBranchIds: [],
     displayBranch: null,
     returnedByReceiver: null,
+    outsourceSentBack: false,
     tat: null,
 
     multiStepProcessType: null,
@@ -700,8 +706,10 @@ export const LAB_REPORT_ALLOWED_FROM = {
   approve: ['RESULT_DONE'],
   publish: ['APPROVED'],
   errorReported: ['APPROVED', 'PUBLISHED'],
-  // Re-Run is allowed from any status per the spec ("Any status" row) — no
-  // ALLOWED_FROM_STEPS gate is applied to it; see LabReportService.reRun.
+  // Re-Run (manager's rule, 2026-11): only once there is a result to redo that is not signed off —
+  // Result Done, or a result sent back (Result Rejected / Error Reported). From Validation Pending
+  // the technician rejects the result first; from Approved or Published reports an error first.
+  reRun: ['RESULT_DONE', 'RESULT_REJECTED', 'ERROR_REPORTED'],
 } as const satisfies Record<string, readonly LabReportStatus[]>;
 
 export type LabReportTransitionAction = keyof typeof LAB_REPORT_ALLOWED_FROM;

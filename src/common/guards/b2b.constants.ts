@@ -12,6 +12,7 @@ export const B2B_ALLOWED_PATH_PREFIXES: readonly string[] = [
   '/users/manage/me', //  permissions + profile for the shell
   '/modules', //          branch module catalogue (TopBar tabs)
   '/tenant/locale', //    timezone/currency for display
+  '/user-preferences', // the user's own UI preferences (default date filter on Order Console / Billing)
   '/branches', //         branch lookups (read); writes still 403 via existing perms
   '/orders', //           Registration → Order Console + Finance → Billing
   '/invoices', //         Finance → Invoices

@@ -84,7 +84,12 @@ function makeSampleService() {
   return new OrderSampleService(
     {} as unknown as PrismaService,
     {} as unknown as AccessionSettingsService,
-    {} as unknown as LabReportService,
+    // Retrieve of a tube that is out looks at its reports (manager's rule): none, so none is past Pending
+    {
+      findReportIdsForSampleTests: jest.fn().mockResolvedValue([]),
+      lockReports: jest.fn().mockResolvedValue(undefined),
+      hasStartedReport: jest.fn().mockResolvedValue(false),
+    } as unknown as LabReportService,
     {} as unknown as PdfReportTemplateService,
     {} as unknown as PdfTemplateConfigService,
     {} as unknown as EventEmitter2,
