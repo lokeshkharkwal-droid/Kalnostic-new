@@ -7,16 +7,24 @@ import { ReferralCreditService } from './referral-credit.service';
 import {
   ReferralOrderCreditLimitException,
   ReferralReportCreditDaysException,
+  ReferralReportCreditLimitException,
 } from './referral-credit.exceptions';
 import type { PrismaService } from '../../prisma/prisma.service';
 
 /**
- * Regression: a Postpaid referral panel that paid its invoice in full stayed
+ * Regression 1: a Postpaid referral panel that paid its invoice in full stayed
  * blocked ("dues unpaid for 9 day(s), beyond the allowed credit period of 3
  * day(s)") because the credit gate summed only `PaymentDetails`, while invoice
  * receipts land on the invoice ledger. Orders on a COMPLETED invoice must now
  * count as settled — the same rule as the Outstanding report — while PARTIAL,
  * cancelled and un-invoiced dues still block.
+ */
+
+/**
+ * Regression 2: a fully paid order (ORD-00518) could not open its report because
+ * ANOTHER order of the same panel had ₹100 overdue. A fully paid order's reports
+ * must open regardless of the panel's settings; only partly-paid / unpaid orders
+ * stay credit-gated.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,7 +50,45 @@ type OrderWhere = {
   invoiceLinks?: { none: LinkFilter };
 };
 
+/** Payment state of the order whose report is being opened. */
+interface FakeTarget {
+  cancellationCharge: number;
+  payments: Array<{
+    netAmount: number;
+    paidAmount: number;
+    refundAmount: number;
+    refundCharge: number;
+  }>;
+  invoiceLinks: Array<{ id: string }>;
+}
+
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS);
+
+/** The printed order's ledger: one row of `net`/`paid` (+ optional refund). */
+const target = (
+  net: number,
+  paid: number,
+  opts: { refund?: number; invoicePaid?: boolean } = {},
+): FakeTarget => ({
+  cancellationCharge: 0,
+  payments: [
+    { netAmount: net, paidAmount: paid, refundAmount: 0, refundCharge: 0 },
+    ...(opts.refund
+      ? [
+          {
+            netAmount: 0,
+            paidAmount: 0,
+            refundAmount: opts.refund,
+            refundCharge: 0,
+          },
+        ]
+      : []),
+  ],
+  invoiceLinks: opts.invoicePaid ? [{ id: 'link-1' }] : [],
+});
+
+/** Default printed order: unpaid, so the referral credit rules apply. */
+const UNPAID_TARGET = target(1000, 0);
 
 /** An unpaid postpaid order (net 1000, nothing collected at the counter). */
 const unpaidOrder = (
@@ -85,7 +131,11 @@ const setting = (
  * the referral / exclude / `invoiceLinks.none` filters the way Postgres would,
  * so the tests exercise what the gate actually loads.
  */
-const build = (orders: FakeOrder[], panelSetting = setting()) => {
+const build = (
+  orders: FakeOrder[],
+  panelSetting = setting(),
+  printed: FakeTarget = UNPAID_TARGET,
+) => {
   const findMany = jest.fn(({ where }: { where: OrderWhere }) => {
     const none = where.invoiceLinks?.none;
     return Promise.resolve(
@@ -110,15 +160,22 @@ const build = (orders: FakeOrder[], panelSetting = setting()) => {
       }),
     );
   });
+  const printedOrder = {
+    referralPanelId: 'panel-1',
+    referredByDoctorId: null,
+    internalReferralId: null,
+    externalReferralId: null,
+    ...printed,
+  };
   const prisma = {
     order: {
-      findFirst: jest.fn().mockResolvedValue({
-        referralPanelId: 'panel-1',
-        referredByDoctorId: null,
-        internalReferralId: null,
-        externalReferralId: null,
-      }),
+      findFirst: jest.fn().mockResolvedValue(printedOrder),
       findMany,
+    },
+    labReport: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ orderItem: { order: printedOrder } }),
     },
     referralPanel: {
       findFirst: jest
@@ -218,5 +275,85 @@ describe('ReferralCreditService — invoice-settled orders', () => {
         referralPanelId: 'panel-1',
       }),
     ).rejects.toBeInstanceOf(ReferralOrderCreditLimitException);
+  });
+});
+
+describe('ReferralCreditService — fully paid orders always open their reports', () => {
+  /** The panel has an order with dues unpaid for 9 days (> 3 allowed). */
+  const overduePanel = () => [unpaidOrder('o-overdue', 9)];
+  const limitAndDays = setting({
+    isRestrictReportCreditLimit: true,
+    creditLimitAmount:
+      500 as unknown as ReferralPanelSettings['creditLimitAmount'],
+  });
+
+  it('allows a fully paid order despite overdue panel dues — without loading the panel', async () => {
+    const { svc, findMany } = build(
+      overduePanel(),
+      limitAndDays,
+      target(180, 180),
+    );
+    await expect(
+      svc.assertReportAccessAllowedByOrderId('t1', 'o-print'),
+    ).resolves.toBeUndefined();
+    await expect(
+      svc.assertReportAccessAllowedByReportId('t1', 'r-print'),
+    ).resolves.toBeUndefined();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('allows an order settled on a fully paid (COMPLETED) invoice', async () => {
+    const { svc } = build(
+      overduePanel(),
+      limitAndDays,
+      target(1000, 0, { invoicePaid: true }),
+    );
+    await expect(
+      svc.assertReportAccessAllowedByOrderId('t1', 'o-print'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows a zero-value order (nothing to collect)', async () => {
+    const { svc } = build(overduePanel(), limitAndDays, target(0, 0));
+    await expect(
+      svc.assertReportAccessAllowedByOrderId('t1', 'o-print'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('still gates a partly paid order (180 net / 80 paid) on overdue panel dues', async () => {
+    const { svc } = build(overduePanel(), setting(), target(180, 80));
+    await expect(
+      svc.assertReportAccessAllowedByOrderId('t1', 'o-print'),
+    ).rejects.toBeInstanceOf(ReferralReportCreditDaysException);
+    await expect(
+      svc.assertReportAccessAllowedByReportId('t1', 'r-print'),
+    ).rejects.toBeInstanceOf(ReferralReportCreditDaysException);
+  });
+
+  it('treats a paid-then-refunded order as not fully paid (matches stored status)', async () => {
+    const { svc } = build(
+      overduePanel(),
+      setting(),
+      target(180, 180, { refund: 100 }),
+    );
+    await expect(
+      svc.assertReportAccessAllowedByOrderId('t1', 'o-print'),
+    ).rejects.toBeInstanceOf(ReferralReportCreditDaysException);
+  });
+
+  it('still applies the credit limit to an unpaid order', async () => {
+    const { svc } = build(
+      overduePanel(),
+      setting({
+        isRestrictReportCreditDays: false,
+        isRestrictReportCreditLimit: true,
+        creditLimitAmount:
+          500 as unknown as ReferralPanelSettings['creditLimitAmount'],
+      }),
+      target(1000, 0),
+    );
+    await expect(
+      svc.assertReportAccessAllowedByOrderId('t1', 'o-print'),
+    ).rejects.toBeInstanceOf(ReferralReportCreditLimitException);
   });
 });
