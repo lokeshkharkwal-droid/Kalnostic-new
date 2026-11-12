@@ -56,14 +56,24 @@ export const COUNTED_SAMPLE_WHERE: Prisma.OrderSampleWhereInput = {
   ],
 };
 
-/** A counted sample that has been collected (`collectedAt` stamped). */
+/**
+ * A counted sample that has been collected: it has a collected date AND it is not waiting to be collected again. A Repeat /
+ * Re-run with a fresh sample sends the sample back to REPEAT but keeps its first collected date, so the date alone would keep
+ * the order saying "Collected" while a tube still has to be drawn.
+ */
 const COLLECTED_SAMPLE_WHERE: Prisma.OrderSampleWhereInput = {
-  AND: [COUNTED_SAMPLE_WHERE, { collectedAt: { not: null } }],
+  AND: [
+    COUNTED_SAMPLE_WHERE,
+    { collectedAt: { not: null }, status: { not: SampleStatus.REPEAT } },
+  ],
 };
 
-/** A counted sample that has not been collected yet. */
+/** A counted sample still to be collected: never collected, or sent back to REPEAT for a fresh collection. */
 const UNCOLLECTED_SAMPLE_WHERE: Prisma.OrderSampleWhereInput = {
-  AND: [COUNTED_SAMPLE_WHERE, { collectedAt: null }],
+  AND: [
+    COUNTED_SAMPLE_WHERE,
+    { OR: [{ collectedAt: null }, { status: SampleStatus.REPEAT }] },
+  ],
 };
 
 /**

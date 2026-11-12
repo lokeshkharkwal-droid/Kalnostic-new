@@ -186,7 +186,12 @@ describe('LabReportService.resetForRerun starts the notes over', () => {
     const tx = {
       labReportResultValue: { updateMany: jest.fn().mockResolvedValue({}) },
       labReportParameterNote: { updateMany: jest.fn().mockResolvedValue({}) },
-      labReport: { update: jest.fn().mockResolvedValue({ id: 'r1' }) },
+      labReport: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ status: LabReportStatus.RESULT_DONE }),
+        update: jest.fn().mockResolvedValue({ id: 'r1' }),
+      },
     };
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
@@ -196,7 +201,7 @@ describe('LabReportService.resetForRerun starts the notes over', () => {
         labReport: {
           findFirst: jest.fn().mockResolvedValue({
             id: 'r1',
-            status: LabReportStatus.APPROVED,
+            status: LabReportStatus.RESULT_DONE,
             isLocked: false,
           }),
         },

@@ -341,20 +341,97 @@ export class SampleRepeatBlockedException extends InvalidSampleTransitionExcepti
 }
 
 /**
- * 422 — a sample cannot be Retrieved (the universal undo) back to before its
- * acceptance because a test on it already has a validated result (Result Done,
- * Approved or Published): the sample would say "not accepted yet" while its
- * result is done. A validated result is redone with Re-run instead. Anything
- * earlier (no result, saved, validation pending) does not block. Skippable by
- * group "skip invalid" actions.
+ * 422 — a sample waiting to be collected again (status Repeat) can only be collected (or put on Hold, or retrieved): a forced
+ * Accept / Store / Discard ... would skip the Collect that makes its new barcode and leave an Accepted tube with no barcode.
+ * Skippable by group "skip invalid" actions.
  */
-export class SampleRetrieveBlockedByResultException extends InvalidSampleTransitionException {
+export class SampleRepeatMustBeCollectedException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction, from: SampleStatus) {
+    super(
+      action,
+      from,
+      'This sample is waiting to be collected again (Repeat). Collect it first: it cannot skip the Collect that makes its new barcode.',
+      'SAMPLE_REPEAT_MUST_BE_COLLECTED',
+    );
+  }
+}
+
+/**
+ * 422 — a sample whose test has a validated result (Result Done, Approved or Published) cannot be moved back to before its
+ * acceptance, not even by a forced action: the report would be locked "waiting for its sample" under an approved result. Use
+ * Re-run to redo a validated result. Skippable by group "skip invalid" actions.
+ */
+export class SampleMoveBlockedByResultException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction, from: SampleStatus) {
+    super(
+      action,
+      from,
+      'The result of this test is already done (Result Done, Approved or Published), so the sample cannot be moved back to before its acceptance. Use Re-run to redo a validated result.',
+      'SAMPLE_MOVE_BLOCKED_RESULT_DONE',
+    );
+  }
+}
+
+/** 422 — nothing to print: none of the selected samples has a barcode yet (e.g. they were repeated and not collected again). */
+export class NoBarcodeToPrintException extends KaltrosException {
+  constructor(count: number) {
+    super(
+      'NO_BARCODE_TO_PRINT',
+      count === 1
+        ? 'This sample has no barcode yet, so there is no label to print. It gets its barcode when it is collected.'
+        : 'None of the selected samples has a barcode yet, so there is nothing to print. They get their barcode when they are collected.',
+      { count },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 503 — the barcode picture could not be made right now (the file storage is unreachable); the label is not printed blank. */
+export class BarcodeImageUnavailableException extends KaltrosException {
+  constructor() {
+    super(
+      'BARCODE_IMAGE_UNAVAILABLE',
+      'The barcode image could not be made right now (the file storage is not reachable). Please try printing again in a moment.',
+      {},
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  }
+}
+
+/**
+ * 422 — a sample that is waiting to be collected again (status Repeat) cannot be cancelled: its report was reset
+ * for the repeat and stays locked until the sample is accepted again. Collect it, put it on Hold, or Retrieve it
+ * to undo the repeat. Skippable by group "skip invalid" actions.
+ */
+export class SampleRepeatCancelBlockedException extends InvalidSampleTransitionException {
+  constructor(from: SampleStatus) {
+    super(
+      'cancel',
+      from,
+      'A sample waiting to be collected again (Repeat) cannot be cancelled. Collect it again, put it on Hold, or Retrieve it to undo the repeat.',
+      'SAMPLE_CANCEL_BLOCKED_REPEAT',
+    );
+  }
+}
+
+/**
+ * 422 — a sample cannot be Retrieved (the universal undo) because a report on it is
+ * already past Pending: a result was entered and saved, submitted, rejected,
+ * validated (Result Done, Approved, Published) or reported as an error. The manager's
+ * rule: Retrieve only while every report is still Pending. Otherwise the sample would
+ * go back to an earlier tube / place while the report still carries the result of the
+ * tube it was entered for. Applies to going back to before Accepted (and the sender's
+ * recall of a Forwarded / Outsourced tube); Stored -> Accepted is not affected. The
+ * way forward is Repeat (an unfinished report is wiped), Re-run, or reporting an error.
+ * Skippable by group "skip invalid" actions.
+ */
+export class SampleRetrieveBlockedByReportException extends InvalidSampleTransitionException {
   constructor(from: SampleStatus) {
     super(
       'retrieve',
       from,
-      'The result of this test is already done (Result Done, Approved or Published), so the sample cannot be retrieved back to before its acceptance. Use Re-run to redo a validated result.',
-      'SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE',
+      'A test on this sample is already past Pending (a result was entered, saved, submitted or validated), so the sample cannot be retrieved. Use Repeat, or Re-run to redo a finished result.',
+      'SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED',
     );
   }
 }
@@ -556,4 +633,23 @@ export class NoActiveLabelTemplateException extends KaltrosException {
 export function refusalMessage(e: KaltrosException): string {
   const body = e.getResponse() as { error?: { message?: string } };
   return body.error?.message ?? e.message;
+}
+
+/**
+ * 422 — a "Re-run with a fresh sample" cannot be done for one or more of the tests asked for (status not allowed, report
+ * locked, sample not Accepted or Outsourced, order cancelled, test removed, ...). Nothing is changed: the request is
+ * all-or-nothing. The message names the first reason; `context.reasons` lists every test and reason (server-side only).
+ */
+export class ReRunFreshNotAllowedException extends KaltrosException {
+  constructor(reasons: { reportId: string; reason: string }[]) {
+    const first = reasons[0]?.reason ?? 'The re-run cannot be done.';
+    const more =
+      reasons.length > 1 ? ` (and ${reasons.length - 1} more test(s))` : '';
+    super(
+      'RERUN_FRESH_NOT_ALLOWED',
+      `${first}${more}`,
+      { reasons },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
 }

@@ -16,7 +16,7 @@ auth:bearer {
 
 body:json {
   {
-    "notes": "Adapter-fed value looks doubtful — re-running before validation."
+    "notes": "Adapter-fed value looks doubtful — re-running the result."
   }
 }
 
@@ -26,10 +26,18 @@ script:post-response {
 }
 
 docs {
-  Re-Run Request (LABORATORY.docx §2.2 "Any status" row, §5.5). Clears the
-  report's result values and returns it to Pending; also creates a tracking
-  row in the Re-Run worklist (see "02 Re-Run"). `notes` optional. Allowed
-  from ANY report status — no transition gate applies.
+  Re-Run Request (LABORATORY.docx §5.5). Clears the report's result values
+  and returns it to Pending; also creates a tracking row in the Re-Run
+  worklist (see "02 Re-Run"). `notes` optional.
+
+  Allowed only from RESULT_DONE, RESULT_REJECTED or ERROR_REPORTED (manager's
+  rule). From VALIDATION_PENDING reject the result first (`/reject`); from
+  APPROVED or PUBLISHED report an error first (`/error-reported`). Any other
+  status is refused with 409 `LAB_REPORT_RERUN_NOT_ALLOWED`; the message says
+  what to do first. A locked report is refused with 409 `LAB_REPORT_LOCKED`.
+
+  This is the SAME-sample Re-run (the sample is not touched). To redo the test on a
+  FRESH sample use `POST /accession/re-run-fresh` (Accession folder, request 50).
 
   Captures `reRunRequestId`. 404 `LAB_REPORT_NOT_FOUND`.
 }
