@@ -1,0 +1,66 @@
+meta {
+  name: 48 Transfer Timeline (Internal History)
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/accession/transfers/{{transferId}}/history
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a list, oldest first", function () {
+    const d = res.getBody().data;
+    expect(d).to.be.an("array");
+    for (let i = 1; i < d.length; i++) {
+      expect(new Date(d[i].createdAt).getTime()).to.be.at.least(new Date(d[i - 1].createdAt).getTime());
+    }
+  });
+  test("every entry says whose branch it belongs to", function () {
+    res.getBody().data.forEach((e) => {
+      expect(["sender", "step", "receiver"]).to.include(e.side);
+      ["action", "createdAt", "branchName", "actorName"].forEach((k) => expect(e).to.have.property(k));
+    });
+  });
+}
+
+docs {
+  The **Internal Referral timeline** of one transfer, opened from the History icon of the
+  Sent / Received Internal screen. Read-only.
+
+  One list, oldest first, of:
+  - `side: "sender"` — the sending branch's story of the sample (collected, sent, returned ...);
+  - `side: "step"` — the receiving branch's **Picked up** (`transfer-pickup`) and **Received**
+    (`transfer-receive`) steps. They move no status (from == to); `notes` carries who carried the sample
+    (pick-up) or the condition it arrived in (receive);
+  - `side: "receiver"` — the receiving branch's own copy of the sample (accepted, ...) **and** what the
+    receiving branch did to the sender's sample: its send-back (Repeat / Reject) and its Retrieve of a
+    step. Those rows are stored under the sender's branch, so they are shown at the **receiving** branch
+    (`branchName` = the transfer's destination).
+
+  Entries whose stored `action` is too general carry `display`:
+  `repeat-requested` / `rejected` (a send-back, stored as one `returned-by-receiver` action for both,
+  told apart by the transfer's status), `returned` (kind unknown) and `receiver-retrieve` (the receiving
+  branch's Retrieve, stored as `retrieve`). It is worked out when the timeline is built, so old rows
+  read correctly too; nothing stored changes. Absent = label the line from `action`.
+
+  Each entry has `branchName` (where it happened) and `actorName` / `actorRole`; the role only resolves
+  for a person of the caller's own branch.
+
+  The timeline ends where the transfer ended: a transfer the receiving branch sent back stops at that
+  send-back (what the sender does next - confirm the repeat, collect, send again - belongs to the next
+  transfer), and it never runs past where the next transfer of the same sample begins, so a sample sent
+  twice shows two separate timelines. Transfers made before the steps were recorded show no Picked up / Received entries
+  (the server never kept who did them). The sender and the copy are read through the same
+  access-checked history read, so a copy outside the caller's view is simply left out.
+
+  404 when the transfer does not exist, or is outside the caller's view (same rule as `GET /accession/transfers/:id`).

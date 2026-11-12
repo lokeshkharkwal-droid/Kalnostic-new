@@ -127,6 +127,8 @@ describe('SampleTransferService.pickUp — refused while In-Transit with no logi
         findFirst: jest.fn().mockResolvedValue({ orderId: 'o1' }),
       },
       orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
+      // the step row a pick up leaves on the sender's sample
+      orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     };
     const prisma = {
       withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>

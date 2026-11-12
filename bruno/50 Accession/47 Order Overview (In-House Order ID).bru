@@ -1,0 +1,60 @@
+meta {
+  name: 47 Order Overview (In-House Order ID)
+  type: http
+  seq: 47
+}
+
+get {
+  url: {{baseUrl}}/accession/order-samples/order/{{orderId}}/overview
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the order, the notes anchor and the tests", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("orderCode");
+    expect(d).to.have.property("orderCancelled");
+    expect(d).to.have.property("notesReportId");
+    expect(d.tests).to.be.an("array");
+  });
+  test("each test carries the list row, its report and its holder", function () {
+    const t = res.getBody().data.tests[0];
+    if (t) {
+      ["sample", "testName", "department", "report", "holder"].forEach((k) =>
+        expect(t).to.have.property(k)
+      );
+    }
+  });
+}
+
+docs {
+  The read-only **Order Overview** opened from the Order ID of the In-House list. It describes the order
+  as THIS branch sees it and changes nothing.
+
+  - `tests` — exactly the rows the In-House list shows for the order: the active branch's samples of
+    that order, not deleted, and only the departments the caller may see (the same visibility rule as the
+    list, so the two cannot disagree). Each entry:
+    - `sample` — the list row itself (`status`, `transfers[0]`, `itemRemoved`, `tatStatus`, ...), so the
+      status text ("Sent – Rejected", ...) is computed from the same data as the list.
+    - `testName`, `department` (null when none assigned).
+    - `report` — the test's report `{ id, status, heldHere, heldAtBranchName }`, `status` one of the nine
+      report statuses; `null` until a report exists (it is made at the first Accept). A panel member's
+      sample gets its own member report. `heldHere` is true when this branch holds the report.
+    - `holder` — only for a sample this branch sent on that has an accepted copy elsewhere:
+      `{ branchId, branchName, status }` = the last branch in the chain of copies and the copy's status there
+      ("Currently at Branch B: Accepted"). `sample.status` stays this branch's own status.
+  - `notesReportId` — the report notes are read and written through
+    (`GET/POST /lab-reports/:id/notes`): the first report of the order held at this branch. `null` when this
+    branch holds none (nothing accepted here yet, or every test sent away): notes are then not available.
+  - `orderCancelled` — a cancelled order is frozen; no notes can be added.
+
+  404 `ORDER_NOT_FOUND` when the order does not exist in the tenant. An order with no sample at this branch
+  returns an empty `tests` list.
