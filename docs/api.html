@@ -188,6 +188,8 @@
   <h3>User Preferences</h3>
   <a href="#user-preferences">Default date filter (per user, per screen)</a>
   <a href="#technician-worklist-dates">Technician special worklists — date filter</a>
+  <h3>Notes</h3>
+  <a href="#order-notes">Order &amp; Technician notes</a>
 </nav>
 <main>
 
@@ -3097,6 +3099,50 @@ screen; the frontend applies it to every tab of that screen. Allowed for B2B ref
   Rows are limited to reports whose <b>order date</b> (<code>orders.order_date</code>) is in range, the
   same column and semantics as <code>GET /lab-reports</code>. Omitted = no date limit (unchanged
   behaviour). An invalid date → <span class="pill">400 VALIDATION_ERROR</span>.</p>
+</div>
+
+<h2 id="order-notes">Order &amp; Technician notes <span style="font-size:13px;color:var(--muted)">(Order / Sample / Tech Notes on the Order Console and the Technician worklist)</span></h2>
+<p>Two note stores: <code>order_notes</code> (Order Overview popup, <code>POST /orders/:id/notes</code>) and
+<code>lab_report_notes</code> (Technician Reporting's Order / Sample / Tech Notes,
+<code>POST /lab-reports/:id/notes</code>), plus the accession sample notes
+(<code>order_sample_status_history.notes</code>). The Order Console shows all of an order's notes; the
+Technician worklist shows its own notes. Notes are append-only (no edit/delete). Every list count below equals the
+length of the matching notes list.</p>
+
+<div class="ep" id="order-notes-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/orders/:id/notes?category=ORDER|SAMPLE|TECH</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>The order's notes, newest first: <code>{ id, category, body, createdByName, createdAt, source, readonly,
+  action?, testName?, sampleLabel? }</code>. <code>source</code> = <code>ORDER</code> (Order Overview notes),
+  <code>LAB_REPORT</code> (read-only Technician Reporting notes on any live report of the order, any branch, with
+  the <code>testName</code> and <code>sampleLabel</code> — <code>"&lt;sample name&gt; · &lt;barcode&gt;"</code> —
+  they were written on) or <code>ACCESSION</code> (read-only accession sample notes, SAMPLE only, with
+  <code>action</code> and <code>sampleLabel</code>). <span class="pill">404 ORDER_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="order-notes-counts">
+  <div><span class="m get">GET</span><span class="path">/api/v1/orders?includeNoteCounts=true</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Opt-in: each row gains <code>noteCounts: { ORDER, SAMPLE, TECH }</code> — how many notes
+  <code>GET /orders/:id/notes?category=&lt;X&gt;</code> lists. Sent by the Order Console for its notes icons (Order
+  Notes beside the Order ID, Technician / Sample Notes beside the Sample Status). Omitted → no field, no extra
+  queries (Billing, Quotations, patient history).</p>
+</div>
+
+<div class="ep" id="lab-report-notes-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/lab-reports/:id/notes?category=ORDER|SAMPLE|TECH</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Order-wide: the notes on every live report of this report's order in the caller's active branch, newest
+  first. Each row also carries <code>createdByName</code>, <code>testName</code> and <code>sampleLabel</code> (the
+  report it was written on). <span class="pill">404 LAB_REPORT_NOT_FOUND</span> for another branch's report.</p>
+</div>
+
+<div class="ep" id="lab-report-notes-counts">
+  <div><span class="m get">GET</span><span class="path">/api/v1/lab-reports</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Every worklist row carries <code>noteCounts: { ORDER, SAMPLE, TECH }</code> — what
+  <code>GET /lab-reports/:id/notes</code> lists for that row (same order, same branch as the row's report), so every
+  test of an order shows the same counts. Drives the Sample / Technician Notes icons beside Report Status.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">

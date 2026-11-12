@@ -14,6 +14,7 @@ import {
   TatBand,
 } from '@prisma/client';
 import type { NoteSectionKey } from '../utils/note-sections.util';
+import type { NoteCounts } from '../../../common/utils/lab-report-note.util';
 
 /**
  * Compact Analytical-TAT figure attached to each worklist row (SRS §6.2/§8).
@@ -445,6 +446,13 @@ export interface LabReportWorklistRow {
    * (e.g. Order Overview) without needing to open the report's own detail. */
   multiStepProcessType: MultiStepProcessType | null;
   multiStepStage: MultiStepStage | null;
+
+  /** Order / Sample / Tech note counts for this row's order (the notes icons
+   * beside the Report Status badge), counted exactly as `GET
+   * /lab-reports/:id/notes` lists them: every live report of the order in the
+   * branch holding this report. Set by `LabReportService.attachNoteCounts`
+   * (worklist list only); absent on the single-report detail. */
+  noteCounts?: NoteCounts;
 }
 
 /** One resolved candidate for the Approve modal's Signatory Authority

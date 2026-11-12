@@ -34,6 +34,10 @@ import {
   formatReportDateTime,
   formatOrderPrintDate,
   formatOrderPrintDateTime,
+  emptyNoteCounts,
+  labReportNotesForOrdersWhere,
+  resolveReportLabels,
+  type NoteCounts,
 } from '../../common/utils';
 import { recomputeCalculatedValues } from './utils/recompute-calculated-values';
 import { TenantService } from '../tenant/tenant.service';
@@ -1572,6 +1576,7 @@ export class LabReportService {
     worklistRows = await this.attachMemberTestNames(worklistRows);
     worklistRows = await this.attachResultTypes(worklistRows);
     worklistRows = await this.attachSampleStatuses(tenantId, worklistRows);
+    worklistRows = await this.attachNoteCounts(tenantId, worklistRows);
     worklistRows = await this.attachDisplayBranch(
       tenantId,
       scope,
@@ -2232,6 +2237,53 @@ export class LabReportService {
     return rows.map((r) => ({
       ...r,
       accessMode: workable(r) && !lockedIds.has(r.id) ? 'full' : 'view',
+    }));
+  }
+
+  /**
+   * Order / Sample / Tech note counts per row (the icons beside the Report Status
+   * badge). Counted the way `findNotes` lists them, so a row's count always equals
+   * what its hover card and the Notes dialogs show: every live report of the
+   * row's order in the branch that holds the row's report (`siblingReportIds`).
+   * One query for the whole page.
+   */
+  private async attachNoteCounts(
+    tenantId: string,
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const orderIds = [
+      ...new Set(
+        rows.map((r) => r.order?.id).filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (orderIds.length === 0) {
+      return rows.map((r) => ({ ...r, noteCounts: emptyNoteCounts() }));
+    }
+
+    const notes = await this.prisma.labReportNote.findMany({
+      where: labReportNotesForOrdersWhere(tenantId, orderIds),
+      select: {
+        category: true,
+        labReport: {
+          select: { branchId: true, orderItem: { select: { orderId: true } } },
+        },
+      },
+    });
+    const countsByKey = new Map<string, NoteCounts>();
+    for (const n of notes) {
+      const key = `${n.labReport.orderItem.orderId}|${n.labReport.branchId ?? ''}`;
+      const counts = countsByKey.get(key) ?? emptyNoteCounts();
+      if (n.category in counts) counts[n.category as keyof NoteCounts] += 1;
+      countsByKey.set(key, counts);
+    }
+    return rows.map((r) => ({
+      ...r,
+      noteCounts: r.order
+        ? {
+            ...(countsByKey.get(`${r.order.id}|${r.branchId ?? ''}`) ??
+              emptyNoteCounts()),
+          }
+        : emptyNoteCounts(),
     }));
   }
 
@@ -7709,13 +7761,24 @@ export class LabReportService {
     // Order/Sample/Tech Notes tabs were showing this raw UUID directly
     // instead of a human name. Reuses the same resolve-and-fall-back-to-raw-id
     // convention as `resolveActorNames` (Re-Run's "Re-Run By" column).
-    const nameById = await resolveActorNames(
-      this.prisma,
-      rows.map((r) => r.createdBy),
-    );
+    const [nameById, labelByReport] = await Promise.all([
+      resolveActorNames(
+        this.prisma,
+        rows.map((r) => r.createdBy),
+      ),
+      // Which test (and its sample) each note was written on - the list is
+      // order-wide, so the worklist's notes hover tags every note with it.
+      resolveReportLabels(
+        this.prisma,
+        tenantId,
+        rows.map((r) => r.labReportId),
+      ),
+    ]);
     return rows.map((r) => ({
       ...r,
       createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+      testName: labelByReport.get(r.labReportId)?.testName ?? null,
+      sampleLabel: labelByReport.get(r.labReportId)?.sampleLabel ?? null,
     }));
   }
 

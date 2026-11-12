@@ -122,6 +122,13 @@ docs {
   first row for the requests below. 422 `ACTIVE_BRANCH_REQUIRED` if the
   caller has no active branch.
 
+  **Notes counts (per row).** `noteCounts: { ORDER, SAMPLE, TECH }` — the
+  worklist's notes icons beside Report Status. Counted exactly as
+  `GET /lab-reports/:id/notes?category=<X>` lists them for that row: the live
+  Order / Sample / Tech Notes on every live report of the row's order held by the
+  same branch as the row's report (so every test of an order shows the same
+  counts). One query per page.
+
   **Department visibility is per branch (Phase 2).** A report is visible when the department of the entry the viewing
   branch works the test with is unassigned or one of the caller's departments: for a report the branch HOLDS that is
   its own entry once the report was sent to it (`performingBranchLabTestId`), otherwise the order line's; for a report
