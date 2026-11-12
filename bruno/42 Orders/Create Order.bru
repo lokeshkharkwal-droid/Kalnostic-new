@@ -207,6 +207,16 @@ docs {
     allowed when the patient's current gender is `FEMALE` — otherwise 422
     `ORDER_PREGNANCY_REQUIRES_FEMALE` (male / other / prefer-not-to-say / no
     gender recorded).
+  - **Lab test Age Restriction** (server-enforced; every status except `QUOTE`):
+    each `items[]` test line whose branch test has `isAgeRestricted`, and every
+    restricted member of a panel line, must admit the patient's age on
+    `orderDate` (min inclusive, max covers its whole unit; an age-only patient
+    is aged from the day the age was recorded). Otherwise 422
+    `ORDER_TEST_AGE_RESTRICTED`, with the patient's age and the allowed range in
+    the message, e.g. `Patient's age (5 Years) does not meet the age requirement
+    for "Vitamin B12" (allowed age: 18 Years - 60 Years).` A restricted line for
+    a patient with neither DOB nor age → 422 `ORDER_PATIENT_AGE_REQUIRED`.
+    Orders of unrestricted tests are unaffected.
   - `orderDateType` — **read-only, server-derived** classification of `orderDate`
     vs. the day the order is created (server "today"): `BACKTRACKED` when dated in
     the past, `ADVANCE_DATED` when dated in the future, `CURRENT` when today.

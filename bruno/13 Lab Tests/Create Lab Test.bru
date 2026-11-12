@@ -46,6 +46,11 @@ body:json {
     "discountCapPct": 20,
     "isAllowPriceOverride": false,
     "isAllowDiscounts": true,
+    "isAgeRestricted": true,
+    "minAgeValue": 1,
+    "minAgeUnit": "DAYS",
+    "maxAgeValue": 18,
+    "maxAgeUnit": "YEARS",
     "tatMinValue": 2,
     "tatMinUnit": "HOURS",
     "tatMaxValue": 24,
@@ -257,7 +262,19 @@ docs {
     `loincCode`, `clinicalTags[]`, `samplePriorityType`, `isEnableCms`,
     `isMandatoryTest` (+ `mandatoryDeptId`/`mandatoryCatId`/`mandatorySubcatId`),
     `isHideInOrderScreen`, `isRepeatIntervalRestriction` (+ `repeatIntervalValue`
-    + `repeatIntervalUnit`).
+    + `repeatIntervalUnit`), `isAgeRestricted` (+ `minAgeValue`/`minAgeUnit` +
+    `maxAgeValue`/`maxAgeUnit`).
+  - **Age Restriction (Basic Details):** `isAgeRestricted` (default `false` = no
+    age limit). When `true`, all four bounds are required — `minAgeValue` /
+    `maxAgeValue` integers 0–999, `minAgeUnit` / `maxAgeUnit` one of
+    `DAYS`/`MONTHS`/`YEARS` — and Minimum Age must not be greater than Maximum
+    Age (calendar rule: the max covers its whole unit, so `18 YEARS`..`18 YEARS`
+    is valid). Otherwise 422 `VALIDATION_ERROR` ("Minimum Age and Maximum Age are
+    required when Age Restriction is Yes" / "Minimum Age must not be greater than
+    Maximum Age"). When `false` the server stores all four bounds as `null`.
+    Mirrored onto the branch Lab Test List copies by the normal Master Data
+    import/sync and enforced on Create Order (`POST`/`PATCH /orders` → 422
+    `ORDER_TEST_AGE_RESTRICTED`).
   - **Pricing:** `priceMsrp`, `priceMaximum`, `priceMinimum`, `priceOriginal`,
     `franchisePrice`, `emergencyPrice`, `commissionPrice`, `discountCapPct`,
     `isAllowPriceOverride`.

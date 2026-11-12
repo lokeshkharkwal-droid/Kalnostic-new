@@ -33,6 +33,37 @@ export class OrderPatientNotFoundException extends KaltrosException {
 }
 
 /**
+ * 422 — the patient's age on the order date is outside the allowed range of an
+ * age-restricted lab test (ordered on its own or inside a lab panel). The
+ * allowed range is part of the client message (`context` is never returned).
+ */
+export class OrderTestAgeRestrictedException extends KaltrosException {
+  constructor(message: string, context: Record<string, unknown>) {
+    super(
+      'ORDER_TEST_AGE_RESTRICTED',
+      message,
+      context,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the order carries an age-restricted lab test (or a panel containing
+ * one) but the patient has neither a date of birth nor an age to check it with.
+ */
+export class OrderPatientAgeRequiredException extends KaltrosException {
+  constructor(patientId: string, testName: string) {
+    super(
+      'ORDER_PATIENT_AGE_REQUIRED',
+      `Patient's age or date of birth is required to order "${testName}", which has an age restriction`,
+      { patientId, testName },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — `isPregnant: true` was sent for an order whose patient is not FEMALE
  * (male, other, prefer-not-to-say, or no gender recorded).
  */

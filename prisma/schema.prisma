@@ -2815,6 +2815,16 @@ model LabTest {
   /// explicitly set to No, which auto-accepts it and skips collection.
   isSampleFlow        Boolean @default(true) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+  /// Age Restriction: when true the test may only be ordered for a patient whose
+  /// age on the order date lies inside minAge..maxAge (min inclusive, max covers
+  /// its whole unit — the reference-range calendar rule). All four bound columns
+  /// are NULL when the flag is false (= no age limit). Mirrored onto
+  /// branch_lab_tests via the normal Master Data import/sync.
+  isAgeRestricted     Boolean  @default(false) @map("is_age_restricted")
+  minAgeValue         Int?     @map("min_age_value")
+  minAgeUnit          AgeUnit? @map("min_age_unit")
+  maxAgeValue         Int?     @map("max_age_value")
+  maxAgeUnit          AgeUnit? @map("max_age_unit")
 
   // Mandatory-test classification — real relations to the catalogue tables
   // (FK to departments / categories / sub_categories). Distinct from the
@@ -3364,6 +3374,13 @@ model BranchLabTest {
   // straight to the technician. Default TRUE = normal collection flow.
   isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
   isSampleFlow        Boolean @default(true) @map("is_sample_flow")
+  // Age Restriction mirrored from the source LabTest (propagated on import/sync);
+  // enforced on Create Order for the test and for any panel containing it.
+  isAgeRestricted     Boolean  @default(false) @map("is_age_restricted")
+  minAgeValue         Int?     @map("min_age_value")
+  minAgeUnit          AgeUnit? @map("min_age_unit")
+  maxAgeValue         Int?     @map("max_age_value")
+  maxAgeUnit          AgeUnit? @map("max_age_unit")
 
   // Mandatory-test classification (logical refs)
   mandatoryDeptId             String?             @map("mandatory_dept_id")

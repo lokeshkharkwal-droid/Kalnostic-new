@@ -160,6 +160,69 @@ export class ReferralPanelUserService {
   }
 
   /**
+   * For a PAGE of panel ids, which panels have a B2B login that is enabled
+   * (i.e. its user can actually sign in)? Drives the listing's "B2B Login"
+   * Yes/No column. Mirrors the login gate in `AuthService`
+   * (`login` / `assertMembershipActive` / `hasActiveAssignment`):
+   * - the panel's `b2b_referring_panel` profile is live — `isActive`, per-branch
+   *   status ACTIVE, not soft-deleted;
+   * - its person is active and not soft-deleted;
+   * - its tenant membership is not INACTIVE (global deactivation in User
+   *   Management).
+   * Bulk-resolved in at most three queries per page (never per-row).
+   * `UserBranchProfile` has no `person` relation, so persons and memberships are
+   * read separately.
+   * @param tenantId caller's tenant (RLS + defence-in-depth filter)
+   * @param panelIds the page's referral panel ids
+   * @returns the subset of panel ids whose B2B login is enabled
+   */
+  async findPanelIdsWithEnabledLogin(
+    tenantId: string,
+    panelIds: string[],
+  ): Promise<Set<string>> {
+    const enabled = new Set<string>();
+    if (panelIds.length === 0) return enabled;
+    const profiles = await this.prisma.userBranchProfile.findMany({
+      where: {
+        tenantId,
+        referralPanelId: { in: panelIds },
+        authRole: { key: B2B_ROLE_KEY },
+        isActive: true,
+        branchStatus: StaffStatus.ACTIVE,
+        deletedAt: null,
+      },
+      select: { referralPanelId: true, personId: true },
+    });
+    if (profiles.length === 0) return enabled;
+
+    const personIds = [...new Set(profiles.map((p) => p.personId))];
+    const [activePersons, inactiveMemberships] = await Promise.all([
+      this.prisma.person.findMany({
+        where: { id: { in: personIds }, isActive: true, deletedAt: null },
+        select: { id: true },
+      }),
+      this.prisma.tenantStaffMembership.findMany({
+        where: {
+          tenantId,
+          personId: { in: personIds },
+          status: StaffStatus.INACTIVE,
+          deletedAt: null,
+        },
+        select: { personId: true },
+      }),
+    ]);
+    const canSignIn = new Set(activePersons.map((p) => p.id));
+    for (const m of inactiveMemberships) canSignIn.delete(m.personId);
+
+    for (const p of profiles) {
+      if (p.referralPanelId && canSignIn.has(p.personId)) {
+        enabled.add(p.referralPanelId);
+      }
+    }
+    return enabled;
+  }
+
+  /**
    * Fetch the panel's B2B user summary (for the "Edit" state of the button), or
    * null when the panel has no login yet. `UserBranchProfile` has no `person`
    * relation, so the person is fetched separately (platform-level table).

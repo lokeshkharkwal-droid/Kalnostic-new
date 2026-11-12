@@ -86,6 +86,19 @@ export type InternalReferralListItem = InternalReferralListRow & {
    * in bulk by `ReferralUsageService.findActiveReferralIds` (never per-row).
    */
   hasActiveOrder: boolean;
+  /**
+   * When the most recent order using this referral was created (the order's
+   * `createdAt`), or `null` when none exists. Drafts, quotations and
+   * soft-deleted orders do not count. Resolved in bulk by
+   * `ReferralUsageService.findLastOrderCreatedAt` (never per-row).
+   */
+  lastOrderCreatedAt: Date | null;
+  /**
+   * Whether a B2B login is enabled for this referral. Always `false` today: only
+   * referral panels can have a B2B login (`b2b_referring_panel` profile). Sent
+   * so all four referral listings share one row shape.
+   */
+  isB2bLoginEnabled: boolean;
 };
 
 /** Re-export for convenience at call sites. */

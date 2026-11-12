@@ -19,6 +19,7 @@ import { BranchService } from '../branch/branch.service';
 import { ReferralListAssignmentService } from '../referral-list/referral-list-assignment.service';
 import { ReferralPanelSettingsService } from '../referral-panel-settings/referral-panel-settings.service';
 import { ReferralUsageService } from '../referral-usage/referral-usage.service';
+import { ReferralPanelUserService } from './referral-panel-user.service';
 import { CreateReferralPanelDto } from './dto/create-referral-panel.dto';
 import { UpdateReferralPanelDto } from './dto/update-referral-panel.dto';
 import { ListReferralPanelsDto } from './dto/list-referral-panels.dto';
@@ -287,6 +288,7 @@ export class ReferralPanelService {
     private readonly branchService: BranchService,
     private readonly listAssignmentService: ReferralListAssignmentService,
     private readonly referralUsage: ReferralUsageService,
+    private readonly referralPanelUserService: ReferralPanelUserService,
   ) {}
 
   /**
@@ -930,7 +932,9 @@ export class ReferralPanelService {
    * `clientType` filters by billing relationship; `status` (ACTIVE/INACTIVE) maps
    * to `isActive`; `branchId` restricts to panels scoped to that branch. Each row
    * is enriched with the active branch's assigned Lab Test List / Lab Panel List
-   * (bulk-resolved in a fixed number of extra queries, never per-row).
+   * (bulk-resolved in a fixed number of extra queries, never per-row), plus
+   * `hasActiveOrder`, `lastOrderCreatedAt` (latest counted order's creation time)
+   * and `isB2bLoginEnabled` (the panel's B2B login can sign in).
    * @param tenantId tenant scope
    * @param activeBranchId caller's active branch (from JWT); used to resolve the
    *   Lab Test/Panel List assignment, distinct from the `branchId` query filter
@@ -972,23 +976,37 @@ export class ReferralPanelService {
       }),
       this.prisma.referralPanel.count({ where }),
     ]);
-    const assignments =
-      await this.listAssignmentService.getAssignmentsWithListNames(
-        tenantId,
-        activeBranchId,
-        ReferralType.PANEL,
-        rows.map((r) => r.id),
-      );
-    const activeIds = await this.referralUsage.findActiveReferralIds(
-      tenantId,
-      'referralPanelId',
-      rows.map((r) => r.id),
-    );
+    const ids = rows.map((r) => r.id);
+    const [assignments, activeIds, lastOrderAt, b2bLoginIds] =
+      await Promise.all([
+        this.listAssignmentService.getAssignmentsWithListNames(
+          tenantId,
+          activeBranchId,
+          ReferralType.PANEL,
+          ids,
+        ),
+        this.referralUsage.findActiveReferralIds(
+          tenantId,
+          'referralPanelId',
+          ids,
+        ),
+        this.referralUsage.findLastOrderCreatedAt(
+          tenantId,
+          'referralPanelId',
+          ids,
+        ),
+        this.referralPanelUserService.findPanelIdsWithEnabledLogin(
+          tenantId,
+          ids,
+        ),
+      ]);
     const data: ReferralPanelListItem[] = rows.map((r) => ({
       ...r,
       labTestList: assignments.get(r.id)?.labTestList ?? null,
       labPanelList: assignments.get(r.id)?.labPanelList ?? null,
       hasActiveOrder: activeIds.has(r.id),
+      lastOrderCreatedAt: lastOrderAt.get(r.id) ?? null,
+      isB2bLoginEnabled: b2bLoginIds.has(r.id),
     }));
     return { data, total, page, limit };
   }
