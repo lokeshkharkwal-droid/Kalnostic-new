@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  InvoicePaymentStatus,
   OrderStatus,
   Prisma,
   ReferralClientType,
@@ -57,8 +58,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * outstanding balance is computed on the fly — the sum of `net − paid`
  * (floored per order) over the referral's active orders — mirroring
  * `OrderService.getPatientOutstanding`; no denormalised balance table is
- * needed. Only `CASH` and `POSTPAID` settings carry credit rules (Prepaid uses
- * the wallet model, which is out of scope here).
+ * needed. An invoiced order's money lives on the invoice ledger, not in its
+ * `PaymentDetails`, so an order whose invoice is fully paid (`COMPLETED`) is
+ * treated as settled and left out — the same rule the Outstanding report uses
+ * (`OrderService.invoiceSettledOrderIds`). Only `CASH` and `POSTPAID` settings
+ * carry credit rules (Prepaid uses the wallet model, which is out of scope here).
  *
  * The gates are deliberately conservative: they only bite when the setting's
  * `isRestrict…` flag is ON **and** the corresponding limit/day value is `> 0`.
@@ -342,7 +346,15 @@ export class ReferralCreditService {
     );
   }
 
-  /** A referral's active orders with their payment ledger, for balance/age. */
+  /**
+   * A referral's active orders with their payment ledger, for balance/age.
+   * Orders on a fully-paid (`COMPLETED`) invoice are excluded: their money was
+   * received on the invoice ledger, which never writes `PaymentDetails`, so
+   * counting them would keep a paid-up referral blocked forever. A PARTIAL
+   * invoice still counts in full (Outstanding report parity); reverting a
+   * receipt drops the invoice back below COMPLETED and cancelling it
+   * soft-deletes the link, so either way the order's dues count again.
+   */
   private loadReferralOrders(
     tenantId: string,
     ref: ReferralRef,
@@ -355,6 +367,15 @@ export class ReferralCreditService {
         deletedAt: null,
         status: { in: [OrderStatus.ORDER, OrderStatus.APPOINTMENT] },
         ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
+        invoiceLinks: {
+          none: {
+            deletedAt: null,
+            invoice: {
+              deletedAt: null,
+              paymentStatus: InvoicePaymentStatus.COMPLETED,
+            },
+          },
+        },
       },
       select: {
         createdAt: true,
