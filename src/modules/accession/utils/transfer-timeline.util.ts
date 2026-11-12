@@ -1,4 +1,8 @@
 import type { SampleStatus } from '@prisma/client';
+import {
+  RETURNED_BY_RECEIVER_ACTION,
+  type ReceiverReturnKind,
+} from './returned-by-receiver.util';
 
 /**
  * History `action` of the row written on the SENDER's sample when the receiving branch picks an INTERNAL
@@ -15,6 +19,25 @@ export const TRANSFER_STEP_ACTIONS = [
   TRANSFER_PICKUP_ACTION,
   TRANSFER_RECEIVE_ACTION,
 ] as const;
+
+/**
+ * How the note of the sender-side `retrieve` row starts when the RECEIVING branch undoes a step of the
+ * transfer (Accepted -> Received ...). The sender's own recall writes a different note, so this is what
+ * tells the two apart. Written by `SampleTransferService.retrieveTransfer`, read here.
+ */
+export const TRANSFER_RETRIEVE_NOTE_PREFIX = 'Transfer moved back from ';
+
+/**
+ * A line whose stored action name is too general for the screen: the receiving branch's send-back
+ * (stored as one `returned-by-receiver` action for a Repeat and for a Reject alike) and its Retrieve
+ * (stored as the sender's `retrieve`). Worked out from the transfer when the timeline is built, so
+ * old rows read correctly too and nothing stored changes.
+ */
+export type TimelineDisplay =
+  | 'repeat-requested'
+  | 'rejected'
+  | 'returned'
+  | 'receiver-retrieve';
 
 /** Whose story an entry belongs to. */
 export type TimelineSide =
@@ -45,6 +68,26 @@ export interface TransferTimelineEntry extends TimelineSourceRow {
   side: TimelineSide;
   /** The branch the entry happened at (named); null when unknown. */
   branchName: string | null;
+  /** How the screen labels the line when its action name is too general (see {@link TimelineDisplay}); absent = label from the action. */
+  display?: TimelineDisplay;
+}
+
+/**
+ * The sender's history of ONE transfer, ending where that transfer ended. A transfer the receiving branch
+ * sent back (Repeat / Reject) ends at that send-back; what the sender does next (confirm the repeat, collect
+ * again, send again) belongs to the next transfer, so it is left out. Any other transfer is left as it is.
+ * @param rowsNewestFirst the sender's history rows, newest first (the order `findHistory` returns)
+ * @param returned what the receiving branch did with this transfer, null when it sent nothing back
+ */
+export function endAtReturn<T extends { action: string }>(
+  rowsNewestFirst: readonly T[],
+  returned: ReceiverReturnKind | null,
+): T[] {
+  if (!returned) return [...rowsNewestFirst];
+  const at = rowsNewestFirst.findIndex(
+    (r) => r.action === RETURNED_BY_RECEIVER_ACTION,
+  );
+  return at < 0 ? [...rowsNewestFirst] : rowsNewestFirst.slice(at);
 }
 
 /**
@@ -90,6 +133,14 @@ export function buildTransferTimeline(input: {
   senderOrigin: string | null;
   receiverDestination: string | null;
   branchName: ReadonlyMap<string, string>;
+  /** What the receiving branch did with this transfer (Repeat / Reject), null when nothing. */
+  returned?: ReceiverReturnKind | null;
+  /**
+   * What the receiving branch did with the transfer a send-back row at `at` belongs to. A sample sent twice has
+   * two chapters; the later trail still shows the earlier chapter's send-back, and only that earlier transfer
+   * knows whether it was a Repeat or a Reject. Falls back to `returned`.
+   */
+  returnedAt?: (at: Date) => ReceiverReturnKind | null;
 }): TransferTimelineEntry[] {
   const label = (id: string | null): string | null =>
     id ? (input.branchName.get(id) ?? null) : null;
@@ -106,8 +157,31 @@ export function buildTransferTimeline(input: {
     const branchId = row.branchId ?? fallbackBranch;
     return { ...row, branchId, side, branchName: label(branchId) };
   };
+  // Rows the RECEIVING branch caused, stored on the sender's sample under the sender's branch.
+  const byReceiver = (r: TimelineSourceRow): boolean =>
+    r.action === RETURNED_BY_RECEIVER_ACTION ||
+    (r.action === 'retrieve' &&
+      (r.notes ?? '').startsWith(TRANSFER_RETRIEVE_NOTE_PREFIX));
+  const displayOf = (r: TimelineSourceRow): TimelineDisplay => {
+    if (r.action !== RETURNED_BY_RECEIVER_ACTION) return 'receiver-retrieve';
+    const kind = input.returnedAt?.(r.createdAt) ?? input.returned ?? null;
+    if (kind === 'REPEAT') return 'repeat-requested';
+    if (kind === 'REJECTED') return 'rejected';
+    return 'returned';
+  };
+  const senderEntry = (r: TimelineSourceRow): TransferTimelineEntry =>
+    byReceiver(r)
+      ? {
+          ...entry(
+            { ...r, branchId: input.receiverDestination ?? r.branchId },
+            'receiver',
+            input.receiverDestination,
+          ),
+          display: displayOf(r),
+        }
+      : entry(r, 'sender', input.senderOrigin);
   return [
-    ...input.sender.map((r) => entry(r, 'sender', input.senderOrigin)),
+    ...input.sender.map(senderEntry),
     ...input.steps.map((r) => entry(r, 'step', input.receiverDestination)),
     ...input.receiver.map((r) =>
       entry(r, 'receiver', input.receiverDestination),

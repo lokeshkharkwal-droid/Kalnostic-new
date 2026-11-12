@@ -48,6 +48,7 @@ params:query {
   ~containerTypes: URINE_CONTAINER
   ~isUrgent: true
   ~isHomeVisit: true
+  ~isOutsource: true
   ~sortBy: sendDate
   ~sortOrder: desc
 }
@@ -119,7 +120,7 @@ docs {
   `orderBranchId` (the branch where the order was created - the Outsourced screen's "Branch"),
   `orderType`, `createdByUserId` (Billed by), `reportStatus` (one test's report, nine statuses),
   `orderStatus` (the order's overall progress), `collectionStatus`, `departmentId` / `branchLabTestId` / `branchLabPanelId`, `categoryId` / `subCategoryId`,
-  `sampleNames` / `sampleTypes` (+ `...NotSet`), `containerTypes`, `isUrgent`, `isHomeVisit`,
+  `sampleNames` / `sampleTypes` (+ `...NotSet`), `containerTypes`, `isUrgent`, `isHomeVisit`, `isOutsource` (only samples that are Outsourced now - the same checkbox as In-House),
   `referredByDoctorId`, `referralPanelId`.
   `reportStatus` / `orderStatus` / category read the reports, orders and tests of the samples that have a
   transfer in THIS queue (direction + kind), whichever branch holds them now.

@@ -137,7 +137,14 @@ describe('SampleTransferService.findTransferTimeline', () => {
     ...over,
   });
 
-  function setup(opts: { siblings?: Date[]; copyMissing?: boolean } = {}) {
+  function setup(
+    opts: {
+      siblings?: Date[];
+      copyMissing?: boolean;
+      /** what the receiving branch did with this transfer (the transfer's status) */
+      returned?: 'REPEAT' | 'REJECTED';
+    } = {},
+  ) {
     const findHistory = jest.fn((id: string) => {
       if (id === 's1') {
         return Promise.resolve([
@@ -213,7 +220,20 @@ describe('SampleTransferService.findTransferTimeline', () => {
       {} as never,
       {} as never,
     );
-    jest.spyOn(svc, 'findTransferById').mockResolvedValue(transfer as never);
+    jest.spyOn(svc, 'findTransferById').mockResolvedValue(
+      (opts.returned
+        ? {
+            ...transfer,
+            kind: TransferKind.INTERNAL,
+            transferStatus:
+              opts.returned === 'REPEAT'
+                ? TransferStatus.REPEAT
+                : TransferStatus.REJECTED,
+            rejectionReason: null,
+            repeatReason: null,
+          }
+        : transfer) as never,
+    );
     return { svc, findHistory };
   }
 
@@ -226,7 +246,8 @@ describe('SampleTransferService.findTransferTimeline', () => {
       ['pick-old', 'step', 'Branch B'],
       ['recv-old', 'step', 'Branch B'],
       ['accept', 'receiver', 'Branch B'],
-      ['back', 'sender', 'Branch A'],
+      // what the RECEIVING branch did is shown at the receiving branch (it is stored under the sender's)
+      ['back', 'receiver', 'Branch B'],
     ]);
   });
 
@@ -237,6 +258,27 @@ describe('SampleTransferService.findTransferTimeline', () => {
     );
     expect(ids).not.toContain('later');
     expect(ids).not.toContain('pick-later');
+  });
+
+  it('a transfer the receiving branch sent back ends at that send-back: the next chapter is not shown, a Repeat is named', async () => {
+    const { svc } = setup({ siblings: [T1], returned: 'REPEAT' });
+    const t = await svc.findTransferTimeline('t1', 'tenant', 'bB');
+    const ids = t.map((e) => e.id);
+    expect(ids).not.toContain('later'); // the sender's later Send belongs to the next transfer
+    expect(ids).toEqual(expect.arrayContaining(['collect', 'send', 'back']));
+    expect(t.find((e) => e.id === 'back')).toMatchObject({
+      display: 'repeat-requested',
+      side: 'receiver',
+      branchName: 'Branch B',
+    });
+  });
+
+  it('a Reject is told apart from a Repeat', async () => {
+    const { svc } = setup({ siblings: [T1], returned: 'REJECTED' });
+    const back = (await svc.findTransferTimeline('t1', 'tenant', 'bB')).find(
+      (e) => e.id === 'back',
+    );
+    expect(back?.display).toBe('rejected');
   });
 
   it('the latest transfer of a sample has no end: the whole later story is its own', async () => {
@@ -262,7 +304,8 @@ describe('SampleTransferService.findTransferTimeline', () => {
   it("a copy that is out of this branch's sight leaves the rest of the story standing", async () => {
     const { svc } = setup({ copyMissing: true });
     const t = await svc.findTransferTimeline('t1', 'tenant', 'bA');
-    expect(t.some((e) => e.side === 'receiver')).toBe(false);
+    // the copy's own line ('accept') is left out; the sender's rows stay
+    expect(t.map((e) => e.id)).not.toContain('accept');
     expect(t.map((e) => e.id)).toContain('send');
   });
 

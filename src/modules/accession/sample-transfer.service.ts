@@ -59,12 +59,15 @@ import { escapeLike } from './utils/like-escape.util';
 import {
   TRANSFER_PICKUP_ACTION,
   TRANSFER_RECEIVE_ACTION,
+  TRANSFER_RETRIEVE_NOTE_PREFIX,
   TRANSFER_STEP_ACTIONS,
   buildTransferTimeline,
+  endAtReturn,
   inWindow,
   transferWindow,
   type TransferTimelineEntry,
 } from './utils/transfer-timeline.util';
+import { receiverReturnOf } from './utils/returned-by-receiver.util';
 import {
   isDerivedTransferSort,
   sortIdsByLabel,
@@ -568,7 +571,7 @@ export class SampleTransferService {
                 action: 'retrieve',
                 fromStatus: sample.status,
                 toStatus: sample.status,
-                notes: `Transfer moved back from ${TRANSFER_STATUS_TEXT[transfer.transferStatus]} to ${TRANSFER_STATUS_TEXT[to]} (Retrieve)`,
+                notes: `${TRANSFER_RETRIEVE_NOTE_PREFIX}${TRANSFER_STATUS_TEXT[transfer.transferStatus]} to ${TRANSFER_STATUS_TEXT[to]} (Retrieve)`,
                 changedBy: personId,
               },
             });
@@ -1551,6 +1554,7 @@ export class SampleTransferService {
         collectionStatus: query.collectionStatus,
         isUrgent: query.isUrgent,
         isHomeCollection: query.isHomeVisit,
+        isOutsource: query.isOutsource,
         orderType: query.orderType,
         createdByUserId: query.createdByUserId,
         containerTypes: query.containerTypes,
@@ -1595,7 +1599,13 @@ export class SampleTransferService {
     );
     const siblings = await this.prisma.sampleTransfer.findMany({
       where: { tenantId, sampleId: transfer.sampleId, deletedAt: null },
-      select: { createdAt: true },
+      select: {
+        createdAt: true,
+        kind: true,
+        transferStatus: true,
+        rejectionReason: true,
+        repeatReason: true,
+      },
     });
     const window = transferWindow(
       transfer.createdAt,
@@ -1607,9 +1617,15 @@ export class SampleTransferService {
       tenantId,
       actingBranchId,
     );
-    const sender = senderAll.filter(
-      (r) =>
-        window.end === null || r.createdAt.getTime() < window.end.getTime(),
+    // The sender's story of THIS transfer: up to the next transfer, and, when the receiving branch sent
+    // this one back, up to that send-back (what the sender did next belongs to the next transfer).
+    const returned = receiverReturnOf(transfer)?.kind ?? null;
+    const sender = endAtReturn(
+      senderAll.filter(
+        (r) =>
+          window.end === null || r.createdAt.getTime() < window.end.getTime(),
+      ),
+      returned,
     );
     const stepRows = await this.prisma.orderSampleStatusHistory.findMany({
       where: {
@@ -1664,6 +1680,14 @@ export class SampleTransferService {
       senderOrigin: transfer.originBranchId,
       receiverDestination: transfer.destinationBranchId,
       branchName: new Map(branches.map((b) => [b.id, b.name])),
+      returned,
+      // a send-back row belongs to the newest transfer of the sample that was created before it
+      returnedAt: (at) => {
+        const chapter = siblings
+          .filter((s) => s.createdAt.getTime() <= at.getTime())
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+        return receiverReturnOf(chapter)?.kind ?? null;
+      },
     });
   }
 

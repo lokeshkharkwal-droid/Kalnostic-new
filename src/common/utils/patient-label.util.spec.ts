@@ -1,4 +1,5 @@
 import {
+  ageFromDob,
   patientAgeDisplay,
   patientPrintAgeDisplay,
   salutationLabel,
@@ -114,5 +115,62 @@ describe('patientPrintAgeDisplay', () => {
       '10 Days',
     );
     expect(patientPrintAgeDisplay(null, null, null, NOW)).toBe('');
+  });
+});
+
+describe('ageFromDob', () => {
+  const now = new Date('2026-11-12T00:00:00Z');
+  const dob = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+  it('12 months or more reads in Years (the leading unit only)', () => {
+    expect(ageFromDob(dob('1990-05-14'), now)).toEqual({
+      age: 36,
+      ageType: 'YEARS',
+    });
+    expect(ageFromDob(dob('2025-11-12'), now)).toEqual({
+      age: 1,
+      ageType: 'YEARS',
+    }); // exactly 12 months
+    expect(ageFromDob(dob('2025-11-13'), now)).toEqual({
+      age: 11,
+      ageType: 'MONTHS',
+    }); // a day short of 12 months
+  });
+
+  it('1 to 11 months reads in Months', () => {
+    expect(ageFromDob(dob('2026-05-20'), now)).toEqual({
+      age: 5,
+      ageType: 'MONTHS',
+    });
+    expect(ageFromDob(dob('2026-10-12'), now)).toEqual({
+      age: 1,
+      ageType: 'MONTHS',
+    });
+  });
+
+  it('under a month reads in Days', () => {
+    expect(ageFromDob(dob('2026-11-02'), now)).toEqual({
+      age: 10,
+      ageType: 'DAYS',
+    });
+    expect(ageFromDob(dob('2026-11-12'), now)).toEqual({
+      age: 0,
+      ageType: 'DAYS',
+    });
+  });
+
+  it('agrees with the print age for the same date of birth', () => {
+    for (const d of ['1990-05-14', '2025-11-13', '2026-05-20', '2026-11-02']) {
+      const a = ageFromDob(dob(d), now)!;
+      const printed = patientPrintAgeDisplay(dob(d), null, null, now);
+      expect(printed).toBe(patientAgeDisplay(a.age, a.ageType));
+    }
+  });
+
+  it('no usable date of birth gives null (a future date, an invalid date, nothing)', () => {
+    expect(ageFromDob(null, now)).toBeNull();
+    expect(ageFromDob(undefined, now)).toBeNull();
+    expect(ageFromDob(dob('2027-01-01'), now)).toBeNull();
+    expect(ageFromDob(new Date('nope'), now)).toBeNull();
   });
 });

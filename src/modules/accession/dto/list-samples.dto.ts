@@ -15,6 +15,9 @@ import { TAT_STATUSES } from '../constants/tat.constant';
 import { DEPARTMENT_FILTER_PATTERN } from '../constants/department-filter.constant';
 import type { TatStatus } from '../constants/tat.constant';
 import { SampleFilterFieldsDto } from './sample-filter-fields.dto';
+import { IN_HOUSE_SORT_KEYS } from '../utils/in-house-sort.util';
+import type { InHouseSortKey } from '../utils/in-house-sort.util';
+import type { SortDirection } from '../utils/transfer-sort.util';
 
 /** A calendar day (`YYYY-MM-DD`) — the transfer-date filters match the whole day. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -50,6 +53,20 @@ export class ListSamplesDto extends SampleFilterFieldsDto {
   @IsString()
   @MaxLength(50)
   search?: string;
+
+  /**
+   * Sort the In-House list (`/accession/samples/grouped`) by a column. The list pages by order, so an
+   * order is ranked by its smallest value when sorting ascending and its largest when descending.
+   * Absent = newest first. Ignored by the other endpoints that share this query.
+   */
+  @IsOptional()
+  @IsIn(IN_HOUSE_SORT_KEYS)
+  sortBy?: InHouseSortKey;
+
+  /** Sort direction; defaults to `asc`. Orders with no value in the column are always last. */
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: SortDirection;
 
   /** Filter by current lifecycle status (the §A.5 tab). */
   @IsOptional()

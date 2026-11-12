@@ -1,7 +1,9 @@
 import { SampleStatus } from '@prisma/client';
 import {
   buildTransferTimeline,
+  endAtReturn,
   inWindow,
+  TRANSFER_RETRIEVE_NOTE_PREFIX,
   transferWindow,
   type TimelineSourceRow,
 } from './transfer-timeline.util';
@@ -127,5 +129,140 @@ describe('buildTransferTimeline', () => {
       receiver: [],
     });
     expect(t[0]).toMatchObject({ actorName: 'Asha', actorRole: null });
+  });
+});
+
+describe('buildTransferTimeline - what the RECEIVING branch did', () => {
+  const branchName = new Map([
+    ['bA', 'Branch A'],
+    ['bB', 'Branch B'],
+  ]);
+  const base = { senderOrigin: 'bA', receiverDestination: 'bB', branchName };
+  // the rows are stored on the sender's sample under the SENDER's branch
+  const returned = row('r1', '2026-10-22T12:00:00Z', {
+    action: 'returned-by-receiver',
+    fromStatus: SampleStatus.SENT_INTERNAL,
+    toStatus: SampleStatus.SENT_INTERNAL,
+    branchId: 'bA',
+    reason: 'Clotted',
+    notes: 'Returned by the receiving branch: Clotted',
+    actorName: 'Ravi',
+  });
+  const sent = row('s1', '2026-10-22T10:00:00Z', {
+    action: 'send',
+    branchId: 'bA',
+  });
+
+  it('a Repeat is told apart from a Reject and shown at the receiving branch', () => {
+    const repeat = buildTransferTimeline({
+      ...base,
+      sender: [sent, returned],
+      steps: [],
+      receiver: [],
+      returned: 'REPEAT',
+    });
+    const reject = buildTransferTimeline({
+      ...base,
+      sender: [sent, returned],
+      steps: [],
+      receiver: [],
+      returned: 'REJECTED',
+    });
+    expect(repeat[1]).toMatchObject({
+      display: 'repeat-requested',
+      side: 'receiver',
+      branchName: 'Branch B',
+      branchId: 'bB',
+      actorName: 'Ravi',
+      reason: 'Clotted',
+    });
+    expect(reject[1]).toMatchObject({ display: 'rejected', branchName: 'Branch B' });
+  });
+
+  it("a send-back of an EARLIER transfer is named from that transfer, not from this one", () => {
+    const tl = buildTransferTimeline({
+      ...base,
+      sender: [sent, returned],
+      steps: [],
+      receiver: [],
+      returned: null, // this (later) transfer was not sent back
+      returnedAt: () => 'REJECTED',
+    });
+    expect(tl[1]).toMatchObject({ display: 'rejected', branchName: 'Branch B' });
+  });
+
+  it('a send-back of unknown kind keeps the general label but still shows the right branch', () => {
+    const t = buildTransferTimeline({
+      ...base,
+      sender: [sent, returned],
+      steps: [],
+      receiver: [],
+    });
+    expect(t[1]).toMatchObject({ display: 'returned', branchName: 'Branch B' });
+  });
+
+  it("the receiving branch's Retrieve is shown at the receiving branch; the sender's own recall stays the sender's", () => {
+    const receiverUndo = row('u1', '2026-10-22T13:00:00Z', {
+      action: 'retrieve',
+      branchId: 'bA',
+      notes: `${TRANSFER_RETRIEVE_NOTE_PREFIX}Accepted to Received (Retrieve)`,
+    });
+    const senderRecall = row('u2', '2026-10-22T14:00:00Z', {
+      action: 'retrieve',
+      branchId: 'bA',
+      notes: 'Retrieved from Branch B while In-Transit',
+    });
+    const t = buildTransferTimeline({
+      ...base,
+      sender: [sent, receiverUndo, senderRecall],
+      steps: [],
+      receiver: [],
+    });
+    expect(t[1]).toMatchObject({ display: 'receiver-retrieve', side: 'receiver', branchName: 'Branch B' });
+    expect(t[2]!.display).toBeUndefined();
+    expect(t[2]).toMatchObject({ side: 'sender', branchName: 'Branch A' });
+  });
+
+  it("ordinary sender lines are left exactly as they were", () => {
+    const t = buildTransferTimeline({ ...base, sender: [sent], steps: [], receiver: [], returned: 'REPEAT' });
+    expect(t[0]).toMatchObject({ side: 'sender', branchName: 'Branch A' });
+    expect(t[0]!.display).toBeUndefined();
+  });
+
+  it('without a known receiving branch the stored branch is kept', () => {
+    const t = buildTransferTimeline({ ...base, receiverDestination: null, sender: [returned], steps: [], receiver: [], returned: 'REPEAT' });
+    expect(t[0]!.branchName).toBe('Branch A');
+  });
+});
+
+describe('endAtReturn', () => {
+  // newest first, like the history read
+  const rows = [
+    { action: 'send' },
+    { action: 'accept' },
+    { action: 'collect' },
+    { action: 'repeat' },
+    { action: 'returned-by-receiver' },
+    { action: 'send' },
+    { action: 'accept' },
+  ];
+
+  it('a transfer sent back ends at the send-back: what the sender did next is left out', () => {
+    expect(endAtReturn(rows, 'REPEAT').map((r) => r.action)).toEqual(['returned-by-receiver', 'send', 'accept']);
+    expect(endAtReturn(rows, 'REJECTED')).toHaveLength(3);
+  });
+
+  it('a transfer that was not sent back is left as it is', () => {
+    expect(endAtReturn(rows, null)).toHaveLength(rows.length);
+  });
+
+  it('a send-back with no matching row changes nothing', () => {
+    const noReturn = rows.filter((r) => r.action !== 'returned-by-receiver');
+    expect(endAtReturn(noReturn, 'REPEAT')).toHaveLength(noReturn.length);
+  });
+
+  it('keeps the newest send-back when there are several', () => {
+    const two = [{ action: 'send' }, { action: 'returned-by-receiver' }, { action: 'send' }, { action: 'returned-by-receiver' }, { action: 'collect' }];
+    expect(endAtReturn(two, 'REPEAT')).toHaveLength(4);
   });
 });

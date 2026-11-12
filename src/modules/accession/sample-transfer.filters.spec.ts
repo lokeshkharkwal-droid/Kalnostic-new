@@ -1,4 +1,4 @@
-import { LabReportStatus, OrderType, Prisma } from '@prisma/client';
+import { LabReportStatus, OrderType, Prisma, SampleStatus } from '@prisma/client';
 import { SampleTransferService } from './sample-transfer.service';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 
@@ -132,6 +132,17 @@ describe('SampleTransferService.findTransfers - filters', () => {
     expect(and).toContainEqual({
       OR: [{ sampleType: null }, { sampleType: '' }],
     });
+  });
+
+  it('the Outsource checkbox keeps only samples that are Outsourced now, like In-House', async () => {
+    const w = await whereFor({ isOutsource: true });
+    const and = sampleOf(w)!.AND as Prisma.OrderSampleWhereInput[];
+    expect(and).toContainEqual({ status: SampleStatus.OUTSOURCED });
+  });
+
+  it('without the Outsource checkbox no status condition is added', async () => {
+    const w = await whereFor({});
+    expect(JSON.stringify(sampleOf(w) ?? {})).not.toContain('OUTSOURCED');
   });
 
   it('department / lab test / lab panel filter through the order items, like In-House', async () => {

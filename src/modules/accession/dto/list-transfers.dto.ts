@@ -130,6 +130,12 @@ export class ListTransfersDto extends SampleFilterFieldsDto {
   @IsBoolean()
   isHomeVisit?: boolean;
 
+  /** Only samples that are Outsourced now (the same "Outsource" checkbox as the In-House list). */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  isOutsource?: boolean;
+
   /**
    * Column to sort by (applied BEFORE paging). Without it the list is newest first. Name columns
    * (department, origin / destination branch, outsource center) sort by the resolved name.

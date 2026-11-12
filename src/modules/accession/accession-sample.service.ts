@@ -162,6 +162,7 @@ import {
   RETURNED_BY_RECEIVER_ACTION,
 } from './utils/returned-by-receiver.util';
 import { isHiddenFromReceiver } from './utils/receiver-visibility.util';
+import { sortedOrderPage } from './utils/in-house-sort.query';
 import {
   BARCODE_AUDIT_ACTIONS,
   BARCODE_REMOVED_ACTION,
@@ -1424,18 +1425,35 @@ export class OrderSampleService {
         const mode =
           tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
 
-        // Page of order ids (ordered by most-recent sample) + total order count.
-        const [pageGroups, allGroups] = await Promise.all([
-          tx.orderSample.groupBy({
-            by: ['orderId'],
+        // Page of order ids + total order count. Default: ordered by the most recent sample;
+        // with `sortBy`, ordered by that column (see `sortedOrderPage`).
+        let orderIds: string[];
+        let total: number;
+        if (query.sortBy) {
+          ({ orderIds, total } = await sortedOrderPage(tx, {
+            tenantId,
             where,
-            orderBy: { _max: { createdAt: 'desc' } },
-            skip: (page - 1) * limit,
-            take: limit,
-          }),
-          tx.orderSample.groupBy({ by: ['orderId'], where }),
-        ]);
-        const orderIds = pageGroups.map((g) => g.orderId);
+            sortBy: query.sortBy,
+            dir: query.sortOrder ?? 'asc',
+            page,
+            limit,
+            tat,
+            nowMs,
+          }));
+        } else {
+          const [pageGroups, allGroups] = await Promise.all([
+            tx.orderSample.groupBy({
+              by: ['orderId'],
+              where,
+              orderBy: { _max: { createdAt: 'desc' } },
+              skip: (page - 1) * limit,
+              take: limit,
+            }),
+            tx.orderSample.groupBy({ by: ['orderId'], where }),
+          ]);
+          orderIds = pageGroups.map((g) => g.orderId);
+          total = allGroups.length;
+        }
 
         // Fetch all samples belonging to this page's orders.
         const rows = await tx.orderSample.findMany({
@@ -1455,7 +1473,7 @@ export class OrderSampleService {
 
         return {
           orderIds,
-          total: allGroups.length,
+          total,
           rows,
           mode,
           collectionByOrderId,
