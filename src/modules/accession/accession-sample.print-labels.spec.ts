@@ -35,8 +35,9 @@ describe('OrderSampleService — printLabels {collected_at}', () => {
     ({
       id,
       accessionNo: `ACC-${id}`,
-      barcode: null,
-      orderIdBarcode: null,
+      // a sample with no barcode has no label (it is left out of a print), so these fixtures carry one
+      barcode: `BC-${id}`,
+      orderIdBarcode: `https://img/BC-${id}`,
       sampleName,
       sampleType: 'Blood',
       containerType: null,

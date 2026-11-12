@@ -54,7 +54,10 @@ export class ReRunController {
       query.branchId,
       PERMISSION_KEYS.LAB_ACCESS_RE_RUN_LIST,
     );
-    return this.reRunService.findAll(tenantId, scope);
+    return this.reRunService.findAll(tenantId, scope, {
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    });
   }
 
   @Patch(':id/status')

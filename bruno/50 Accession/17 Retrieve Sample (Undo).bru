@@ -40,18 +40,34 @@ docs {
   bulk call with `skipInvalid` that sentence is the skipped `reason`.
 
   Bulk answer: each entry of `skipped` carries `reason` (readable) and `code` (the same
-  error code the strict call answers with, e.g. SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE,
+  error code the strict call answers with, e.g. SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED,
   INVALID_SAMPLE_TRANSITION), so a screen can tell the reasons apart. The HTTP status of a
   group call with `skipInvalid` stays 2xx: the call itself was valid.
 
-  Validated result: a sample that is at this branch is NOT retrieved back to BEFORE its
-  acceptance (New / Collected / Halt / Hold / Repeat ...) while any test on it has a
-  validated result (Result Done, Approved or Published) - the sample would say "not
-  accepted yet" next to a done result. Refused 422 SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE
-  (skipped with that reason in a bulk call with `skipInvalid`); use Re-run to redo a
-  validated result. An undo that stays at / after acceptance (Stored -> Accepted ...),
-  a result that is not validated yet (it stays saved) and a sample that is out at
-  another branch (its transfer rules apply) are not affected. Nothing is deleted.
+  THE RULE (manager, 2026-11): Retrieve is allowed only while every report the sample serves is
+  still PENDING. Once a report is past Pending - a result entered and saved, submitted, rejected,
+  validated (Result Done / Approved / Published) or reported as an error - Retrieve is refused
+  422 SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED (skipped with that reason in a bulk call with
+  `skipInvalid`). It applies to
+    - going back to BEFORE acceptance (New / Collected / Acquired / Halt / Error / Hold / Repeat ...):
+      Accepted -> Collected, and every step further back;
+    - the sender's recall of a tube that is OUT: Sent (INTERNAL), Forwarded, Outsourced -> Accepted.
+      A Sent tube always has a Pending report (a worked report cannot be sent), so nothing changes
+      for it; for a Forwarded / Outsourced tube the recall is refused once the partner's result is
+      entered - use Repeat (wipes an unfinished report), Re-run (a finished result) or report an error.
+  A tube with several tests is refused if ANY of its reports has started. A sample with no report
+  can be retrieved. NOT affected: an undo that comes from inside the lab and stays at / after
+  acceptance (Stored -> Accepted, Returned -> Accepted, Discarded -> Stored), and the system moves
+  made when the receiving branch Rejects / Repeats / Returns a copy. Nothing is deleted or changed
+  by a refusal. The same rule guards the receiving branch's one-step-back of an ACCEPTED transfer
+  (`POST /accession/transfers/:id/retrieve`): refused 422 TRANSFER_RETRIEVE_BLOCKED when the copy's
+  report is past Pending, so a worked report is never moved back to the sender.
+
+  Retrieve and barcodes: undoing a Repeat (Retrieve out of Repeat) puts back the barcode THAT
+  Repeat took off (a sample repeated twice gets its barcodes back one by one, newest Repeat first).
+  Retrieve back INTO Repeat takes the fresh tube's barcode off (a tube waiting to be drawn has none;
+  Collect makes the next). If the old number is now used by another order's sample, a tube that holds
+  no barcode is given a NEW one and the history says so (reprint its label).
 
   Retrieve / Retry (§A.7/§A.10.19) — the **universal undo**. Moves the sample back
   to its **immediately-previous status from its own history**: the `fromStatus` of

@@ -181,13 +181,15 @@ export class AccessionController {
     @Body() dto: PrintLabelsDto,
     @Res() res: Response,
   ): Promise<void> {
-    const pdf = await this.sampleService.printLabels(
+    const { pdf, skipped } = await this.sampleService.printLabels(
       dto.ids,
       tenantId,
       profile.branchId,
       dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
+    // How many selected samples had no barcode and were left out (a tube waiting to be collected again).
+    res.setHeader('X-Labels-Skipped', String(skipped));
     res.setHeader('Content-Disposition', 'inline; filename="labels.pdf"');
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);

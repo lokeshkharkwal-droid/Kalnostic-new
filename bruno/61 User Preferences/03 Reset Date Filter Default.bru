@@ -1,0 +1,32 @@
+meta {
+  name: 03 Reset Date Filter Default
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/user-preferences/date-filters/{{dateFilterScreenKey}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  dateFilterScreenKey: registration-billings
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Remove the caller's default date filter for `:screenKey` ("Reset to Last 15
+  Days" in the pop-up) — a soft delete; GET then returns `null` and the screen
+  opens on the last 15 days. Idempotent (succeeds when nothing is saved). Returns
+  `{ screenKey, reset: true }`.
+}

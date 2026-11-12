@@ -141,4 +141,16 @@ describe('collectionProgressByOrder', () => {
     expect(collectedWhere).toContain('"collectedAt":{"not":null}');
     expect(totalWhere).not.toContain('"collectedAt":{"not":null}');
   });
+  it('a sample sent back to REPEAT does not count as collected (its first collected date is kept), it counts as still to collect', () => {
+    for (const status of ['PENDING', 'COLLECTED', 'PARTIAL'] as const) {
+      const text = JSON.stringify(buildCollectionProgressWhere(status));
+      // collected = has a date AND is not in REPEAT; uncollected = no date OR in REPEAT
+      if (status !== 'COLLECTED') {
+        expect(text).toContain('"collectedAt":{"not":null},"status":{"not":"REPEAT"}');
+      }
+      if (status !== 'PENDING') {
+        expect(text).toContain('"OR":[{"collectedAt":null},{"status":"REPEAT"}]');
+      }
+    }
+  });
 });

@@ -48,7 +48,11 @@ function build(
   opts: { found?: boolean; updated?: number; locked?: boolean } = {},
 ) {
   const found = opts.found ?? true;
-  const report = { id: 'r1', isLocked: opts.locked ?? false };
+  const report = {
+    id: 'r1',
+    status: 'RESULT_DONE',
+    isLocked: opts.locked ?? false,
+  };
   const labReport = {
     findFirst: jest.fn().mockResolvedValue(found ? report : null),
     updateMany: jest

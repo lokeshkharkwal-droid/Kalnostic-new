@@ -14,6 +14,7 @@ import {
   PersonMappingType,
   Prisma,
   RecipientType,
+  ReRunSampleMode,
   ResultType,
   ResultValueSource,
   SampleStatus,
@@ -131,6 +132,7 @@ import {
   InvalidLabReportTransitionException,
   InvalidSignatoryAuthorityException,
   LabReportLockedException,
+  LabReportRerunNotAllowedException,
   LabReportPrintOrderCancelledException,
   LabReportPrintItemRemovedException,
   LabReportPrintNotApprovedForPanelException,
@@ -182,7 +184,10 @@ import {
 } from './utils/test-file-attachment.util';
 import {
   assertReportWritable,
+  AWAITING_SAMPLE_STATUSES,
+  findOutsourceSentBackSampleIds,
   findSentOutReportIds,
+  OUTSOURCE_SENT_BACK_UNLOCKED_STATUSES,
 } from './utils/sent-out-report.util';
 import { VALIDATED_REPORT_STATUSES } from './utils/validated-report.util';
 import {
@@ -540,7 +545,8 @@ export class LabReportService {
   }
 
   /**
-   * Lock these reports' rows for the rest of the caller's transaction (in a fixed
+   * Lock these reports' rows (and first, their order rows - the same order an order
+   * Cancel locks in) for the rest of the caller's transaction (in a fixed
    * order, so two transactions never wait on each other). Used right before the
    * "is it untouched?" check that gates Send and the receiver's return: a
    * technician write that is still in flight finishes first and is then seen by
@@ -554,6 +560,13 @@ export class LabReportService {
     reportIds: string[],
   ): Promise<void> {
     if (reportIds.length === 0) return;
+    // The order row(s) first, then the reports: the SAME order an order Cancel uses
+    // (order row, then its reports). A tube update that follows (Re-run, Retrieve,
+    // Repeat...) re-checks the tube's order, so it needs that row too; without this
+    // first step a Cancel landing at the same moment deadlocked with us (a 500).
+    // NO KEY UPDATE is enough to queue behind / in front of Cancel's FOR UPDATE and
+    // does not hold up unrelated writes that only reference the order (payments).
+    await tx.$queryRaw`SELECT o.id FROM orders o WHERE o.tenant_id = ${tenantId} AND o.id IN (SELECT oi.order_id FROM lab_reports lr JOIN order_items oi ON oi.id = lr.order_item_id WHERE lr.tenant_id = ${tenantId} AND lr.id IN (${Prisma.join(reportIds)})) ORDER BY o.id FOR NO KEY UPDATE`;
     await tx.$queryRaw`SELECT id FROM lab_reports WHERE tenant_id = ${tenantId} AND id IN (${Prisma.join(reportIds)}) ORDER BY id FOR UPDATE`;
   }
 
@@ -581,6 +594,31 @@ export class LabReportService {
       select: { id: true },
     });
     return validated === null;
+  }
+
+  /**
+   * Whether any of these reports is already past Pending: a result was entered and saved, submitted, rejected, validated
+   * (Result Done, Approved, Published) or reported as an error. Retrieve is allowed only while every report is still Pending
+   * (the manager's rule), so the sample is never taken back to another tube / place while a report carries the result of the
+   * tube it was entered for. Call after {@link lockReports}, so a Save in flight cannot slip in after the answer.
+   * @param tx the caller's transaction
+   */
+  async hasStartedReport(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportIds: string[],
+  ): Promise<boolean> {
+    if (reportIds.length === 0) return false;
+    const started = await tx.labReport.findFirst({
+      where: {
+        id: { in: reportIds },
+        tenantId,
+        deletedAt: null,
+        status: { not: LabReportStatus.PENDING },
+      },
+      select: { id: true },
+    });
+    return started !== null;
   }
 
   /**
@@ -709,6 +747,12 @@ export class LabReportService {
         tatNetMinutes: null,
         tatMaxMinutes: null,
         tatBand: null,
+        // The stopwatch of the old attempt: its end time, running flag and last tick must not carry into the new attempt
+        // (a stale end time would show an end earlier than the new start). The NABL flag stays: the stopwatch job sets it
+        // again when the fresh sample is accepted, and until then the report must not fall back to the non-NABL calculation.
+        tatEndAt: null,
+        tatIsRunning: false,
+        tatLastTickAt: null,
         isLocked: false,
         lockedAt: null,
         lockedBy: null,
@@ -744,6 +788,32 @@ export class LabReportService {
           : undefined,
       );
     }
+  }
+
+  /**
+   * Write the history line of a "Re-run with a fresh sample" on a report, inside the caller's transaction. The wipe itself
+   * is recorded by {@link resetReportsForReturn} (`returned_for_repeat`, which {@link isReportUntouched} relies on); this
+   * line says WHY: the re-run, who asked for it, the status the report had, and the repeat reason.
+   * @param fromStatus the status the report had before the wipe
+   */
+  async recordFreshRerunInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportId: string,
+    fromStatus: LabReportStatus,
+    actorId: string,
+    notes?: string,
+  ): Promise<void> {
+    await this.recordHistory(
+      tx,
+      tenantId,
+      reportId,
+      fromStatus,
+      LabReportStatus.PENDING,
+      're_run_fresh_sample',
+      actorId,
+      notes,
+    );
   }
 
   /**
@@ -839,7 +909,12 @@ export class LabReportService {
       tx.labReportAttachment.count({ where: cycle('uploadedAt') }),
       tx.labReportOverallResult.count({ where: cycle() }),
       tx.labReportParameterNote.count({ where: cycle() }),
-      tx.reRunRequest.count({ where: cycle() }),
+      // Only a SAME-sample request is work done on the report. A FRESH one is the record that the report was wiped for a new
+      // sample: it is written right after the wipe, so it would otherwise make a wiped, empty report look "worked on" and refuse
+      // Send / Forward / Outsource of the sample (e.g. after the repeat was undone with Retrieve).
+      tx.reRunRequest.count({
+        where: { ...cycle(), sampleMode: ReRunSampleMode.SAME },
+      }),
       tx.criticalAlert.count({ where: cycle() }),
       tx.outOfRangeFlag.count({ where: cycle() }),
       tx.deltaCheck.count({ where: cycle() }),
@@ -1503,6 +1578,7 @@ export class LabReportService {
       worklistRows,
     );
     worklistRows = await this.attachReturnedByReceiver(tenantId, worklistRows);
+    worklistRows = await this.attachOutsourceSentBack(tenantId, worklistRows);
     worklistRows = await this.attachAccessMode(tenantId, scope, worklistRows);
     worklistRows = await this.attachLockedByNames(worklistRows);
 
@@ -2252,6 +2328,52 @@ export class LabReportService {
         .map((id) => returns.get(id))
         .find((r) => r !== undefined);
       return { ...row, returnedByReceiver: back ?? null };
+    });
+  }
+
+  /**
+   * Marks each row whose report waits on an outsourced sample the outside lab sent back ("Outsourced – Repeated"): the
+   * holder branch's samples are all waiting (before Accept / cancelled) or OUTSOURCED, and every outsourced one has its
+   * newest outsource transfer closed as Repeat / Rejected. The same rule as `isReportAwaitingSample`, so the screen shows
+   * the report view-only exactly when the server refuses the write. Needs the sample columns, so it runs after
+   * {@link attachSampleStatuses}; one batched transfer lookup per page.
+   */
+  private async attachOutsourceSentBack(
+    tenantId: string,
+    rows: LabReportWorklistRow[],
+  ): Promise<LabReportWorklistRow[]> {
+    const heldIdsOf = (row: LabReportWorklistRow): string[] =>
+      row.sampleIds.filter((_, i) => row.sampleBranchIds[i] === row.branchId);
+    const outsourcedIdsOf = (row: LabReportWorklistRow): string[] =>
+      row.sampleIds.filter(
+        (id, i) =>
+          row.sampleStatuses[i] === SampleStatus.OUTSOURCED &&
+          row.sampleBranchIds[i] === row.branchId,
+      );
+    const candidates = rows.flatMap(outsourcedIdsOf);
+    if (candidates.length === 0) return rows;
+    const sentBack = await findOutsourceSentBackSampleIds(
+      this.prisma,
+      tenantId,
+      candidates,
+    );
+    if (sentBack.size === 0) return rows;
+    return rows.map((row) => {
+      const outsourced = outsourcedIdsOf(row);
+      if (outsourced.length === 0) return row;
+      // Not locked: a validated result or Error Reported keeps its way forward (Error Reported -> Re-run), the same rule as
+      // `isReportAwaitingSample`.
+      if (OUTSOURCE_SENT_BACK_UNLOCKED_STATUSES.includes(row.status)) return row;
+      const allWaiting = heldIdsOf(row).every((id) => {
+        const i = row.sampleIds.indexOf(id);
+        const status = row.sampleStatuses[i]!;
+        return (
+          AWAITING_SAMPLE_STATUSES.includes(status) ||
+          status === SampleStatus.OUTSOURCED
+        );
+      });
+      const back = allWaiting && outsourced.every((id) => sentBack.has(id));
+      return back ? { ...row, outsourceSentBack: true } : row;
     });
   }
 
@@ -3752,6 +3874,17 @@ export class LabReportService {
     const { timezone } = await this.tenantService.getLocale(tenantId);
     this.timezoneCache.set(tenantId, { timezone, readAt: now });
     return timezone;
+  }
+
+  /**
+   * A Re-run is possible only from Result Done, Result Rejected or Error Reported.
+   * @throws LabReportRerunNotAllowedException for any other status
+   */
+  private assertRerunAllowed(id: string, status: LabReportStatus): void {
+    const allowed = LAB_REPORT_ALLOWED_FROM.reRun;
+    if (!(allowed as readonly LabReportStatus[]).includes(status)) {
+      throw new LabReportRerunNotAllowedException(id, status, allowed);
+    }
   }
 
   private assertTransition(
@@ -7233,12 +7366,15 @@ export class LabReportService {
     });
   }
 
-  // ── Re-Run (any status -> Pending, clears result values) ───────────────────
+  // ── Re-Run (Result Done / Result Rejected / Error Reported -> Pending, clears result values) ──
 
   /**
-   * Clears all `LabReportResultValue` rows and returns the report to PENDING,
-   * from ANY status (LABORATORY.docx §2.2 "Any status" row) — no
-   * `assertTransition` gate applies here. Creating the `ReRunRequest` worklist
+   * Clears all `LabReportResultValue` rows and returns the report to PENDING.
+   * Allowed only from Result Done, Result Rejected or Error Reported
+   * (`LAB_REPORT_ALLOWED_FROM.reRun`, the manager's rule): from Validation
+   * Pending the result is rejected first, from Approved or Published an error is
+   * reported first. Refused with `LAB_REPORT_RERUN_NOT_ALLOWED` otherwise.
+   * Creating the `ReRunRequest` worklist
    * row is the caller's (worklist service's) responsibility; this method only
    * performs the report-side reset.
    *
@@ -7262,9 +7398,18 @@ export class LabReportService {
     // A locked test cannot be worked on, not even re-run, until it is unlocked
     // (otherwise it resets to Pending yet stays locked and cannot be entered).
     if (report.isLocked) throw new LabReportLockedException(id);
+    this.assertRerunAllowed(id, report.status);
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      // The status read above was taken before the row lock: read it again now that
+      // the row is ours, so a report that was approved a moment ago is not wiped.
+      const current = await tx.labReport.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      const statusNow = current?.status ?? report.status;
+      this.assertRerunAllowed(id, statusNow);
       const now = new Date();
       await tx.labReportResultValue.updateMany({
         where: { labReportId: id, deletedAt: null },
@@ -7310,7 +7455,7 @@ export class LabReportService {
         tx,
         tenantId,
         id,
-        report.status,
+        statusNow,
         LabReportStatus.PENDING,
         're_run',
         actorId,

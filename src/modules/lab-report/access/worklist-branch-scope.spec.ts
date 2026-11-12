@@ -9,6 +9,7 @@ import {
   usableRules,
   visibleStatusesFor,
   worklistRowBranchWhere,
+  worklistRowDateWhere,
 } from './worklist-branch-scope';
 
 describe('STATUS_ACCESS_KEYS', () => {
@@ -233,5 +234,49 @@ describe('canWorkAtHolder (a report sent by the selected branch)', () => {
         'B',
       ),
     ).toBe(true);
+  });
+});
+
+describe('worklistRowDateWhere', () => {
+  const orderDateOf = (w: ReturnType<typeof worklistRowDateWhere>) =>
+    (
+      w.labReport?.is as {
+        orderItem: { is: { order: { is: { orderDate: unknown } } } };
+      }
+    ).orderItem.is.order.is.orderDate;
+
+  it('no bounds: no condition', () => {
+    expect(worklistRowDateWhere()).toEqual({});
+    expect(worklistRowDateWhere({})).toEqual({});
+    expect(worklistRowDateWhere({ dateFrom: '', dateTo: '' })).toEqual({});
+  });
+
+  it('from only / to only / both: inclusive calendar-day bounds on the order date', () => {
+    expect(
+      orderDateOf(worklistRowDateWhere({ dateFrom: '2026-11-04' })),
+    ).toEqual({
+      gte: new Date('2026-11-04T00:00:00.000Z'),
+    });
+    expect(orderDateOf(worklistRowDateWhere({ dateTo: '2026-11-10' }))).toEqual(
+      {
+        lte: new Date('2026-11-10T00:00:00.000Z'),
+      },
+    );
+    expect(
+      orderDateOf(
+        worklistRowDateWhere({ dateFrom: '2026-11-04', dateTo: '2026-11-10' }),
+      ),
+    ).toEqual({
+      gte: new Date('2026-11-04T00:00:00.000Z'),
+      lte: new Date('2026-11-10T00:00:00.000Z'),
+    });
+  });
+
+  it('a full ISO timestamp is reduced to its calendar day', () => {
+    expect(
+      orderDateOf(
+        worklistRowDateWhere({ dateFrom: '2026-11-04T18:30:00.000Z' }),
+      ),
+    ).toEqual({ gte: new Date('2026-11-04T00:00:00.000Z') });
   });
 });

@@ -1,4 +1,4 @@
-import { IsOptional, Matches } from 'class-validator';
+import { IsDateString, IsOptional, Matches } from 'class-validator';
 
 /** A branch id (UUID) or the literal `all`. */
 export const BRANCH_OR_ALL_PATTERN =
@@ -17,4 +17,17 @@ export class WorklistBranchQueryDto {
   @IsOptional()
   @Matches(BRANCH_OR_ALL_PATTERN, { message: BRANCH_OR_ALL_MESSAGE })
   branchId?: string;
+
+  /**
+   * Order-date range (inclusive, `YYYY-MM-DD`) — the Reporting screen's date
+   * filter, applied to the special worklists the same way the main worklist
+   * applies it (on the ORDER's `orderDate`). Omitted = no date limit.
+   */
+  @IsOptional()
+  @IsDateString()
+  dateFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
 }

@@ -13,11 +13,13 @@ import { SampleTransferController } from './sample-transfer.controller';
 import { AccessionSettingsController } from './accession-settings.controller';
 import { AccessionReportController } from './accession-report.controller';
 import { AccessionDashboardController } from './accession-dashboard.controller';
+import { ReRunFreshController } from './re-run-fresh.controller';
 import { OrderSampleService } from './accession-sample.service';
 import { SampleTransferService } from './sample-transfer.service';
 import { AccessionSettingsService } from './accession-settings.service';
 import { AccessionReportService } from './accession-report.service';
 import { AccessionDashboardService } from './accession-dashboard.service';
+import { ReRunFreshService } from './re-run-fresh.service';
 import { BarcodeService } from './barcode.service';
 
 /**
@@ -54,6 +56,7 @@ import { BarcodeService } from './barcode.service';
     AccessionSettingsController,
     AccessionReportController,
     AccessionDashboardController,
+    ReRunFreshController,
   ],
   providers: [
     OrderSampleService,
@@ -61,6 +64,7 @@ import { BarcodeService } from './barcode.service';
     AccessionSettingsService,
     AccessionReportService,
     AccessionDashboardService,
+    ReRunFreshService,
     BarcodeService,
   ],
   exports: [OrderSampleService, BarcodeService],

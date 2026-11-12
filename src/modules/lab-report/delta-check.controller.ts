@@ -57,7 +57,10 @@ export class DeltaCheckController {
       query.branchId,
       PERMISSION_KEYS.LAB_ACCESS_DELTA_LIST,
     );
-    return this.deltaCheckService.findAll(tenantId, scope);
+    return this.deltaCheckService.findAll(tenantId, scope, {
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    });
   }
 
   @Patch(':id/status')

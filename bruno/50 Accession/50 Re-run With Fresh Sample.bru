@@ -1,0 +1,64 @@
+meta {
+  name: 50 Re-run With Fresh Sample
+  type: http
+  seq: 50
+}
+
+post {
+  url: {{baseUrl}}/accession/re-run-fresh
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "reportIds": ["{{labReportId}}"],
+    "repeatReason": "Hemolysed",
+    "notes": "Result looks doubtful, collect again"
+  }
+}
+
+tests {
+  test("re-run accepted or refused as a whole", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 404, 422]);
+  });
+}
+
+docs {
+  Re-run with a FRESH sample (Technician Re-run dialog). Needs the Re-run permission
+  (`LAB_MARK_RE_RUN`). ALL OR NOTHING, in one transaction:
+
+  1. the report(s) are wiped back to Pending (values, notes, attachments, lock ...), and a
+     Re-run request (`sampleMode: FRESH`) is recorded for each;
+  2. the test's tube(s) go back for a fresh collection:
+     - in-house Accepted tube -> REPEAT with a NEW barcode (rows repeated together share one
+       new barcode and one `repeatBatchId`); the report stays locked until the new tube is
+       accepted;
+     - tube received from another branch (accepted copy) -> sent back to the sender (the copy
+       is voided, the report returns to the sender, the transfer is closed as Repeat); the
+       sender's original reads "Sent - Repeated" until the sender confirms Repeat;
+     - Outsourced tube -> its outsource transfer is closed as Repeat; the sample stays
+       Outsourced ("Outsourced - Repeated") and the report is view-only until the sender
+       confirms Repeat (or Retrieves).
+
+  Body: `reportIds` (1-100, all of ONE order, at the active branch), `repeatReason`
+  (required), `notes` (optional).
+  Both must be TEXT: an object, array or number is a 400 (it is never turned into "[object Object]").
+  `repeatReason` needs a visible character and is at most 255 characters; neither field may contain a NUL
+  character (400, not a 500).
+  Response: `{ batchId, items: [{ reportId, kind, sampleIds, barcode }] }`.
+
+  Errors: 404 `LAB_REPORT_NOT_FOUND` (a report is not at the active branch);
+  422 `RERUN_FRESH_NOT_ALLOWED` (a test cannot be re-run now: status, lock, cancelled order,
+  removed test, sample not Accepted/Outsourced, sample sent to another branch, tests of two
+  orders, blank reason - the message names the first reason); 403 without the permission.
+  The in-house tube's referring panel (B2B) is told, as for a normal Repeat.
+}

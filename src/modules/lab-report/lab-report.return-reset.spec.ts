@@ -119,6 +119,10 @@ describe('LabReportService.resetReportsForReturn', () => {
       publishedAt: null,
       tatStartAt: null,
       tatBand: null,
+      // the old attempt's stopwatch does not carry into the new one
+      tatEndAt: null,
+      tatIsRunning: false,
+      tatLastTickAt: null,
       reportingDeferredUntil: null,
       isLocked: false,
       lockedAt: null,

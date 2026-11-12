@@ -10,6 +10,12 @@ get {
   auth: bearer
 }
 
+params:query {
+  ~branchId: all
+  ~dateFrom: 2026-11-04
+  ~dateTo: 2026-11-10
+}
+
 auth:bearer {
   token: {{businessAccessToken}}
 }
@@ -19,4 +25,12 @@ docs {
   Time, Order, Branch, Patient, Referred By, Ref Panel, Order Item, Sample
   Status, Bill Status, Report Status (snapshot at trigger time), Out of Range
   Status, Action.
+
+  Query (all optional):
+  - `branchId` — omitted = own branch; a branch id; or `all` (every authorised branch).
+  - `dateFrom`, `dateTo` — the Reporting screen's date filter (`YYYY-MM-DD`,
+    inclusive). Rows are limited to reports whose ORDER date (`orders.order_date`)
+    is in range — the same column and semantics as `GET /lab-reports`, so every
+    view of the screen agrees. Omitted = no date limit. Invalid → 400
+    `VALIDATION_ERROR`.
 }

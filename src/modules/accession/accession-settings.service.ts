@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import {
+  AccessionBarcodeResetCycle,
   AccessionBarcodeSeparator,
   AccessionSetting,
+  BarcodeCounterKind,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BARCODE_NUMBER_FLOOR } from './barcode.service';
 import { BranchService } from '../branch/branch.service';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import {
@@ -21,6 +24,15 @@ const SEPARATOR_TOKENS: Record<AccessionBarcodeSeparator, string> = {
   SLASH: '/',
   UNDERSCORE: '_',
 };
+
+/**
+ * The tenant's last-issued order and sample barcode numbers
+ * (`TenantBarcodeCounter`); both at least {@link BARCODE_NUMBER_FLOOR}.
+ */
+interface BarcodeCounters {
+  order: number;
+  sample: number;
+}
 
 /** Full Accession Module Settings response: master-data lists + typed columns + computed barcode previews. */
 export type AccessionSettingsResponse = AccessionSettingsMap &
@@ -59,18 +71,43 @@ export class AccessionSettingsService {
     tenantId: string,
     branchId: string | null,
   ): Promise<AccessionSettingsResponse> {
+    const counters = await this.barcodeCounters(tenantId);
     if (!branchId) {
-      return this.toResponse({
-        config: {},
-        ...DEFAULT_ACCESSION_TYPED_SETTINGS,
-      });
+      return this.toResponse(
+        { config: {}, ...DEFAULT_ACCESSION_TYPED_SETTINGS },
+        counters,
+      );
     }
     const row = await this.prisma.accessionSetting.findFirst({
       where: { tenantId, branchId, deletedAt: null },
     });
-    return row
-      ? this.toResponse(row)
-      : this.toResponse({ config: {}, ...DEFAULT_ACCESSION_TYPED_SETTINGS });
+    return this.toResponse(
+      row ?? { config: {}, ...DEFAULT_ACCESSION_TYPED_SETTINGS },
+      counters,
+    );
+  }
+
+  /**
+   * Read the tenant's barcode counters. Barcode numbers are tenant-wide (every
+   * branch draws from the same counter and only chooses the format), so the
+   * "current number" and "next barcode" preview are the same on every branch.
+   * A tenant that has not issued a barcode yet reads as the floor (10000).
+   */
+  private async barcodeCounters(tenantId: string): Promise<BarcodeCounters> {
+    const rows = await this.prisma.tenantBarcodeCounter.findMany({
+      where: { tenantId },
+      select: { kind: true, currentNumber: true },
+    });
+    const current = (kind: BarcodeCounterKind) =>
+      Math.max(
+        rows.find((r) => r.kind === kind)?.currentNumber ??
+          BARCODE_NUMBER_FLOOR,
+        BARCODE_NUMBER_FLOOR,
+      );
+    return {
+      order: current(BarcodeCounterKind.ORDER),
+      sample: current(BarcodeCounterKind.SAMPLE),
+    };
   }
 
   /**
@@ -121,7 +158,7 @@ export class AccessionSettingsService {
         deletedAt: null,
       },
     });
-    return this.toResponse(row);
+    return this.toResponse(row, await this.barcodeCounters(tenantId));
   }
 
   /** Split a save DTO into its JSON-blob master-data patch and its native-column patch. */
@@ -138,6 +175,11 @@ export class AccessionSettingsService {
       MasterData_DiscardMethods,
       MasterData_RejectionReasons,
       MasterData_LogisticsTypes,
+      // Barcode reset cycles are retired: numbers come from the tenant-wide
+      // counter, which never resets (it would re-issue printed numbers). Still
+      // accepted from older clients, but never stored.
+      SampleBarcodeSettings_ResetInterval: _sampleResetIgnored,
+      OrderBarcodeSettings_ResetInterval: _orderResetIgnored,
       ...columnsPatch
     } = dto;
     const masterDataPatch: Partial<AccessionSettingsMap> = {
@@ -255,9 +297,15 @@ export class AccessionSettingsService {
       .join(sep);
   }
 
-  /** Flatten a stored (or in-memory default) row into the full API response shape. */
+  /**
+   * Flatten a stored (or in-memory default) row into the full API response
+   * shape. The barcode "current number" and preview come from the tenant-wide
+   * counters (`counters`), not the row's deprecated per-branch columns; the
+   * row supplies only the branch's format. Reset intervals always read NEVER.
+   */
   private toResponse(
     row: Pick<AccessionSetting, 'config'> & AccessionTypedSettings,
+    counters: BarcodeCounters,
   ): AccessionSettingsResponse {
     return {
       ...this.mergeConfig(row.config),
@@ -266,15 +314,15 @@ export class AccessionSettingsService {
       SampleBarcodeSettings_Separator: row.SampleBarcodeSettings_Separator,
       SampleBarcodeSettings_NumberLength:
         row.SampleBarcodeSettings_NumberLength,
-      SampleBarcodeSettings_ResetInterval:
-        row.SampleBarcodeSettings_ResetInterval,
-      SampleBarcodeSettings_CurrentNumber:
-        row.SampleBarcodeSettings_CurrentNumber,
+      SampleBarcodeSettings_ResetInterval: AccessionBarcodeResetCycle.NEVER,
+      SampleBarcodeSettings_CurrentNumber: counters.sample,
       SampleBarcodeSettings_LastResetAt: row.SampleBarcodeSettings_LastResetAt,
+      // Next sample barcode any branch of the tenant would issue, in this
+      // branch's format.
       SampleBarcodeSettings_Preview: this.composeBarcode({
         prefix: row.SampleBarcodeSettings_Prefix,
         separator: row.SampleBarcodeSettings_Separator,
-        number: row.SampleBarcodeSettings_CurrentNumber + 1,
+        number: counters.sample + 1,
         numberLength: row.SampleBarcodeSettings_NumberLength,
         suffix: row.SampleBarcodeSettings_Suffix,
       }),
@@ -282,17 +330,15 @@ export class AccessionSettingsService {
       OrderBarcodeSettings_Suffix: row.OrderBarcodeSettings_Suffix,
       OrderBarcodeSettings_Separator: row.OrderBarcodeSettings_Separator,
       OrderBarcodeSettings_NumberLength: row.OrderBarcodeSettings_NumberLength,
-      OrderBarcodeSettings_ResetInterval:
-        row.OrderBarcodeSettings_ResetInterval,
-      OrderBarcodeSettings_CurrentNumber:
-        row.OrderBarcodeSettings_CurrentNumber,
+      OrderBarcodeSettings_ResetInterval: AccessionBarcodeResetCycle.NEVER,
+      OrderBarcodeSettings_CurrentNumber: counters.order,
       OrderBarcodeSettings_LastResetAt: row.OrderBarcodeSettings_LastResetAt,
-      // Next order barcode the branch would emit (current + 1), same floor logic
-      // as allocation: the first emitted value is always at least 10001.
+      // Next order barcode any branch of the tenant would issue (always at least
+      // 10001), in this branch's format.
       OrderBarcodeSettings_Preview: this.composeBarcode({
         prefix: row.OrderBarcodeSettings_Prefix,
         separator: row.OrderBarcodeSettings_Separator,
-        number: Math.max(row.OrderBarcodeSettings_CurrentNumber, 10000) + 1,
+        number: counters.order + 1,
         numberLength: row.OrderBarcodeSettings_NumberLength,
         suffix: row.OrderBarcodeSettings_Suffix,
       }),
