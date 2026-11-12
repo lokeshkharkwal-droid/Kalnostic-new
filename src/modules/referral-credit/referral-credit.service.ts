@@ -2,12 +2,17 @@ import { Injectable } from '@nestjs/common';
 import {
   InvoicePaymentStatus,
   OrderStatus,
+  PaymentStatus,
   Prisma,
   ReferralClientType,
   type ReferralPanelSettings,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { toNum, roundToTwoDecimalPlaces } from '../../common/utils';
+import {
+  computeEffectivePaid,
+  derivePaymentStatus,
+} from '../order/entities/order.entity';
 import {
   ReferralOrderCreditLimitException,
   ReferralOrderCreditDaysException,
@@ -47,6 +52,52 @@ export interface OrderCommunicationPolicy {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * What the report gate loads for the order whose report is being opened: its
+ * referral ids, plus the payment state that decides whether it is fully paid
+ * (active ledger rows, the retained cancellation fee, and an active link to a
+ * fully-paid invoice, if any).
+ */
+const REPORT_ORDER_SELECT = {
+  referredByDoctorId: true,
+  referralPanelId: true,
+  internalReferralId: true,
+  externalReferralId: true,
+  cancellationCharge: true,
+  payments: {
+    where: { deletedAt: null },
+    select: {
+      netAmount: true,
+      paidAmount: true,
+      refundAmount: true,
+      refundCharge: true,
+    },
+  },
+  invoiceLinks: {
+    where: {
+      deletedAt: null,
+      invoice: {
+        deletedAt: null,
+        paymentStatus: InvoicePaymentStatus.COMPLETED,
+      },
+    },
+    select: { id: true },
+    take: 1,
+  },
+} satisfies Prisma.OrderSelect;
+
+/** The payment state {@link ReferralCreditService} needs to call an order fully paid. */
+interface OrderPaymentState {
+  cancellationCharge: Prisma.Decimal | null;
+  payments: Array<{
+    netAmount: Prisma.Decimal | null;
+    paidAmount: Prisma.Decimal | null;
+    refundAmount: Prisma.Decimal | null;
+    refundCharge: Prisma.Decimal | null;
+  }>;
+  invoiceLinks: Array<{ id: string }>;
+}
+
+/**
  * Enforces the credit rules defined by a Referral Panel Setting (Section 4 —
  * Referral Panel Settings) at two points in the request path:
  *
@@ -63,6 +114,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * treated as settled and left out — the same rule the Outstanding report uses
  * (`OrderService.invoiceSettledOrderIds`). Only `CASH` and `POSTPAID` settings
  * carry credit rules (Prepaid uses the wallet model, which is out of scope here).
+ *
+ * Report access is never blocked for a **fully paid** order: when the order
+ * whose report is being opened is PAID (same rule as its stored
+ * `paymentStatus`) or sits on a COMPLETED invoice, its reports open whatever
+ * the referral's settings or other dues are. The credit rules only gate the
+ * reports of partly-paid / unpaid orders.
  *
  * The gates are deliberately conservative: they only bite when the setting's
  * `isRestrict…` flag is ON **and** the corresponding limit/day value is `> 0`.
@@ -181,9 +238,11 @@ export class ReferralCreditService {
   }
 
   /**
-   * Block report access (print/download) for an order whose linked Cash/Postpaid
-   * referral has reached its Credit Limit or exceeded Credit Allowed Days (and
-   * the matching `isRestrictReport…` flag is on). Resolves the order by id.
+   * Block report access (print/download/share) for an order whose linked
+   * Cash/Postpaid referral has reached its Credit Limit or exceeded Credit
+   * Allowed Days (and the matching `isRestrictReport…` flag is on). A fully
+   * paid order is always allowed (see {@link isOrderFullyPaid}). Resolves the
+   * order by id.
    */
   async assertReportAccessAllowedByOrderId(
     tenantId: string,
@@ -191,15 +250,11 @@ export class ReferralCreditService {
   ): Promise<void> {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, tenantId, deletedAt: null },
-      select: {
-        referredByDoctorId: true,
-        referralPanelId: true,
-        internalReferralId: true,
-        externalReferralId: true,
-      },
+      select: REPORT_ORDER_SELECT,
     });
     // Missing order: let the caller's own not-found handling report it.
     if (!order) return;
+    if (this.isOrderFullyPaid(order)) return;
     await this.assertReportAccessAllowed(tenantId, order);
   }
 
@@ -215,22 +270,37 @@ export class ReferralCreditService {
       where: { id: reportId, tenantId, deletedAt: null },
       select: {
         orderItem: {
-          select: {
-            order: {
-              select: {
-                referredByDoctorId: true,
-                referralPanelId: true,
-                internalReferralId: true,
-                externalReferralId: true,
-              },
-            },
-          },
+          select: { order: { select: REPORT_ORDER_SELECT } },
         },
       },
     });
     const order = report?.orderItem?.order;
     if (!order) return;
+    if (this.isOrderFullyPaid(order)) return;
     await this.assertReportAccessAllowed(tenantId, order);
+  }
+
+  /**
+   * Whether the order whose report is being opened is fully paid — in which case
+   * its reports are never credit-gated. True when it sits on a fully-paid
+   * (COMPLETED) invoice, or when its own ledger reads PAID by the exact rule
+   * behind the stored `Order.paymentStatus`: `derivePaymentStatus(net,
+   * effectivePaid)` with `effectivePaid = paid − cancellation charge − refunds −
+   * refund charges` (see `PaymentDetailsService`). A zero-value order counts as
+   * paid, as it does everywhere else.
+   */
+  private isOrderFullyPaid(order: OrderPaymentState): boolean {
+    if (order.invoiceLinks.length > 0) return true;
+    const total = (key: keyof OrderPaymentState['payments'][number]) =>
+      order.payments.reduce((s, p) => s + toNum(p[key]), 0);
+    const net = roundToTwoDecimalPlaces(total('netAmount'));
+    const effectivePaid = computeEffectivePaid(
+      total('paidAmount'),
+      toNum(order.cancellationCharge),
+      total('refundAmount'),
+      total('refundCharge'),
+    );
+    return derivePaymentStatus(net, effectivePaid) === PaymentStatus.PAID;
   }
 
   /** Core report-access gate shared by both resolvers above. */
