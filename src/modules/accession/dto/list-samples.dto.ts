@@ -233,4 +233,16 @@ export class ListSamplesDto extends SampleFilterFieldsDto {
   @IsString()
   @MaxLength(255)
   discardMethod?: string;
+
+  /**
+   * `true` adds `noteCounts` (`{ SAMPLE, TECH }`) to every sample of the In-House
+   * list (`/accession/order-samples/grouped`): the Sample Status column's notes
+   * icons. Each count equals the length of
+   * `GET /orders/:id/notes?category=…&sampleId=…`. Off by default, so the exports
+   * and other readers of this query pay nothing. Ignored by the other endpoints.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeNoteCounts?: boolean;
 }

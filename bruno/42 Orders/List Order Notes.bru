@@ -12,6 +12,7 @@ get {
 
 params:query {
   ~category: SAMPLE
+  ~sampleId: {{sampleId}}
 }
 
 auth:bearer {
@@ -50,6 +51,16 @@ docs {
     stream additionally merges the order's accession sample notes (from Collect
     Sample / status-update actions) so the complete sample history is shown.
     `GET /orders?includeNoteCounts=true` counts exactly these rows per category.
+  - `sampleId` (optional, the sample's id, max 64 chars) — narrow the list to ONE sample of the order
+    (the In-House Orders list's per-sample notes icons): the Technician
+    Reporting notes of the reports that use that sample (a panel member's
+    report only uses its own member test's samples), that sample's own
+    accession notes, and every `ORDER`-source note - Order Overview notes are
+    saved against the whole order (no sample), so they belong to every sample
+    of it (the FE tags them "Whole order"). A sample that is not a live sample
+    of this order gets `[]`.
+    `GET /accession/order-samples/grouped?includeNoteCounts=true` counts
+    exactly these rows per sample (`SAMPLE` / `TECH`).
 
   404 `ORDER_NOT_FOUND` if the order is missing, soft-deleted, or owned by
   another tenant.

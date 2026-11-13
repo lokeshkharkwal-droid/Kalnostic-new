@@ -3106,11 +3106,11 @@ screen; the frontend applies it to every tab of that screen. Allowed for B2B ref
 <code>lab_report_notes</code> (Technician Reporting's Order / Sample / Tech Notes,
 <code>POST /lab-reports/:id/notes</code>), plus the accession sample notes
 (<code>order_sample_status_history.notes</code>). The Order Console shows all of an order's notes; the
-Technician worklist shows its own notes. Notes are append-only (no edit/delete). Every list count below equals the
+Technician worklist shows its own notes; the In-House Orders list shows each sample's own notes. Notes are append-only (no edit/delete). Every list count below equals the
 length of the matching notes list.</p>
 
 <div class="ep" id="order-notes-list">
-  <div><span class="m get">GET</span><span class="path">/api/v1/orders/:id/notes?category=ORDER|SAMPLE|TECH</span></div>
+  <div><span class="m get">GET</span><span class="path">/api/v1/orders/:id/notes?category=ORDER|SAMPLE|TECH&amp;sampleId=</span></div>
   <div class="tags"><span class="tag biz">business JWT</span></div>
   <p>The order's notes, newest first: <code>{ id, category, body, createdByName, createdAt, source, readonly,
   action?, testName?, sampleLabel? }</code>. <code>source</code> = <code>ORDER</code> (Order Overview notes),
@@ -3118,6 +3118,20 @@ length of the matching notes list.</p>
   the <code>testName</code> and <code>sampleLabel</code> — <code>"&lt;sample name&gt; · &lt;barcode&gt;"</code> —
   they were written on) or <code>ACCESSION</code> (read-only accession sample notes, SAMPLE only, with
   <code>action</code> and <code>sampleLabel</code>). <span class="pill">404 ORDER_NOT_FOUND</span>.</p>
+  <p>Optional <code>sampleId</code> (the sample's id, max 64 characters) narrows the list to ONE sample of the order (the In-House list's
+  per-sample notes icons): the <code>LAB_REPORT</code> notes of the reports that use that sample (a panel member's
+  report only uses its own member test's samples), that sample's own <code>ACCESSION</code> notes, and every
+  <code>ORDER</code>-source note (saved against the whole order, so it belongs to every sample of it). A sample that
+  is not a live sample of the order → <code>[]</code>.</p>
+</div>
+
+<div class="ep" id="in-house-note-counts">
+  <div><span class="m get">GET</span><span class="path">/api/v1/accession/order-samples/grouped?includeNoteCounts=true</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Opt-in: every sample item gains <code>noteCounts: { SAMPLE, TECH }</code> — how many notes
+  <code>GET /orders/:orderId/notes?category=&lt;X&gt;&amp;sampleId=&lt;sample id&gt;</code> lists. Sent by the In-House
+  Orders list for its Technician / Sample Notes icons beside each sample's Sample Status. Omitted → no field, no extra
+  queries (the Export PDF / CSV).</p>
 </div>
 
 <div class="ep" id="order-notes-counts">

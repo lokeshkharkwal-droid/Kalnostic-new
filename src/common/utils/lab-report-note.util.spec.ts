@@ -4,6 +4,7 @@ import {
   formatSampleLabel,
   labReportNotesForOrdersWhere,
   resolveReportLabels,
+  sampleTestBelongsToReport,
 } from './lab-report-note.util';
 
 describe('labReportNotesForOrdersWhere', () => {
@@ -162,5 +163,48 @@ describe('resolveReportLabels', () => {
       deletedAt: null,
       orderItemId: { in: ['oi-1', 'oi-2', 'oi-3'] },
     });
+  });
+});
+
+describe('sampleTestBelongsToReport', () => {
+  const standalone = {
+    orderItemId: 'oi-1',
+    labTestId: 'lt-cbc',
+    memberBranchLabTestId: null,
+  };
+  const member = {
+    orderItemId: 'oi-2',
+    labTestId: 'lt-glu',
+    memberBranchLabTestId: 'bm-glu',
+  };
+
+  it('gives a standalone report every sample of its order item', () => {
+    expect(
+      sampleTestBelongsToReport(
+        { orderItemId: 'oi-1', labTestId: 'x' },
+        standalone,
+      ),
+    ).toBe(true);
+    expect(
+      sampleTestBelongsToReport(
+        { orderItemId: 'oi-9', labTestId: 'lt-cbc' },
+        standalone,
+      ),
+    ).toBe(false);
+  });
+
+  it("gives a panel-member report only its own member test's samples", () => {
+    expect(
+      sampleTestBelongsToReport(
+        { orderItemId: 'oi-2', labTestId: 'lt-glu' },
+        member,
+      ),
+    ).toBe(true);
+    expect(
+      sampleTestBelongsToReport(
+        { orderItemId: 'oi-2', labTestId: 'lt-uri' },
+        member,
+      ),
+    ).toBe(false);
   });
 });
