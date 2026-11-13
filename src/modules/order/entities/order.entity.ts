@@ -9,6 +9,7 @@ import {
 import {
   roundToTwoDecimalPlaces,
   type CollectionProgress,
+  type NoteCounts,
 } from '../../../common/utils';
 import type { OrderReportStatus } from '../../../common/utils/derive-report-status.util';
 
@@ -877,6 +878,13 @@ export type OrderListRow = Prisma.OrderGetPayload<{
    * `OrderService.cancel` enforces the same rule.
    */
   cancelBlockedReason: 'RESULT_DONE' | null;
+  /**
+   * How many notes `GET /orders/:id/notes` lists per category - the Order
+   * Console's notes icons (Order Notes beside the Order ID; Sample / Technician
+   * Notes beside the Sample Status). Only present when the list was asked with
+   * `includeNoteCounts=true`.
+   */
+  noteCounts?: NoteCounts;
 };
 
 /**

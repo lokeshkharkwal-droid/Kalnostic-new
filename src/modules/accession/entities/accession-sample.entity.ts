@@ -1,6 +1,7 @@
 import { AccessionGroupingMode, Prisma, SampleStatus } from '@prisma/client';
 import { TatStatus } from '../constants/tat.constant';
 import type { CollectionProgress } from '../../../common/utils/collection-progress.util';
+import type { SampleNoteCounts } from '../../../common/utils/lab-report-note.util';
 
 /**
  * The transfer columns a list row carries - for its latest transfer (`transfers[0]`) and, when a
@@ -198,6 +199,11 @@ export interface AccessionSummary {
 /** A list sample enriched with its resolved department name for grouped views. */
 export type GroupedSampleItem = OrderSampleListItem & {
   departmentName: string | null;
+  /**
+   * The sample's Sample / Tech note counts (the In-House Sample Status column's
+   * notes icons); only present with `includeNoteCounts=true`.
+   */
+  noteCounts?: SampleNoteCounts;
 };
 
 /**

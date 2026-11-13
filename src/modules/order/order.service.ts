@@ -74,6 +74,13 @@ import {
   buildCollectionProgressWhere,
   collectionProgressByOrder,
   COLLECTION_WORKFLOW_ITEM_WHERE,
+  accessionSampleNotesWhere,
+  emptyNoteCounts,
+  formatSampleLabel,
+  labReportNotesForOrdersWhere,
+  reportSampleLinks,
+  resolveReportLabels,
+  type NoteCounts,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
@@ -324,9 +331,11 @@ type DiscountTdsPaymentRow = {
  */
 /**
  * One row in an Order Overview note stream. Unifies order-store notes
- * (`source: 'ORDER'`, editable-in-future) and the read-only accession sample
- * notes merged into the SAMPLE tab (`source: 'ACCESSION'`), so the frontend
- * renders one chronological history per tab regardless of origin.
+ * (`source: 'ORDER'`, editable-in-future), the read-only Technician Reporting
+ * notes of the order's reports (`source: 'LAB_REPORT'`, same category), and the
+ * read-only accession sample notes merged into the SAMPLE tab
+ * (`source: 'ACCESSION'`), so the frontend renders one chronological history per
+ * tab regardless of origin.
  */
 export interface OrderNoteView {
   id: string;
@@ -334,10 +343,15 @@ export interface OrderNoteView {
   body: string;
   createdByName: string | null;
   createdAt: Date;
-  source: 'ORDER' | 'ACCESSION';
+  source: 'ORDER' | 'ACCESSION' | 'LAB_REPORT';
   readonly: boolean;
   /** Only set for accession-sourced SAMPLE notes (e.g. 'collect', 'accept'). */
   action?: string;
+  /** `LAB_REPORT` notes: the test the note was written on in Technician Reporting. */
+  testName?: string | null;
+  /** `LAB_REPORT` and `ACCESSION` notes: the sample(s) it belongs to, as
+   * "<sample name> · <barcode>" (comma-separated for a test on several samples). */
+  sampleLabel?: string | null;
 }
 
 /** The order documents that support "Share and Inform". */
@@ -2030,12 +2044,22 @@ export class OrderService {
 
   /**
    * List an order's notes, newest-first. Without `category`, returns all three
-   * tabs' notes together. For the SAMPLE stream (requested explicitly or as part
-   * of the unfiltered set) the order's accession sample notes are merged in
-   * read-only, so the Order Overview Sample tab shows the complete sample history.
+   * tabs' notes together. Each stream also merges, read-only, the notes the
+   * Technician Reporting screen saved on the order's reports in the same category
+   * (`LabReportNote`), and the SAMPLE stream (requested explicitly or as part of
+   * the unfiltered set) the order's accession sample notes, so every tab shows the
+   * order's complete history wherever a note was written. `noteCountsByOrder`
+   * counts exactly these rows (the Order Console's notes icons).
+   *
+   * With `sampleId` (the In-House list's per-sample notes icons) the list is
+   * narrowed to that sample: the Technician notes of the reports that use it,
+   * its own accession notes, and every Order Overview note - those are saved
+   * against the whole order (no sample), so they belong to every sample of it.
+   * `noteCountsBySample` counts exactly these rows. A sample that is not a live
+   * sample of this order gets an empty list.
    * @param id order id
    * @param tenantId tenant scope (from JWT)
-   * @param query optional category filter
+   * @param query optional category and sample filters
    * @returns notes in the unified `OrderNoteView` shape, `createdAt` descending
    * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
    */
@@ -2045,6 +2069,12 @@ export class OrderService {
     query: ListOrderNotesDto,
   ): Promise<OrderNoteView[]> {
     await this.assertOrderExists(id, tenantId);
+    if (
+      query.sampleId &&
+      !(await this.isLiveOrderSample(id, tenantId, query.sampleId))
+    ) {
+      return [];
+    }
     const rows = await this.prisma.orderNote.findMany({
       where: {
         orderId: id,
@@ -2064,38 +2094,161 @@ export class OrderService {
       readonly: false,
     }));
 
+    notes.push(
+      ...(await this.loadOrderLabReportNotes(
+        id,
+        tenantId,
+        query.category,
+        query.sampleId,
+      )),
+    );
     if (!query.category || query.category === 'SAMPLE') {
-      notes.push(...(await this.loadOrderSampleNotes(id, tenantId)));
+      notes.push(
+        ...(await this.loadOrderSampleNotes(id, tenantId, query.sampleId)),
+      );
     }
 
     notes.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return notes;
   }
 
+  /** Whether `sampleId` is a live sample of the order (the `sampleId` notes filter). */
+  private async isLiveOrderSample(
+    orderId: string,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<boolean> {
+    const sample = await this.prisma.orderSample.findFirst({
+      where: { id: sampleId, orderId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    return sample !== null;
+  }
+
+  /**
+   * The read-only Technician Reporting notes (Order / Sample / Tech Notes,
+   * `POST /lab-reports/:id/notes`) on any live report of the order, in the
+   * `OrderNoteView` shape. Each is tagged with the test (and its sample) it was
+   * written on, since the stream is order-wide. With `sampleId`, only the notes
+   * of the reports that use that sample (`reportSampleLinks`).
+   */
+  private async loadOrderLabReportNotes(
+    orderId: string,
+    tenantId: string,
+    category?: OrderNoteCategoryValue,
+    sampleId?: string,
+  ): Promise<OrderNoteView[]> {
+    const allRows = await this.prisma.labReportNote.findMany({
+      where: labReportNotesForOrdersWhere(tenantId, [orderId], category),
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        category: true,
+        body: true,
+        createdBy: true,
+        createdAt: true,
+        labReportId: true,
+      },
+    });
+    let rows = allRows;
+    if (sampleId && rows.length > 0) {
+      const links = await reportSampleLinks(
+        this.prisma,
+        tenantId,
+        rows.map((r) => r.labReportId),
+      );
+      rows = rows.filter((r) => links.get(r.labReportId)?.has(sampleId));
+    }
+    if (rows.length === 0) return [];
+
+    const [nameById, labelByReport] = await Promise.all([
+      this.resolveActorNames(rows.map((r) => r.createdBy)),
+      resolveReportLabels(
+        this.prisma,
+        tenantId,
+        rows.map((r) => r.labReportId),
+      ),
+    ]);
+    return rows.map((r) => ({
+      id: r.id,
+      category: r.category as OrderNoteCategoryValue,
+      body: r.body,
+      createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+      createdAt: r.createdAt,
+      source: 'LAB_REPORT' as const,
+      readonly: true,
+      testName: labelByReport.get(r.labReportId)?.testName ?? null,
+      sampleLabel: labelByReport.get(r.labReportId)?.sampleLabel ?? null,
+    }));
+  }
+
+  /**
+   * Per-order counts of what {@link findNotes} lists for each category - the
+   * Order Console's notes icons (`GET /orders?includeNoteCounts=true`). Three
+   * queries for the whole page: Order Overview notes, Technician Reporting notes
+   * and (SAMPLE only) accession sample notes.
+   * @param tenantId tenant scope
+   * @param orderIds the page's order ids (may be empty)
+   * @returns map orderId → counts; every requested id is present
+   */
+  private async noteCountsByOrder(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, NoteCounts>> {
+    const result = new Map<string, NoteCounts>(
+      orderIds.map((id) => [id, emptyNoteCounts()]),
+    );
+    if (orderIds.length === 0) return result;
+
+    const [orderNotes, labReportNotes, accessionNotes] = await Promise.all([
+      this.prisma.orderNote.groupBy({
+        by: ['orderId', 'category'],
+        where: { tenantId, orderId: { in: orderIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.labReportNote.findMany({
+        where: labReportNotesForOrdersWhere(tenantId, orderIds),
+        select: {
+          category: true,
+          labReport: { select: { orderItem: { select: { orderId: true } } } },
+        },
+      }),
+      this.prisma.orderSampleStatusHistory.findMany({
+        where: accessionSampleNotesWhere(tenantId, orderIds),
+        select: { sample: { select: { orderId: true } } },
+      }),
+    ]);
+
+    const add = (orderId: string, category: string, n = 1) => {
+      const counts = result.get(orderId);
+      if (counts && category in counts) {
+        counts[category as keyof NoteCounts] += n;
+      }
+    };
+    for (const g of orderNotes) add(g.orderId, g.category, g._count._all);
+    for (const n of labReportNotes) {
+      add(n.labReport.orderItem.orderId, n.category);
+    }
+    for (const h of accessionNotes) add(h.sample.orderId, 'SAMPLE');
+    return result;
+  }
+
   /**
    * Loads the read-only accession sample notes for an order — every
    * `OrderSampleStatusHistory` row (with a note) across the order's samples, mapped
    * into the SAMPLE `OrderNoteView` shape. These come from the accession page's
-   * Collect Sample / status-update actions (CLAUDE.md §4 accession flow).
+   * Collect Sample / status-update actions (CLAUDE.md §4 accession flow). With
+   * `sampleId`, only that sample's notes.
    */
   private async loadOrderSampleNotes(
     orderId: string,
     tenantId: string,
+    sampleId?: string,
   ): Promise<OrderNoteView[]> {
-    const samples = await this.prisma.orderSample.findMany({
-      where: { orderId, tenantId, deletedAt: null },
-      select: { id: true },
-    });
-    if (samples.length === 0) return [];
-
     const history = await this.prisma.orderSampleStatusHistory.findMany({
-      where: {
-        tenantId,
-        sampleId: { in: samples.map((s) => s.id) },
-        notes: { not: null },
-        deletedAt: null,
-      },
+      where: accessionSampleNotesWhere(tenantId, [orderId], sampleId),
       orderBy: { createdAt: 'desc' },
+      include: { sample: { select: { sampleName: true, barcode: true } } },
     });
     if (history.length === 0) return [];
 
@@ -2113,6 +2266,7 @@ export class OrderService {
       source: 'ACCESSION' as const,
       readonly: true,
       action: h.action,
+      sampleLabel: formatSampleLabel(h.sample.sampleName, h.sample.barcode),
     }));
   }
 
@@ -4300,12 +4454,16 @@ export class OrderService {
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
     const panelMembers = await this.panelMemberTests(tenantId, panelIds);
-    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked] =
+    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked, notes] =
       await Promise.all([
         this.countItemsByOrder(tenantId, orderIds),
         collectionProgressByOrder(this.prisma, tenantId, orderIds),
         this.invoicedOrderCodes(tenantId, orderIds),
         this.cancelBlockedReasons(tenantId, orderIds),
+        // Order Console notes icons - opt-in, other list screens skip the queries.
+        query.includeNoteCounts
+          ? this.noteCountsByOrder(tenantId, orderIds)
+          : Promise.resolve(null),
       ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
@@ -4399,6 +4557,7 @@ export class OrderService {
         hasInvoice: invoiceCodes.has(r.id),
         invoiceCode: invoiceCodes.get(r.id) ?? null,
         cancelBlockedReason: cancelBlocked.get(r.id) ?? null,
+        ...(notes ? { noteCounts: notes.get(r.id) ?? emptyNoteCounts() } : {}),
       };
     });
     return { data, total, page, limit };

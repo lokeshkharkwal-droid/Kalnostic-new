@@ -448,6 +448,8 @@ describe('notes on a locked test', () => {
         findFirst: jest
           .fn()
           .mockResolvedValue(over.hasSample === false ? null : { id: 's1' }),
+        // the notes' test / sample labels (`resolveReportLabels`)
+        findMany: jest.fn().mockResolvedValue([]),
       },
       labReportNote: {
         findMany: jest

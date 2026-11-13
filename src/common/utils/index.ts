@@ -13,3 +13,4 @@ export * from './sample-source-label.util';
 export * from './collection-progress.util';
 export * from './tenant-date-format.util';
 export * from './formula';
+export * from './lab-report-note.util';

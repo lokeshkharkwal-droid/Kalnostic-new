@@ -1,0 +1,48 @@
+meta {
+  name: 35 List Report Notes
+  type: http
+  seq: 35
+}
+
+get {
+  url: {{baseUrl}}/lab-reports/{{labReportId}}/notes
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~category: SAMPLE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Order Notes / Sample Notes / Tech Notes tabs of the Test Entry popup and the
+  Order ID popup (LABORATORY.docx §4.2), plus the worklist's notes hover cards.
+  Newest first (`createdAt` descending).
+
+  The list is ORDER-WIDE: it covers every live report of this report's order in
+  the caller's active branch, so any test of the order can be the anchor. Each
+  row: `{ id, tenantId, labReportId, category, body, createdBy, createdByName,
+  createdAt, deletedAt, testName, sampleLabel }`.
+
+  - `labReportId` — the report the note was written on.
+  - `testName` — that report's test (a panel member's own test name).
+  - `sampleLabel` — that report's sample(s) as `"<sample name> · <barcode>"`,
+    comma-separated when the test has several samples; `null` when none.
+  - `createdByName` — the author's resolved name (falls back to the raw
+    `Person.id`).
+
+  Query params:
+  - `category` (optional) — `ORDER` | `SAMPLE` | `TECH`. Omit for all three.
+    Workflow reasons (Lock, Delta, Re-Run, …) are never listed.
+
+  The worklist row's `noteCounts` (`GET /lab-reports`) and the Order Console
+  (`GET /orders/:id/notes`, source `LAB_REPORT`) read these same notes.
+
+  Allowed on a locked, sent-out or cancelled test (a read). 404
+  `LAB_REPORT_NOT_FOUND` if the report is missing, another tenant's, or held by
+  another branch.
+}

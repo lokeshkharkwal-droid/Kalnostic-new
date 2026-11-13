@@ -42,6 +42,7 @@ params:query {
   ~section: DIAGNOSTICS
   ~departmentId: {{departmentId}}
   ~scopeByDepartment: true
+  ~includeNoteCounts: true
   ~categoryId: {{categoryId}}
   ~subCategoryId: {{subCategoryId}}
   ~branchLabTestId: {{branchLabTestId}}
@@ -185,6 +186,14 @@ docs {
     visibility rule already enforced on Accession In-House Orders and the
     Technician Reporting worklist. Other `GET /orders` consumers (Billing,
     Quotations, patient history) omit the flag and are never department-filtered.
+  - `includeNoteCounts` — `true` adds `noteCounts: { ORDER, SAMPLE, TECH }` to
+    every row (the Order Console sends this for its notes icons: Order Notes
+    beside the Order ID, Sample / Technician Notes beside the Sample Status).
+    Each count is exactly how many notes `GET /orders/:id/notes?category=<X>`
+    lists: the Order Overview notes, the Technician Reporting notes on the
+    order's reports (`POST /lab-reports/:id/notes`, any branch, soft-deleted
+    ones left out) and, for `SAMPLE` only, the accession sample notes. Omitted
+    (other consumers) → no `noteCounts` field and no extra queries.
   - `categoryId` — matches orders with an item whose test/panel carries this
     (logical) category id.
   - `subCategoryId` — matches orders with a lab test carrying this (logical)

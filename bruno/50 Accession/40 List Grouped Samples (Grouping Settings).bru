@@ -20,6 +20,7 @@ params:query {
   ~dateTo: 2026-07-31
   ~sortBy: barcode
   ~sortOrder: asc
+  ~includeNoteCounts: true
 }
 
 auth:bearer {
@@ -92,7 +93,8 @@ docs {
     "No barcode" until a fresh Assign Barcode).
   - `department: { id, name } | null` — the single distinct department, else null.
   - `sampleLabel: string | null` — the single distinct sample name, else null.
-  - `samples[]` — the group's list rows (each with `tatStatus` + `departmentName`).
+  - `samples[]` — the group's list rows (each with `tatStatus` + `departmentName`;
+    with `includeNoteCounts=true` also `noteCounts`, see below).
   - `sampleIds[]` — the flat set a group status action targets (sent to a
     `bulk/<action>`); a status change cascades to every sample in the group.
 
@@ -129,4 +131,14 @@ docs {
   `outsourceCenterId` and the resolved names `destinationBranchName` (INTERNAL) and `outsourceCenterName`
   (OUTSOURCE) - resolved in one batched lookup per page, deactivated branches / centers included; a name is absent /
   null when there is nothing to name. The In-House list shows them in its "Send Details" column.
+
+  **Per-sample note counts (opt-in).** `includeNoteCounts=true` adds
+  `noteCounts: { SAMPLE, TECH }` to every sample item - the In-House "Sample
+  Status" column's Sample / Technician notes icons. Each count equals the length
+  of `GET /orders/:orderId/notes?category=<X>&sampleId=<sample id>`: the Order
+  Overview notes of the order (saved against the whole order, so they count on
+  every sample of it), the Technician Reporting notes of the reports that use
+  this sample, and (SAMPLE) this sample's own accession notes. Three batched
+  queries per page. Omitted → no field and no extra queries (the Export PDF /
+  CSV leave it off).
 }
