@@ -343,6 +343,18 @@ export class ListOrdersDto extends PaginationQueryDto {
   scopeByDepartment?: boolean;
 
   /**
+   * `true` adds `noteCounts` (`{ ORDER, SAMPLE, TECH }`) to every row: how many
+   * notes `GET /orders/:id/notes` lists for that category (Order Overview notes,
+   * Technician Reporting notes, and - for SAMPLE - accession sample notes).
+   * Drives the Order Console's notes icons. Opt-in so other `GET /orders`
+   * consumers (Billing, Quotations, patient history) pay for no extra queries.
+   */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  includeNoteCounts?: boolean;
+
+  /**
    * Category filter — matches orders with an item whose test/panel carries this
    * (logical) `categoryId`.
    */

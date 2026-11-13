@@ -28,6 +28,7 @@ import {
   formatTenantDate,
   formatTenantTime,
   patientPrintAgeDisplay,
+  noteCountsBySample,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { AppointmentService } from '../appointment/appointment.service';
@@ -1531,7 +1532,34 @@ export class OrderSampleService {
       });
     }
 
+    if (query.includeNoteCounts) {
+      await this.attachSampleNoteCounts(tenantId, groups);
+    }
+
     return paginated(groups, total, page, limit);
+  }
+
+  /**
+   * Puts each listed sample's Sample / Tech note counts on it (`noteCounts`, the
+   * Sample Status column's notes icons) - three batched queries for the page,
+   * see `noteCountsBySample`.
+   */
+  private async attachSampleNoteCounts(
+    tenantId: string,
+    groups: InHouseOrderGroup[],
+  ): Promise<void> {
+    const samples = groups.flatMap((o) => o.groups.flatMap((g) => g.samples));
+    if (samples.length === 0) return;
+    const counts = await this.prisma.withTenant(tenantId, (tx) =>
+      noteCountsBySample(
+        tx,
+        tenantId,
+        samples.map((s) => ({ id: s.id, orderId: s.orderId })),
+      ),
+    );
+    for (const s of samples) {
+      s.noteCounts = counts.get(s.id) ?? { SAMPLE: 0, TECH: 0 };
+    }
   }
 
   /**
