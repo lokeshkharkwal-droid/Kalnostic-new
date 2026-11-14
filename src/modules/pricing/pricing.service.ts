@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CalculatePriceDto } from './dto/calculate-price.dto';
-import { roundToTwoDecimalPlaces } from '../../common/utils';
+import {
+  effectiveLabTestPrice,
+  roundToTwoDecimalPlaces,
+} from '../../common/utils';
 
 /**
  * The Create-Order price preview (all integer minor units). `payableAmount` is
@@ -20,7 +23,8 @@ export interface PriceCalculation {
  * Pricing — computes the payable amount for a Create-Order form as the user
  * changes tests/panels/charges. Deliberately simple and extensible: the total is
  * the sum of the selected branch lab tests' + panels' list prices (`listPrice`,
- * resolved from the order's chosen pricing list),
+ * resolved from the order's chosen pricing list; a lab test uses its
+ * `emergencyPrice` instead when `emergencyPricing` is set and that price is > 0),
  * and the payable subtracts the order discount (the summed per-line diagnostic
  * discounts) then adds the sample-collection + visiting charges. Tenant-scoped
  * (RLS) + branch-level; the tenant + branch come from the request context (CLAUDE.md §4.7).
@@ -54,7 +58,7 @@ export class PricingService {
               branchId,
               deletedAt: null,
             },
-            select: { listPrice: true },
+            select: { listPrice: true, emergencyPrice: true },
           })
         : Promise.resolve([]),
       panelIds.length
@@ -73,7 +77,13 @@ export class PricingService {
     const sum = (rows: Array<{ listPrice: number }>): number =>
       rows.reduce((acc, r) => acc + r.listPrice, 0);
 
-    const totalAmount = sum(tests) + sum(panels);
+    const emergency = dto.emergencyPricing === true;
+    const testsTotal = tests.reduce(
+      (acc, t) =>
+        acc + effectiveLabTestPrice(t.listPrice, t.emergencyPrice, emergency),
+      0,
+    );
+    const totalAmount = testsTotal + sum(panels);
     // The form sends the summed per-line diagnostic discounts; never let it
     // exceed the items total (which would make the payable negative).
     const orderDiscount = roundToTwoDecimalPlaces(

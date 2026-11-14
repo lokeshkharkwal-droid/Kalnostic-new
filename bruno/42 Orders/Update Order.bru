@@ -257,4 +257,19 @@ docs {
   `PHLEBOTOMIST_SCHEDULE_FOR_STAFF_NOT_FOUND`, 422 `PHLEBOTOMIST_SLOT_UNAVAILABLE`,
   409 `PHLEBOTOMIST_SLOT_FULL`, 409 `PHLEBOTOMIST_DAILY_CAP_REACHED` — in which
   case the whole update rolls back and the original reservation is preserved.
+
+  ## Emergency Pricing on edit
+
+  Kept and added catalogue lab-test lines are priced with the order's
+  emergency-pricing state (`emergencyPrice` when it applies and is > 0, else
+  `listPrice`; panels always `listPrice`). That state is **re-resolved on every
+  save that replaces `items` while the record is not yet an active order**
+  (DRAFT, QUOTE→ORDER, APPOINTMENT before check-in — so a draft finalised or an
+  appointment checked in outside operating hours is emergency-priced), and
+  **frozen** once the order is active (`ORDER`, or a checked-in appointment):
+  later edits keep the stored `isEmergencyPricing` whatever the time or the
+  current settings. A patch without `items` keeps the stored flag (its lines are
+  not re-priced). `QUOTE` is never emergency-priced. Optional body
+  `emergencyPricing` behaves as on create — a mismatch with the server's
+  decision is rejected with 409 `EMERGENCY_PRICING_CHANGED`.
 }

@@ -49,6 +49,12 @@ export interface BranchLabTestOption extends BranchLabTestAgeRestriction {
   id: string;
   name: string;
   price: number;
+  /**
+   * The list row's Emergency Price (minor units; 0 = not set). Create Order bills
+   * it instead of `price` when emergency pricing applies (Registration Settings
+   * → Emergency Pricing), falling back to `price` when it is 0.
+   */
+  emergencyPrice: number;
   sampleName: string | null;
   sampleType: string | null;
   isFasting: boolean;
@@ -768,6 +774,7 @@ export class BranchLabTestService {
       id: true,
       testName: true,
       listPrice: true,
+      emergencyPrice: true,
       isAllowDiscounts: true,
       isBillOnlyTest: true,
       configSnapshot: true,
@@ -788,6 +795,7 @@ export class BranchLabTestService {
         id: string;
         testName: string;
         listPrice: number;
+        emergencyPrice: number;
         isAllowDiscounts: boolean;
         isBillOnlyTest: boolean;
         configSnapshot: Prisma.JsonValue;
@@ -810,6 +818,7 @@ export class BranchLabTestService {
         id: r.id,
         name: r.testName,
         price: r.listPrice,
+        emergencyPrice: r.emergencyPrice,
         sampleName: sample?.sampleName ?? null,
         sampleType: sample?.sampleType ?? null,
         isFasting: sample?.isFastingRequired ?? false,

@@ -1,6 +1,7 @@
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsInt,
   IsNumber,
   IsOptional,
@@ -52,4 +53,16 @@ export class CalculatePriceDto {
   @Min(0)
   @IsOptional()
   orderDiscount?: number;
+
+  /**
+   * Price lab tests at their Emergency Price (when set, > 0) instead of their
+   * list price — Registration Settings → Emergency Pricing. Create Order sends
+   * the state it priced with (`GET /registration-settings/emergency-pricing`,
+   * or the edited order's `isEmergencyPricing`); this is a preview only — the
+   * order save resolves the authoritative decision itself. Panels are
+   * unaffected. Omitted/false = list prices (Quotations never send it).
+   */
+  @IsBoolean()
+  @IsOptional()
+  emergencyPricing?: boolean;
 }

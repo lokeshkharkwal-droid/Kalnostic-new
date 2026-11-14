@@ -279,4 +279,15 @@ export class SaveRegistrationSettingsDto {
   @IsOptional()
   @IsEnum(ExternalIdFormat)
   Patients_AutoIncrementExternalPatientIdFormat?: ExternalIdFormat;
+
+  // ── Emergency Pricing ── (independent toggles; see EmergencyPricingService)
+  /** Emergency-price orders created outside the branch's operating hours. */
+  @IsOptional()
+  @IsBoolean()
+  EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours?: boolean;
+
+  /** Emergency-price every order, at any time of day. */
+  @IsOptional()
+  @IsBoolean()
+  EmergencyPricing_OverrideEmergencyPrices?: boolean;
 }

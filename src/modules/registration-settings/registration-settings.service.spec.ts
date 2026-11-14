@@ -70,6 +70,39 @@ describe('RegistrationSettingsService', () => {
       expect(result.General_DefaultPaymentMode).toBe('UPI');
     });
 
+    it.each([
+      [
+        'EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours',
+        'EmergencyPricing_OverrideEmergencyPrices',
+      ],
+      [
+        'EmergencyPricing_OverrideEmergencyPrices',
+        'EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours',
+      ],
+    ] as const)(
+      'saving %s alone never touches %s (independent toggles)',
+      async (changed, other) => {
+        // Existing row has BOTH toggles on; switching one off must leave the
+        // other exactly as stored — no cross-field rule ties them together.
+        prismaMock.registrationSetting.findUnique.mockResolvedValue({
+          tenantId: 't1',
+          branchId: 'b1',
+          EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours: true,
+          EmergencyPricing_OverrideEmergencyPrices: true,
+        });
+        prismaMock.registrationSetting.upsert.mockResolvedValue({});
+
+        await service.saveForBranch('t1', 'b1', { [changed]: false });
+
+        const [arg] = prismaMock.registrationSetting.upsert.mock.calls[0] as [
+          { update: Record<string, unknown>; create: Record<string, unknown> },
+        ];
+        expect(arg.update).toEqual({ [changed]: false });
+        expect(arg.update).not.toHaveProperty(other);
+        expect(arg.create).not.toHaveProperty(other);
+      },
+    );
+
     it('rejects a minimum discount percent above the maximum in the same payload', async () => {
       prismaMock.registrationSetting.findUnique.mockResolvedValue(null);
 

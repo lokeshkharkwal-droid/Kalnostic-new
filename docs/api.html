@@ -524,7 +524,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /branch-lab-tests/:id/duplicate</td><td>Business JWT</td><td>create an independent variant in the same group (non-default duplicate)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/default</td><td>Business JWT</td><td>mark this row the variant group's default (used for order creation)</td></tr>
   <tr><td>GET /branch-lab-tests</td><td>Business JWT</td><td>list a pricing-list tab's rows (search + status + <code>listId</code>; each row carries <code>listPrice</code>; omitted listId = Walk-in)</td></tr>
-  <tr><td>GET /branch-lab-tests/options</td><td>Business JWT</td><td>lightweight orderable options (active default variants) for pickers; <code>search</code> on testName, <code>listId</code>, opt-in <code>preferredOnly</code> (unsearched view → preference tests) and <code>includeAka</code> (search also matches the AKA name — Create-Order picker); each option carries the test's Age Restriction (<code>isAgeRestricted</code>, <code>minAgeValue</code>/<code>minAgeUnit</code>, <code>maxAgeValue</code>/<code>maxAgeUnit</code>). The matching <code>GET /branch-lab-panels/options</code> carries <code>ageRestrictedTests[]</code> (the panel's restricted member tests with their ranges)</td></tr>
+  <tr><td>GET /branch-lab-tests/options</td><td>Business JWT</td><td>lightweight orderable options (active default variants) for pickers; <code>search</code> on testName, <code>listId</code>, opt-in <code>preferredOnly</code> (unsearched view → preference tests) and <code>includeAka</code> (search also matches the AKA name — Create-Order picker); each option carries the test's Age Restriction (<code>isAgeRestricted</code>, <code>minAgeValue</code>/<code>minAgeUnit</code>, <code>maxAgeValue</code>/<code>maxAgeUnit</code>) and its <code>emergencyPrice</code> (0 = not set; billed instead of <code>price</code> when Emergency Pricing applies). The matching <code>GET /branch-lab-panels/options</code> carries <code>ageRestrictedTests[]</code> (the panel's restricted member tests with their ranges)</td></tr>
   <tr><td>GET /branch-lab-tests/:id</td><td>Business JWT</td><td>get one branch lab test (with configSnapshot)</td></tr>
   <tr><td>PUT /branch-lab-tests/:id</td><td>Business JWT</td><td>edit branch-tunable fields (pricing/flags/TAT/notes/active)</td></tr>
   <tr><td>PATCH /branch-lab-tests/:id/active</td><td>Business JWT</td><td>enable/disable a branch lab test</td></tr>
@@ -2397,7 +2397,7 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   one row per branch, created with schema defaults on first access. Never 404s. ~50 fields grouped by
   heading: <code>General_*</code>, <code>Quotation_*</code>, <code>ChargesAndDeductions_*</code>,
   <code>CancellationAndRefund_*</code>, <code>ReferralAndStaffPermissions_*</code>, <code>BillingMenu_*</code>,
-  <code>Appointment_*</code>, <code>Patients_*</code>. Gated by the <code>registration:settings</code>
+  <code>Appointment_*</code>, <code>Patients_*</code>, <code>EmergencyPricing_*</code>. Gated by the <code>registration:settings</code>
   permission (<code>PermissionGuard</code>); <code>business_admin</code>/<code>administrator</code> bypass.</p>
 </div>
 
@@ -2413,6 +2413,24 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   <code>AllowBothOrderAndLineDiscount</code> may be <code>true</code> — otherwise
   <span class="pill">422 CONFLICTING_DISCOUNT_MODE</span>. Returns the saved row. Audited under
   <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
+  <p><b>Emergency Pricing</b> — two independent booleans (default <code>false</code>, no cross-field rule:
+  saving one never changes the other): <code>EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours</code>
+  (emergency-price orders created while the branch is outside its operating hours) and
+  <code>EmergencyPricing_OverrideEmergencyPrices</code> (emergency-price every order, at any time). See
+  <a href="#registration-settings-emergency-pricing">emergency-pricing status</a> for the effective rule.</p>
+</div>
+
+<div class="ep" id="registration-settings-emergency-pricing">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/emergency-pricing</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">login-only</span></div>
+  <p>Whether the active branch's orders are emergency-priced <b>right now</b>:
+  <code>active = OverrideEmergencyPrices || (ApplyInNonOperatingHours &amp;&amp; branch closed)</code>. "Closed"
+  = outside the branch's ACTIVE Schedule shifts, else outside its <code>operationalDays</code> +
+  <code>openingTime</code>/<code>closingTime</code>, in the branch <code>timezone</code> (fallback: tenant
+  timezone, default Asia/Kolkata); a branch with no hours configured is never closed here. Returns
+  <code>{ active, reason: OVERRIDE|NON_OPERATING_HOURS|null, applyInNonOperatingHours,
+  overrideEmergencyPrices, branchOpen: boolean|null, evaluatedAt }</code>. Login-only (order creators call
+  it from Create Order — no settings permission needed). No active branch → <code>active: false</code>.</p>
 </div>
 
 <div class="ep" id="registration-settings-business-get">
@@ -2460,6 +2478,17 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   <span class="pill">MODULE_NOT_ENABLED_FOR_BRANCH</span>). Branch scoping as above. Audited under
   <code>AuditModule.USER</code>.</p>
 </div>
+
+<div class="note"><b>Emergency Pricing is applied on orders.</b> <code>POST /orders</code> /
+<code>PATCH /orders/:id</code> price each catalogue <b>lab-test</b> line at its list row's
+<code>emergencyPrice</code> (falls back to <code>listPrice</code> when 0; panels always <code>listPrice</code>)
+when the order is emergency-priced, and stamp <code>orders.isEmergencyPricing</code>. The state is resolved
+server-side (see <a href="#registration-settings-emergency-pricing">status</a>) on create for every status except
+QUOTE, and on every update that replaces <code>items</code> while the record is not yet an active order (DRAFT,
+QUOTE→ORDER, APPOINTMENT before check-in); once active it is frozen. Optional body <code>emergencyPricing</code> =
+the state the client priced with — a mismatch → <span class="pill">409 EMERGENCY_PRICING_CHANGED</span>.
+<code>POST /pricing/calculate</code> accepts the same optional <code>emergencyPricing</code> for the preview, and
+<code>GET /branch-lab-tests/options</code> returns each test's <code>emergencyPrice</code>.</div>
 
 <div class="note"><b>Lab test Age Restriction is enforced on orders.</b> <code>POST /orders</code> (every status except
 QUOTE) rejects a test line whose branch test is age-restricted — and a panel line containing such a member — when the
