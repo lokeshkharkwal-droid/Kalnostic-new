@@ -48,6 +48,7 @@ import { SlotReservationService } from '../phlebotomist-schedule/slot-reservatio
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
+import { EmergencyPricingService } from '../registration-settings/emergency-pricing.service';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
@@ -80,6 +81,7 @@ import {
   labReportNotesForOrdersWhere,
   reportSampleLinks,
   resolveReportLabels,
+  effectiveLabTestPrice,
   type NoteCounts,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -289,6 +291,7 @@ import {
   AppointmentPaymentRequiredException,
   PaymentWithoutBillGeneratedException,
   TestNotDeletableAfterReportException,
+  EmergencyPricingChangedException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -511,6 +514,7 @@ export class OrderService {
     private readonly patientService: PatientService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly config: ConfigService,
+    private readonly emergencyPricingService: EmergencyPricingService,
   ) {}
 
   /**
@@ -675,6 +679,18 @@ export class OrderService {
       ? PaymentStatus.PAID
       : derivePaymentStatus(payNet, deferAppointmentPayment ? 0 : payPaid);
 
+    // Emergency Pricing (Registration Settings): decided server-side now and
+    // stamped on the order; lab-test lines bill at their Emergency Price when it
+    // applies. Quotations are never emergency-priced.
+    const isEmergencyPricing = await this.resolveEmergencyPricingNow(
+      tenantId,
+      branchId,
+      dto.status ?? OrderStatus.DRAFT,
+    );
+    this.assertEmergencyPricingExpectation(
+      dto.emergencyPricing,
+      isEmergencyPricing,
+    );
     // Snapshot each item's list unit price from its branch lab test/panel row so
     // the order's prices are stable even if the list is later re-priced (§B5).
     // Loaded before the billing rules so the discount/TDS checks (and the
@@ -684,6 +700,7 @@ export class OrderService {
       tenantId,
       branchId,
       dto.items ?? [],
+      isEmergencyPricing,
     );
 
     // B2B orders bypass ONLY the branch Previous-Dues + Partial-Billing rules:
@@ -853,6 +870,7 @@ export class OrderService {
             orderType: dto.orderType,
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
+            isEmergencyPricing,
             isBillGenerated: dto.isBillGenerated ?? true,
             isPregnant: dto.isPregnant ?? false,
             orderNotes: dto.orderNotes ?? null,
@@ -1263,17 +1281,58 @@ export class OrderService {
   }
 
   /**
+   * Whether an order saved now (with `status` as its effective status) bills its
+   * lab-test lines at Emergency Price — Registration Settings → Emergency
+   * Pricing, resolved by {@link EmergencyPricingService} for the order's branch.
+   * Quotations and branch-less orders are never emergency-priced.
+   * @param tenantId tenant scope
+   * @param branchId the order's branch (null → false)
+   * @param status the order's effective status after this save
+   */
+  private async resolveEmergencyPricingNow(
+    tenantId: string,
+    branchId: string | null,
+    status: OrderStatus | undefined,
+  ): Promise<boolean> {
+    if (!branchId || status === OrderStatus.QUOTE) return false;
+    const resolved = await this.emergencyPricingService.resolve(
+      tenantId,
+      branchId,
+    );
+    return resolved.active;
+  }
+
+  /**
+   * Reject a save whose client-side pricing used a different emergency-pricing
+   * state than the server's decision (e.g. the branch closed while the form was
+   * open). A no-op when the client did not send `emergencyPricing`.
+   * @throws EmergencyPricingChangedException (409)
+   */
+  private assertEmergencyPricingExpectation(
+    expected: boolean | undefined,
+    actual: boolean,
+  ): void {
+    if (expected !== undefined && expected !== actual) {
+      throw new EmergencyPricingChangedException(expected, actual);
+    }
+  }
+
+  /**
    * Load the list unit price (`listPrice`) for each item's branch lab test/panel,
    * keyed by that row id, so order items can snapshot a stable `unitPrice`. Direct
    * (free-text) items and unknown ids resolve to 0. Branch-scoped.
    * @param tenantId tenant scope
    * @param branchId active branch (null → no prices resolved)
    * @param items the order items to price
+   * @param emergency whether the order is emergency-priced — lab tests then bill
+   *   at their `emergencyPrice` when it is set (> 0), else their `listPrice`
+   *   ({@link effectiveLabTestPrice}); panels have no emergency price
    */
   private async loadItemUnitPrices(
     tenantId: string,
     branchId: string | null,
     items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
+    emergency = false,
   ): Promise<Map<string, number>> {
     const prices = new Map<string, number>();
     if (!branchId || !items.length) {
@@ -1289,7 +1348,7 @@ export class OrderService {
       testIds.length
         ? this.prisma.branchLabTest.findMany({
             where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
-            select: { id: true, listPrice: true },
+            select: { id: true, listPrice: true, emergencyPrice: true },
           })
         : Promise.resolve([]),
       panelIds.length
@@ -1305,7 +1364,10 @@ export class OrderService {
         : Promise.resolve([]),
     ]);
     for (const t of tests) {
-      prices.set(t.id, t.listPrice);
+      prices.set(
+        t.id,
+        effectiveLabTestPrice(t.listPrice, t.emergencyPrice, emergency),
+      );
     }
     for (const p of panels) {
       prices.set(p.id, p.listPrice);
@@ -6432,6 +6494,7 @@ export class OrderService {
         orderCode: true,
         externalOrderId: true,
         isBillGenerated: true,
+        isEmergencyPricing: true,
         createdBy: true,
         appointmentId: true,
         appointmentAt: true,
@@ -6473,6 +6536,36 @@ export class OrderService {
       appointmentStatus: existing?.appointment?.status ?? null,
       checkIn: dto.checkIn === true,
     });
+
+    // Emergency Pricing (Registration Settings). The decision is re-made on every
+    // save while the record is not yet an active order (draft / quote→order /
+    // appointment before check-in), so it reflects the moment the order really
+    // becomes billable, then frozen once active so later edits keep the same
+    // prices. A patch that doesn't replace `items` keeps the stored flag — the
+    // stored line prices aren't re-priced, so the flag must not drift from them.
+    // Quotations are never emergency-priced.
+    const wasActiveOrder = isActiveOrderForGates({
+      effectiveStatus: existing?.status,
+      appointmentStatus: existing?.appointment?.status ?? null,
+      checkIn: false,
+    });
+    const storedEmergencyPricing = existing?.isEmergencyPricing ?? false;
+    const isEmergencyPricing =
+      dto.items === undefined
+        ? storedEmergencyPricing
+        : effectiveStatus === OrderStatus.QUOTE
+          ? false
+          : wasActiveOrder
+            ? storedEmergencyPricing
+            : await this.resolveEmergencyPricingNow(
+                tenantId,
+                branchId,
+                effectiveStatus,
+              );
+    this.assertEmergencyPricingExpectation(
+      dto.emergencyPricing,
+      isEmergencyPricing,
+    );
 
     // Referral Panel Settings credit gate (Section 4) on the UPDATE path — mirrors
     // create() so finalizing a DRAFT/QUOTE/APPOINTMENT to ORDER (or adding items
@@ -6714,6 +6807,7 @@ export class OrderService {
           tenantId,
           branchId,
           dto.items,
+          isEmergencyPricing,
         );
       } else {
         const stored = await this.prisma.orderItem.findMany({
@@ -6957,6 +7051,7 @@ export class OrderService {
           orderType: dto.orderType,
           billingType: dto.billingType,
           isUrgentBill: dto.isUrgentBill,
+          isEmergencyPricing,
           isBillGenerated: dto.isBillGenerated,
           isPregnant: dto.isPregnant,
           orderNotes: dto.orderNotes,
@@ -7009,6 +7104,7 @@ export class OrderService {
           tenantId,
           branchId,
           itemDiff.keep.map((k) => k.incoming as OrderItemDto),
+          isEmergencyPricing,
         );
         for (const { id: itemId, incoming } of itemDiff.keep) {
           const i = incoming as OrderItemDto;
@@ -7033,6 +7129,7 @@ export class OrderService {
             tenantId,
             branchId,
             itemDiff.add,
+            isEmergencyPricing,
           );
           for (const raw of itemDiff.add) {
             const i = raw as OrderItemDto;

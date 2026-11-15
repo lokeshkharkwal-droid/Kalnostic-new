@@ -90,7 +90,10 @@ body:json {
 
     "Patients_AllowMergingTwoPatients": false,
     "Patients_AllowB2bPatientWithoutMobile": false,
-    "Patients_AutoIncrementExternalPatientIdFormat": "YMD_DAILY"
+    "Patients_AutoIncrementExternalPatientIdFormat": "YMD_DAILY",
+
+    "EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours": false,
+    "EmergencyPricing_OverrideEmergencyPrices": false
   }
 }
 
@@ -169,6 +172,21 @@ docs {
     option set, applied to the patient **UMID** (auto id prefixed with a fixed
     `PAT`, globally unique; `NONE` = operator types the UMID manually, required).
     Preview via `.../preview?purpose=PATIENT`.
+  - `EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours` — when `true`, an
+    order that becomes a real order while the branch is **outside its operating
+    hours** (active Schedule shifts, else operational days + opening/closing
+    time, in the branch timezone or the tenant's) bills each lab test at its
+    `emergencyPrice`. A branch with no operating hours configured is never
+    "non-operating". Default `false`.
+  - `EmergencyPricing_OverrideEmergencyPrices` — when `true`, **every** order
+    bills lab tests at their `emergencyPrice`, at any time of day. Default
+    `false`.
+  The two toggles are independent (no cross-field rule; saving one never
+  changes the other). Effective rule: `Override || (ApplyInNonOperatingHours &&
+  branch closed)` — see "11 Get Emergency Pricing Status". A test with
+  `emergencyPrice = 0` keeps its list price; panels always keep their list
+  price; quotations are never emergency-priced. The decision is stamped on the
+  order as `isEmergencyPricing`.
 
   Validation: `Minimum*Percent` must not exceed its paired `Maximum*Percent`
   (TDS, discount, line-item discount — checked against the merged

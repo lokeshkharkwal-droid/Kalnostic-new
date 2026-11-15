@@ -90,6 +90,18 @@ export class CreateOrderDto {
   @IsBoolean()
   isUrgentBill?: boolean;
 
+  /**
+   * The emergency-pricing state the client priced the lab-test lines with
+   * (Registration Settings → Emergency Pricing; Create Order reads it from
+   * `GET /registration-settings/emergency-pricing`). Optional — the server always
+   * decides and stamps `isEmergencyPricing` itself; when sent and it no longer
+   * matches that decision the save is rejected with 409
+   * `EMERGENCY_PRICING_CHANGED` so the operator can review the re-priced lines.
+   */
+  @IsOptional()
+  @IsBoolean()
+  emergencyPricing?: boolean;
+
   @IsOptional()
   @IsBoolean()
   isBillGenerated?: boolean;

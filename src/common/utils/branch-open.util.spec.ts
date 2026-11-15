@@ -1,5 +1,5 @@
 import { DayOfWeek } from '@prisma/client';
-import { isBranchOpenAt } from './branch-open.util';
+import { hasBranchOperatingHours, isBranchOpenAt } from './branch-open.util';
 import { WorkingShift } from './tat-working-time.util';
 
 /**
@@ -124,4 +124,46 @@ describe('isBranchOpenAt', () => {
       ).toBe(false);
     });
   });
+});
+
+describe('hasBranchOperatingHours', () => {
+  it('is true with active schedule shifts', () => {
+    expect(
+      hasBranchOperatingHours({ shifts: [dayShift()], ...noFallback }),
+    ).toBe(true);
+  });
+
+  it('is true with the opening/closing-time fallback on some weekdays', () => {
+    expect(
+      hasBranchOperatingHours({
+        shifts: [],
+        operationalDays: [DayOfWeek.MONDAY],
+        openingTime: '07:00',
+        closingTime: '20:00',
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['nothing configured', { ...noFallback }],
+    [
+      'times but no operational days',
+      {
+        operationalDays: [] as DayOfWeek[],
+        openingTime: '07:00',
+        closingTime: '20:00',
+      },
+    ],
+    [
+      'days but no closing time',
+      { operationalDays: ALL_DAYS, openingTime: '07:00', closingTime: null },
+    ],
+  ])(
+    'is false with %s (isBranchOpenAt would call it closed)',
+    (_label, rest) => {
+      const inputs = { shifts: [], ...rest };
+      expect(hasBranchOperatingHours(inputs)).toBe(false);
+      expect(isBranchOpenAt(at(1, 12), inputs)).toBe(false);
+    },
+  );
 });
