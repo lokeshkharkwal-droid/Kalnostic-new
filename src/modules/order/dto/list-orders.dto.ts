@@ -36,6 +36,8 @@ export const ORDER_SORT_KEYS = [
   'createdAt',
   'checkedInAt',
   'appointmentAt',
+  // Linked appointment record's creation time (Appointments list).
+  'appointmentCreatedAt',
   'orderCode',
   'billId',
   'externalOrderId',
