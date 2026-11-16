@@ -4407,6 +4407,8 @@ export class OrderService {
         return [{ checkedInAt: dir }, { createdAt: dir }];
       case 'appointmentAt':
         return [{ appointmentAt: dir }, { createdAt: dir }];
+      case 'appointmentCreatedAt':
+        return [{ appointment: { createdAt: dir } }, { createdAt: dir }];
       case 'orderCode':
         return { orderCode: dir };
       case 'billId':
