@@ -310,6 +310,10 @@ export const ORDER_INCLUDE = {
           testCode: true,
           priceMsrp: true,
           listPrice: true,
+          // Emergency Price — the create-order edit form mirrors the server's
+          // re-pricing of kept lines for an emergency-priced order
+          // (`Order.isEmergencyPricing`).
+          emergencyPrice: true,
           // Billed-only test: excluded from the workflow (no sample/report), so
           // the FE can hide it from the Order Console's workflow item list.
           isBillOnlyTest: true,

@@ -1,0 +1,57 @@
+meta {
+  name: 11 Get Emergency Pricing Status
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/registration-settings/emergency-pricing
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the resolved emergency-pricing state", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("active");
+    expect(d).to.have.property("reason");
+    expect(d).to.have.property("applyInNonOperatingHours");
+    expect(d).to.have.property("overrideEmergencyPrices");
+    expect(d).to.have.property("branchOpen");
+    expect(d).to.have.property("evaluatedAt");
+  });
+}
+
+docs {
+  Whether the active branch's orders are emergency-priced **right now**
+  (Registration Settings → Emergency Pricing). Create Order uses it to show and
+  price lab tests at their Emergency Price, and sends the state it priced with
+  as `emergencyPricing` on `POST/PATCH /orders`.
+
+  Login-only (no settings permission needed — order creators call it); exposes
+  only booleans. Tenant + branch come from the JWT/active profile. A caller
+  with no active branch (business tier) always gets `active: false`.
+
+  Rule: `active = OverrideEmergencyPrices || (ApplyInNonOperatingHours &&
+  branch closed now)`.
+  - "Closed" = outside the branch's ACTIVE Schedule shifts, else outside its
+    `operationalDays` + `openingTime`/`closingTime` — evaluated in the branch
+    `timezone`, falling back to the tenant timezone (default Asia/Kolkata).
+  - A branch with no operating hours configured is never closed here.
+
+  Response `data`:
+  - `active` — lab tests bill at Emergency Price now.
+  - `reason` — `OVERRIDE` | `NON_OPERATING_HOURS` | `null` (Override wins when
+    both apply).
+  - `applyInNonOperatingHours` / `overrideEmergencyPrices` — the raw toggles.
+  - `branchOpen` — `true`/`false` when the non-operating-hours toggle is on and
+    the branch has hours configured; otherwise `null`.
+  - `evaluatedAt` — ISO instant of the decision.
+}

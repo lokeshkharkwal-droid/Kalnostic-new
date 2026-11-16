@@ -5819,6 +5819,21 @@ model RegistrationSetting {
   // types the UMID manually (required).
   Patients_AutoIncrementExternalPatientIdFormat ExternalIdFormat @default(NONE) @map("patients_auto_increment_ext_patient_id_format")
 
+  // ── Emergency Pricing ──
+  // The two toggles are independent; the effective rule (EmergencyPricingService)
+  // is `Override || (ApplyInNonOperatingHours && branch closed now)`. When it
+  // applies, each catalogue LAB TEST line on an order bills at its
+  // `BranchLabTest.emergencyPrice` (falls back to `listPrice` when that is 0);
+  // panels have no emergency price and keep their list price. Orders only —
+  // quotations are never emergency-priced. Defaults false = existing behaviour.
+  // When true, an order that becomes a real order while the branch is outside
+  // its operating hours (active Schedule shifts, else operationalDays +
+  // openingTime/closingTime) is emergency-priced. A branch with no operating
+  // hours configured is never treated as "non-operating".
+  EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours Boolean @default(false) @map("emergency_pricing_apply_in_non_operating_hours")
+  // When true, every order is emergency-priced, at any time of day.
+  EmergencyPricing_OverrideEmergencyPrices                 Boolean @default(false) @map("emergency_pricing_override_emergency_prices")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -6599,6 +6614,13 @@ model Order {
   orderType       OrderType     @map("order_type")
   billingType     BillingType   @map("billing_type")
   isUrgentBill    Boolean       @default(false) @map("is_urgent_bill")
+  // Whether this order's catalogue lab-test lines are billed at their Emergency
+  // Price (Registration Settings → Emergency Pricing). Server-stamped by
+  // OrderService: re-resolved on every save while the record is not yet an
+  // active order (draft / quote→order / appointment before check-in), then
+  // frozen once it becomes one so later edits keep the same pricing. Always
+  // false for quotations.
+  isEmergencyPricing Boolean    @default(false) @map("is_emergency_pricing")
   isBillGenerated Boolean       @default(false) @map("is_bill_generated")
   // Patient was pregnant at the time of THIS order (Create Order → Patient
   // Details). Stored per order, not on the patient, so it never leaks into the

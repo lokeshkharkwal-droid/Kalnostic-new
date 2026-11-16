@@ -934,3 +934,25 @@ export class TestNotDeletableAfterReportException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 409 — the emergency-pricing state the client priced the order with
+ * (`emergencyPricing` in the body) no longer matches the server's decision, e.g.
+ * the branch just closed/opened (Apply Emergency Prices in Non-operating Hours)
+ * or the Emergency Pricing settings changed while the form was open. The client
+ * computes the payment amounts from its displayed prices, so the save is
+ * rejected instead of billing prices the operator never saw; the client should
+ * refresh the emergency-pricing status, re-price the lines and save again.
+ */
+export class EmergencyPricingChangedException extends KaltrosException {
+  constructor(expected: boolean, actual: boolean) {
+    super(
+      'EMERGENCY_PRICING_CHANGED',
+      actual
+        ? 'Emergency prices now apply to this order. Review the updated prices and save again.'
+        : 'Emergency prices no longer apply to this order. Review the updated prices and save again.',
+      { expected, actual },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

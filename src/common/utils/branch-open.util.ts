@@ -49,6 +49,18 @@ export function isBranchOpenAt(
 }
 
 /**
+ * Whether the branch has ANY usable operating hours configured — an active
+ * schedule with shifts, or the fallback operational days + opening/closing
+ * time. {@link isBranchOpenAt} treats an unconfigured branch as closed (right
+ * for the NABL stopwatch); callers that act on "closed" as an exceptional state
+ * (e.g. emergency pricing in non-operating hours) check this first so a branch
+ * that never set its hours is not considered permanently closed.
+ */
+export function hasBranchOperatingHours(inputs: BranchOpenInputs): boolean {
+  return resolveShifts(inputs).length > 0;
+}
+
+/**
  * The operating shifts to test against: the active-schedule shifts (breaks
  * stripped) when present, else a single synthetic shift built from the branch's
  * operational days + opening/closing time. Returns an empty array when nothing
