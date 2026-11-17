@@ -64,6 +64,17 @@ export class CreateOrderDto {
   sourceQuotationId?: string;
 
   /**
+   * Duplicate-submission guard: a client-generated UUID, one per Create Order
+   * submission and reused on every retry of it (double-click, timeout, network
+   * resend). The first request stores it on the order (unique per tenant); any
+   * repeat with the same key returns that order instead of creating another
+   * order + payment rows. Optional, so callers that send none behave as before.
+   */
+  @IsOptional()
+  @IsUUID()
+  idempotencyKey?: string;
+
+  /**
    * User-facing external Order/Quote id — always optional and independent of the
    * internal `orderCode` (which the backend always generates). Only honoured when
    * the branch's configured external-id format is NONE (manual entry): if a value

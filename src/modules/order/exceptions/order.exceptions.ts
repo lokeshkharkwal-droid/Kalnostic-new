@@ -903,3 +903,20 @@ export class TestNotDeletableAfterReportException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 409 — the create request's `idempotencyKey` already belongs to an order that
+ * this request cannot be a repeat of (another patient or branch, or an order
+ * that has since been deleted). A genuine repeat returns the original order
+ * instead; this only fires when the key is reused for something else.
+ */
+export class OrderIdempotencyKeyConflictException extends KaltrosException {
+  constructor(orderCode: string) {
+    super(
+      'ORDER_IDEMPOTENCY_KEY_CONFLICT',
+      `This submission was already used to create order ${orderCode}. Reload the screen and start a new order.`,
+      { orderCode },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
