@@ -14,6 +14,7 @@ import { TransferPickUpDto } from './transfer-pickup.dto';
 import { TransferReceiveDto } from './transfer-receive.dto';
 import { TransferRepeatDto } from './transfer-repeat.dto';
 import { TransferRejectDto } from './transfer-reject.dto';
+import { RawBoolean } from '../../../common/decorators/raw-boolean.decorator';
 
 /**
  * Bulk (multi-select) transfer payloads (PDF §B.12). Sending-side variants
@@ -61,6 +62,7 @@ export class BulkPickUpDto extends TransferPickUpDto {
   /** Skip transfers not in a legal state for this action (multi-select bar)
    *  instead of failing the whole batch; the skipped ids are returned. */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }
@@ -74,6 +76,7 @@ export class BulkReceiveDto extends TransferReceiveDto {
   ids: string[];
 
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }
@@ -87,6 +90,7 @@ export class BulkTransferAcceptDto extends SampleNoteDto {
   ids: string[];
 
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }
@@ -100,6 +104,7 @@ export class BulkTransferRepeatDto extends TransferRepeatDto {
   ids: string[];
 
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }
@@ -113,6 +118,7 @@ export class BulkTransferRejectDto extends TransferRejectDto {
   ids: string[];
 
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }
@@ -126,6 +132,7 @@ export class BulkTransferRetrieveDto extends SampleNoteDto {
   ids: string[];
 
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }

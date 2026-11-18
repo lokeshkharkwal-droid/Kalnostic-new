@@ -81,7 +81,7 @@ describe('findItemRemovedSampleIds', () => {
 });
 
 function makeSampleService() {
-  return new OrderSampleService(
+  const service = new OrderSampleService(
     {} as unknown as PrismaService,
     {} as unknown as AccessionSettingsService,
     // Retrieve of a tube that is out looks at its reports (manager's rule): none, so none is past Pending
@@ -98,6 +98,14 @@ function makeSampleService() {
     {} as unknown as UserDepartmentScopeService,
     {} as unknown as AppointmentService,
   );
+  // The Store / Return "all tests published" gate has its own spec (which also covers the removed-test
+  // exemption); here it never blocks.
+  jest.spyOn(service, 'storeReturnGate').mockResolvedValue({
+    gated: true,
+    unpublished: 0,
+    unpublishedSampleIds: [],
+  });
+  return service;
 }
 
 describe('OrderSampleService.transitionInTx - a removed test freezes its sample', () => {

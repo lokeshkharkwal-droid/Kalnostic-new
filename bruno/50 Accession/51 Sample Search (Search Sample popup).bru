@@ -1,0 +1,102 @@
+meta {
+  name: 51 Sample Search (Search Sample popup)
+  type: http
+  seq: 51
+}
+
+get {
+  url: {{baseUrl}}/accession/sample-search?barcode={{sampleBarcode}}&menu=IN_HOUSE
+  body: none
+  auth: bearer
+}
+
+params:query {
+  barcode: {{sampleBarcode}}
+  menu: IN_HOUSE
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("found or not found (never an error for an unknown barcode)", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().data).to.have.property("found");
+  });
+}
+
+docs {
+  Sample Search popup (In-House, Internal Referral and External Referral Orders).
+  Find a barcode and get its sample details with the actions its status allows.
+
+  **Query**
+  - `barcode` (required, max 50): exact match, ignoring case; surrounding spaces are removed.
+  - `menu` (required): `IN_HOUSE` | `INTERNAL` | `EXTERNAL`.
+
+  **Where each menu looks** (page filters and status tabs are ignored)
+  - `IN_HOUSE`: samples held by the caller's active branch (department scope applied).
+  - `INTERNAL`: transfers coming TO the caller's branch (an In-Transit transfer with no logistics type
+    yet stays hidden, as in the list).
+  - `EXTERNAL`: transfers going FROM the caller's branch to a partner lab.
+
+  **Response (`data`)**
+  - Not found: `{ found: false, menu, barcode, foundIn: [...] }` — `foundIn` lists the other menus
+    (`IN_HOUSE`, `INTERNAL`, `EXTERNAL`, `OUTSOURCE`) that do have the barcode.
+  - Found: `{ found: true, menu, barcode, order, fields, sections }`.
+    - `order`: `id`, `orderCode`, `externalOrderId`, `branchId`, `billingVisible` (true only when the order
+      was registered at the caller's own branch). The screen loads patient / referral / billing / notes
+      with `GET /orders/:id`.
+    - `fields`: `processingBranch` (Internal Referral only), `originBranch` (In-House: the RM Branch; referral menus: the sending branch), `outsourceCenter`, `externalPartner` and the dates
+      `sent` / `forwarded` / `outsourced` (`{ date, time }`).
+    - `sections`: one per status within the barcode (usually one). Each has `kind` (`SAMPLE` or
+      `TRANSFER`), `status`, `sampleType`, `container`, `sampleIds`, `transferIds`, `rows` (one test per
+      row: `testName`, `department`, `category`, `subcategory`, `reportStatus`, `itemRemoved`, and in a Discarded
+      / Returned section `recoverable` / `returnedVerified` of THAT row), `actions`
+      (the buttons to show, already narrowed by what the server allows), `hiddenActionReasons`
+      (why Store / Return / Retrieve is missing), `flags` (`recoverable` for Discarded,
+      `returnedVerified` for Returned: true only when EVERY row has it; `mixed` is true when the rows differ, then
+      read the rows) and `orderCancelled`.
+
+  **Buttons.** In-House follows the requirements table per sample status; Internal / External Referral
+  follow the transfer status. Store and Return on an Accepted sample appear only when every test on its
+  barcode is Published. A button the server would always refuse for the report's state is left out and its
+  reason is in `hiddenActionReasons`: Repeat when a result is validated (Result Done, Approved, Published),
+  Send / Forward / Outsource when a report was worked on (results, notes, attachments, or past Pending),
+  Retrieve when it would take the sample back to before acceptance (or recall it from another branch /
+  partner) while a report is past Pending. A section with several samples keeps the button while any of
+  its samples would still be accepted (group actions skip the invalid ones). For a department-scoped
+  user the Store / Return reason says when the unpublished test is in a department they cannot see. Retrieve on a Discarded sample needs the recoverable flag, on a Returned sample
+  the verified flag; the extra buttons `Mark Recoverable`, `Mark Not Recoverable` and
+  `Mark Returned & Verified` run `bulk/set-recoverable` and `bulk/mark-returned-verified`. Users'
+  permissions are applied by the screen.
+
+  **A section whose rows carry different flags** (one barcode shared by tests of several departments, each discarded or
+  returned on its own): each button stays while it can act on some row. Retrieve stays while any row qualifies (the
+  recoverable / verified ones; the server retrieves those and skips the rest with the reason), `Mark Recoverable` while
+  any row is not recoverable, `Mark Not Recoverable` while any row is recoverable, `Mark Returned & Verified` while any
+  row is unverified. The screen sends only the rows a button can change and lists them in a confirmation first.
+
+  **Internal Referral, a Repeat / Reject the sender already acted on.** Once the sending branch has confirmed the
+  receiver's Repeat or flagged the rejected sample as Error (the sender's sample left "Sent"), the transfer section no
+  longer offers Retrieve; the reason is in `hiddenActionReasons`.
+
+  **A barcode a Repeat took off.** A Repeat takes the barcode off the sample on purpose (the tube is replaced; Collect
+  makes the new barcode) and remembers it (`barcodeBeforeRepeat`). So scanning the OLD tube still works:
+  - While the sample waits for its new tube (no barcode yet) the search finds it. It appears as its own section
+    (`Repeat`, or `Hold` / `Cancelled` if it was held or cancelled after the Repeat) with `barcodeTakenOff` set to the
+    scanned barcode and the document's Repeat buttons. Samples of the same tube that still carry the barcode appear in
+    their own sections next to it (a shared tube with one test repeated shows ALL its tests). In Internal Referral the
+    transfer of such a sample is found the same way.
+  - A sample that carries the barcode always wins: waiting samples of another order never replace it.
+  - Once the sample has a new barcode the old one is NOT found; the not-found answer carries `replacedBy` with the
+    new barcode (message only, never the sample).
+  Samples that never had a barcode (New, or Hold from New) cannot be found by this search.
+
+  **Matching.** The barcode matches exactly and ignores capitals. A code with an underscore (a legal separator) is matched
+  with plain equality (exact capitals) because `_` and `%` are wildcards in a case-insensitive database match.
+
+  **Errors.** `400 VALIDATION_ERROR` when `barcode` is empty, longer than 50 characters, contains a control character
+  (NUL, tab inside, newline inside ...), a `%` or a `\`, or `menu` is not one of the three values.
+  `400 ACTIVE_BRANCH_REQUIRED` when the profile has no active branch (for example the business admin).
+}

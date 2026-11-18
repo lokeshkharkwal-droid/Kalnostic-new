@@ -1,0 +1,47 @@
+meta {
+  name: 53 Bulk Mark Returned Verified
+  type: http
+  seq: 53
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/bulk/mark-returned-verified
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleId}}"],
+    "skipInvalid": true,
+    "notes": "Sample is back in the lab and checked"
+  }
+}
+
+tests {
+  test("verified (or refused)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Confirm that **Returned** samples are physically back and checked (Sample Search popup). Retrieve out
+  of Returned is refused (`SAMPLE_RETRIEVE_BLOCKED_NOT_VERIFIED`) until this is done. Records who and
+  when (`returnedVerifiedBy` / `returnedVerifiedAt`) and a history line. A sample can be verified once.
+  Permission: the same as Return. All-or-nothing for the ids, unless `skipInvalid: true` (the Sample Search popup sends
+  it): a sample that is no longer Returned, is already verified (someone else just did it) or whose order is cancelled is
+  then left out and named in `skipped` while the others are verified. A missing id always fails the call.
+
+  The popup sends ONLY the unverified rows of a section (a section can hold verified and unverified rows when its tests
+  were returned separately), after showing the person which tests it will change.
+
+  Errors (422): `SAMPLE_FLAG_NOT_ALLOWED` (not Returned, or already verified), `SAMPLE_ORDER_CANCELLED`.
+}
