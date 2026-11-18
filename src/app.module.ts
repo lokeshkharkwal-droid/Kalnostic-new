@@ -97,6 +97,7 @@ import { FinancePaymentsModule } from './modules/finance-payments/finance-paymen
 import { CommunicationModule } from './modules/communication/communication.module';
 import { EmiModule } from './modules/emi/emi.module';
 import { PublicModule } from './modules/public/public.module';
+import { InventoryIntegrationModule } from './modules/inventory-integration/inventory-integration.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
@@ -220,6 +221,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     PermissionsModule,
     EmiModule,
     PublicModule,
+    InventoryIntegrationModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their
