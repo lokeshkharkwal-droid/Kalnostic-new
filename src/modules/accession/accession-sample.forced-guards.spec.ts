@@ -56,7 +56,16 @@ function build(status: SampleStatus, validated: boolean) {
     {} as unknown as UserDepartmentScopeService,
     {} as unknown as AppointmentService,
   );
-  const run = (action: string, note: Record<string, unknown> = { force: true }) =>
+  // The Store / Return "all tests published" gate has its own spec; here it never blocks.
+  jest.spyOn(service, 'storeReturnGate').mockResolvedValue({
+    gated: true,
+    unpublished: 0,
+    unpublishedSampleIds: [],
+  });
+  const run = (
+    action: string,
+    note: Record<string, unknown> = { force: true },
+  ) =>
     (
       service as unknown as {
         transitionInTx: (...a: unknown[]) => Promise<unknown>;
@@ -66,7 +75,17 @@ function build(status: SampleStatus, validated: boolean) {
 }
 
 describe('forced actions on a tube waiting in Repeat', () => {
-  it.each(['accept', 'acquire', 'halt', 'error', 'store', 'discard', 'send', 'forward', 'outsource'])(
+  it.each([
+    'accept',
+    'acquire',
+    'halt',
+    'error',
+    'store',
+    'discard',
+    'send',
+    'forward',
+    'outsource',
+  ])(
     'a forced %s is refused: the tube must be collected first (nothing is written)',
     async (action) => {
       const m = build(SampleStatus.REPEAT, false);
@@ -77,11 +96,14 @@ describe('forced actions on a tube waiting in Repeat', () => {
     },
   );
 
-  it.each(['collect', 'hold'])('a forced %s of a Repeat tube still works', async (action) => {
-    const m = build(SampleStatus.REPEAT, false);
-    await m.run(action);
-    expect(m.update).toHaveBeenCalledTimes(1);
-  });
+  it.each(['collect', 'hold'])(
+    'a forced %s of a Repeat tube still works',
+    async (action) => {
+      const m = build(SampleStatus.REPEAT, false);
+      await m.run(action);
+      expect(m.update).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('the refusal carries a code a group "skip invalid" action can skip on', async () => {
     const m = build(SampleStatus.REPEAT, false);

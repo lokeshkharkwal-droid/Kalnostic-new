@@ -66,6 +66,12 @@ function build(opts: { canReturn?: boolean; reportIds?: string[] } = {}) {
     {} as never,
     {} as never,
   );
+  // The Store / Return "all tests published" gate has its own spec; here it never blocks.
+  jest.spyOn(service, 'storeReturnGate').mockResolvedValue({
+    gated: true,
+    unpublished: 0,
+    unpublishedSampleIds: [],
+  });
   const repeat = (note = {}) =>
     service.transitionInTx(
       tx as never,

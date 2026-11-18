@@ -47,6 +47,10 @@ docs {
   `acquire`, `halt`, `error`, `hold`, `repeat`, `store`, `discard`, `return`,
   `cancel`, `retrieve`, `assign-barcode`.
 
+  **`force` / `skipInvalid`** are JSON booleans: only a real `true` / `false` is
+  accepted. A text value such as `"false"` or `"0"` is refused with 400 (it used to
+  be read as `true`).
+
   **Barcode on collection:** `collect` and `collect-print` both now generate the
   sample barcode at collection time (sequential + grouping-aware, one shared value
   per group) — barcodes are no longer assigned at order creation, and `collect`

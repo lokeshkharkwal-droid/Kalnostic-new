@@ -21,6 +21,8 @@ import { AccessionReportService } from './accession-report.service';
 import { AccessionDashboardService } from './accession-dashboard.service';
 import { ReRunFreshService } from './re-run-fresh.service';
 import { BarcodeService } from './barcode.service';
+import { SampleSearchController } from './sample-search.controller';
+import { SampleSearchService } from './sample-search.service';
 
 /**
  * Accession module — the sample-lifecycle hub (post-order). Tenant-scoped +
@@ -57,6 +59,7 @@ import { BarcodeService } from './barcode.service';
     AccessionReportController,
     AccessionDashboardController,
     ReRunFreshController,
+    SampleSearchController,
   ],
   providers: [
     OrderSampleService,
@@ -66,6 +69,7 @@ import { BarcodeService } from './barcode.service';
     AccessionDashboardService,
     ReRunFreshService,
     BarcodeService,
+    SampleSearchService,
   ],
   exports: [OrderSampleService, BarcodeService],
 })

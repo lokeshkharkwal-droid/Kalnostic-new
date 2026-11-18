@@ -54,9 +54,12 @@ export const SAMPLE_TRANSITIONS: Readonly<
   acquire: {
     [SampleStatus.COLLECTED]: SampleStatus.ACQUIRED,
   },
-  // Hault — pause processing (quality/volume issue).
+  // Hault — pause processing (quality/volume issue). Allowed again from ACQUIRED
+  // (Sample Search requirements of 2026-11-06 list Halt on an Acquired sample;
+  // it had been removed on 2026-09-18 and is restored on the manager's say-so).
   halt: {
     [SampleStatus.COLLECTED]: SampleStatus.HALT,
+    [SampleStatus.ACQUIRED]: SampleStatus.HALT,
   },
   // Error — flag the sample erroneous.
   error: {
@@ -110,14 +113,17 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.ERROR]: SampleStatus.RETURNED,
     [SampleStatus.STORED]: SampleStatus.RETURNED,
   },
-  // Cancel — cancel the order/sample. Not from REPEAT: a sample waiting to be collected
-  // again for a Repeat / Re-run with a fresh sample must not be cancelled (its report was
-  // reset and is locked until the sample is accepted again; a cancelled sample would
-  // leave that report with no sample behind it). Retrieve is the way to undo a Repeat.
+  // Cancel — cancel the order/sample. Allowed from REPEAT too (Sample Search requirements of
+  // 2026-11-06 list Cancel on Repeat): a sample waiting to be collected again for a Repeat /
+  // Re-run with a fresh sample can be cancelled. Its report was reset and stays locked
+  // ("Sample cancelled", see `AWAITING_SAMPLE_STATUSES`) until Retrieve brings the sample back
+  // (to Repeat) or the test is removed from the order - exactly as when the sample is put on
+  // Hold first and cancelled from there.
   cancel: {
     [SampleStatus.NEW]: SampleStatus.CANCELLED,
     [SampleStatus.COLLECTED]: SampleStatus.CANCELLED,
     [SampleStatus.HOLD]: SampleStatus.CANCELLED,
+    [SampleStatus.REPEAT]: SampleStatus.CANCELLED,
   },
   // Send — Internal Transfer (branch↔branch).
   send: {
