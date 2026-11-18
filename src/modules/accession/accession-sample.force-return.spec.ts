@@ -78,6 +78,12 @@ describe('OrderSampleService — forced Return respects the allowed statuses', (
     jest
       .spyOn(service, 'findById')
       .mockImplementation((id: string) => Promise.resolve({ id }) as never);
+    // The Store / Return "all tests published" gate has its own spec; here it never blocks.
+    jest.spyOn(service, 'storeReturnGate').mockResolvedValue({
+      gated: true,
+      unpublished: 0,
+      unpublishedSampleIds: [],
+    });
   });
 
   /** A forced bulk Return, exactly what the group "Return" action sends. */

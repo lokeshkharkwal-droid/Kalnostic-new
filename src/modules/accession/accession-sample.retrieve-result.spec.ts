@@ -239,12 +239,15 @@ describe('Retrieve - everything outside the rule still works as before', () => {
   });
 
   it('Discarded -> Stored is not consulted either', async () => {
+    // marked recoverable: Retrieve out of Discarded needs the flag (its own spec covers the refusal)
     const m = build(
-      { status: SampleStatus.DISCARDED },
+      { status: SampleStatus.DISCARDED, isRecoverable: true },
       { from: SampleStatus.STORED, started: true },
     );
     await m.run();
     expect(m.updatedData().status).toBe(SampleStatus.STORED);
+    // the flag belonged to that Discard: it is used up by the Retrieve
+    expect(m.updatedData().isRecoverable).toBeNull();
     expect(m.lab.hasStartedReport).not.toHaveBeenCalled();
   });
 

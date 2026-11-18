@@ -35,14 +35,19 @@ tests {
 
 docs {
   Collect Sample (§A.10.1) — **New / Hold / Repeat → Collected**. `tubeType` is
-  **required** (validated against the branch's configured list); `collectedAt`
+  **required** and is **free text** (a string of up to 100 characters): the Collect
+  modal offers a dropdown of the configured tube types, but the API does **not**
+  check the value against that list. It is informational only and does not affect
+  Store, Return, Forward, Repeat or the analyzer. `collectedAt`
   defaults to now when omitted. Records `collectedBy` = caller. Illegal from other
   statuses → 422 `INVALID_SAMPLE_TRANSITION`.
 
   The sample **barcode is generated here, on collection** (sequential +
   grouping-aware, one shared value per group) — barcodes are **no longer**
   assigned at order creation. Plain Collect barcodes the sample just like
-  Collect & Print.
+  Collect & Print. Collects of one tenant that run at the same moment queue on the
+  tenant's sample counter, so two tests of one barcode group collected together
+  share one barcode instead of each getting its own.
 
   Every §A.10 modal also accepts optional `notes` + `attachmentUrl` (URL only —
   no upload endpoint), recorded on the history row.

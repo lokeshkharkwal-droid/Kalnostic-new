@@ -16,6 +16,7 @@ interface MaybeTenantRequest {
     active_profile_key?: string | null;
     referral_panel_id?: string | null;
   };
+  headers?: { authorization?: string };
 }
 
 /**
@@ -46,6 +47,12 @@ export class TenantContextInterceptor implements NestInterceptor {
     }
 
     const store: TenantContextStore = { tenantId };
+    // Capture the raw bearer token so service-to-service calls (e.g. inventory
+    // consumption) can run as the same business user.
+    const auth = request?.headers?.authorization;
+    if (auth?.startsWith('Bearer ')) {
+      store.bearerToken = auth.slice('Bearer '.length);
+    }
     if (user?.active_profile_key === B2B_ROLE_KEY) {
       if (!user.referral_panel_id) {
         throw new ForbiddenException(

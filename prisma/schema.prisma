@@ -6609,6 +6609,13 @@ model Order {
   // `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags.
   orderIdBarcode  String?       @map("order_id_barcode")
   orderIdQrCode   String?       @map("order_id_qr_code")
+  // Client-generated key of the submission that created this order (one UUID per
+  // Create Order form session, kept across retries of that submission). A repeat
+  // POST /orders carrying the same key returns this order instead of creating a
+  // duplicate (and duplicate payment rows). Unique per tenant via
+  // `@@unique([tenantId, idempotencyKey])`; NULL for orders created without a
+  // key (Postgres treats NULLs as distinct, so those are never constrained).
+  idempotencyKey  String?       @map("idempotency_key")
   status          OrderStatus   @default(DRAFT)
   orderDate       DateTime      @map("order_date") @db.Date
   orderType       OrderType     @map("order_type")
@@ -6789,6 +6796,10 @@ model Order {
   @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
+  // Duplicate-submission guard (see `idempotencyKey`). A concurrent duplicate
+  // insert blocks on this index until the first transaction commits, then fails
+  // with P2002 — which OrderService.create turns into an idempotent replay.
+  @@unique([tenantId, idempotencyKey], map: "orders_tenant_id_idempotency_key_key")
   // The order barcode VALUE is unique per TENANT among active orders, enforced by
   // the partial unique index `orders_tenant_order_barcode_active_unique` (in
   // prisma/rls.sql — Prisma can't express `WHERE deleted_at IS NULL`). It does NOT
@@ -8648,6 +8659,16 @@ model OrderSample {
   logisticsPerson String?   @map("logistics_person")
   dispatchedAt    DateTime? @map("dispatched_at")
 
+  // Discard / Return conditions for a later Retrieve (Sample Search requirements, 2026-11-06).
+  // `isRecoverable`: set when the sample is Discarded (the person discarding says whether the
+  // physical sample can still be recovered) and editable while it stays Discarded; Retrieve out of
+  // Discarded is refused unless it is true. Null = never discarded (or already retrieved).
+  // `returnedVerifiedAt/By`: set when staff confirm a Returned sample is physically back and
+  // checked; Retrieve out of Returned is refused until then. Null = not verified (or retrieved).
+  isRecoverable      Boolean?  @map("is_recoverable")
+  returnedVerifiedAt DateTime? @map("returned_verified_at")
+  returnedVerifiedBy String?   @map("returned_verified_by")
+
   // Branch context (logical refs — validated in the service).
   originBranchId     String? @map("origin_branch_id")
   processingBranchId String? @map("processing_branch_id")
@@ -8667,6 +8688,11 @@ model OrderSample {
   /// repeated together in one action share the tag. It is part of the barcode group key, so they form their own
   /// group with their own new barcode and never borrow the old group's barcode. Null = never repeated this way.
   repeatBatchId String? @map("repeat_batch_id")
+
+  /// The barcode a Repeat (or a Retrieve back into Repeat) last took off this sample. While the sample waits for its
+  /// new tube (`barcode` is null) Search Sample uses it to find the sample by the OLD tube's barcode; after the sample
+  /// has a barcode again it lets the search say "replaced by <new barcode>". Written only when the sample had a barcode.
+  barcodeBeforeRepeat String? @map("barcode_before_repeat")
 
   tests         OrderSampleTest[]
   statusHistory OrderSampleStatusHistory[]

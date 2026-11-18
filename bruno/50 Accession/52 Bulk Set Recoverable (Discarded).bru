@@ -1,0 +1,55 @@
+meta {
+  name: 52 Bulk Set Recoverable (Discarded)
+  type: http
+  seq: 52
+}
+
+post {
+  url: {{baseUrl}}/accession/order-samples/bulk/set-recoverable
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "ids": ["{{sampleId}}"],
+    "isRecoverable": true,
+    "skipInvalid": true,
+    "notes": "Sample still in the tray"
+  }
+}
+
+tests {
+  test("flag set (or refused)", function () {
+    expect(res.getStatus()).to.be.oneOf([200, 201, 422]);
+  });
+}
+
+docs {
+  Set the **recoverable** flag of **Discarded** samples (Sample Search popup). Retrieve out of Discarded
+  is refused (`SAMPLE_RETRIEVE_BLOCKED_NOT_RECOVERABLE`) unless the flag is true. Editable while the
+  sample stays Discarded; every change is logged on the history ("Recoverable changed: No → Yes").
+  Permission: the same as Discard. All-or-nothing for the ids, unless `skipInvalid: true` (the Sample Search popup
+  sends it): a sample that is no longer Discarded, or whose order is cancelled, is then left out and named in
+  `skipped` (`id`, `accessionNo`, `reason`, `code`) while the others are still changed. A sample that already has the
+  value is never an error (nothing is written). A missing id always fails the call.
+
+  The popup sends ONLY the rows the button can change (Mark Recoverable: the rows that are not recoverable yet; Mark
+  Not Recoverable: the recoverable ones), so a row another department marked differently is left alone. The server
+  does not check the caller's departments for these ids (same as the other accession actions).
+
+  `isRecoverable` must be a real JSON `true` / `false`: the text "false", `0`, `1` and so on are refused with 400
+  `VALIDATION_ERROR` (they used to be turned into `true`).
+
+  Errors (422): `SAMPLE_FLAG_NOT_ALLOWED` (a sample is not Discarded), `SAMPLE_ORDER_CANCELLED`.
+
+  The Discard request (`14 Discard Sample`, bulk discard) also accepts `isRecoverable` (default false).
+}

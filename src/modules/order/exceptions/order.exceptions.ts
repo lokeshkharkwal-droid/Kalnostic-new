@@ -8,6 +8,51 @@ export class OrderNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a lab test on the order consumes inventory (via a mapped proforma) but
+ * the active branch is short of stock. Blocks order creation with a clear,
+ * per-product message so the operator can top up stock first. The shortage detail
+ * is part of the client message (`context` is never returned).
+ */
+export class OrderInventoryStockException extends KaltrosException {
+  constructor(
+    shortages: Array<{
+      productName: string;
+      requiredQty: number;
+      availableQty: number;
+    }>,
+  ) {
+    const summary = shortages
+      .map(
+        (s) =>
+          `${s.productName} (need ${s.requiredQty}, have ${s.availableQty})`,
+      )
+      .join('; ');
+    super(
+      'ORDER_INVENTORY_STOCK_INSUFFICIENT',
+      `Insufficient inventory stock for this order: ${summary}`,
+      { shortages },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 502 — the inventory service failed while deducting stock for a confirmed order.
+ * The just-created order is rolled back (cancelled) before this is raised, so the
+ * operator can safely retry once inventory is reachable.
+ */
+export class OrderInventoryConsumeFailedException extends KaltrosException {
+  constructor(message: string) {
+    super(
+      'ORDER_INVENTORY_CONSUME_FAILED',
+      `The order was rolled back: inventory deduction failed (${message}).`,
+      { message },
+      HttpStatus.BAD_GATEWAY,
+    );
+  }
+}
+
 /** 409 — another active order in this tenant already uses this code. */
 export class OrderCodeConflictException extends KaltrosException {
   constructor(orderCode: string) {
@@ -952,6 +997,23 @@ export class EmergencyPricingChangedException extends KaltrosException {
         ? 'Emergency prices now apply to this order. Review the updated prices and save again.'
         : 'Emergency prices no longer apply to this order. Review the updated prices and save again.',
       { expected, actual },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 409 — the create request's `idempotencyKey` already belongs to an order that
+ * this request cannot be a repeat of (another patient or branch, or an order
+ * that has since been deleted). A genuine repeat returns the original order
+ * instead; this only fires when the key is reused for something else.
+ */
+export class OrderIdempotencyKeyConflictException extends KaltrosException {
+  constructor(orderCode: string) {
+    super(
+      'ORDER_IDEMPOTENCY_KEY_CONFLICT',
+      `This submission was already used to create order ${orderCode}. Reload the screen and start a new order.`,
+      { orderCode },
       HttpStatus.CONFLICT,
     );
   }

@@ -25,6 +25,12 @@ export interface TenantContextStore {
    * services to force per-panel isolation.
    */
   referralPanelId?: string;
+  /**
+   * The raw bearer token from the request's Authorization header (no `Bearer `
+   * prefix). Forwarded verbatim to the inventory service so service-to-service
+   * calls run as the same business user (see `InventoryConsumptionClient`).
+   */
+  bearerToken?: string;
 }
 
 /** The shared async-context store for the current request's tenant. */
@@ -33,6 +39,11 @@ export const tenantContext = new AsyncLocalStorage<TenantContextStore>();
 /** The active tenant id for the current async context, if any. */
 export function getTenantId(): string | undefined {
   return tenantContext.getStore()?.tenantId;
+}
+
+/** The raw bearer token for the current async context, if any. */
+export function getBearerToken(): string | undefined {
+  return tenantContext.getStore()?.bearerToken;
 }
 
 /** The referral panel id for the current async context, if any (B2B sessions). */

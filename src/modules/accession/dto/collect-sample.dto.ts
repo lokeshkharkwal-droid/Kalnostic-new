@@ -8,7 +8,13 @@ import { SampleNoteDto } from './sample-note.dto';
  * `collect-print` (the latter also assigns + returns a barcode).
  */
 export class CollectSampleDto extends SampleNoteDto {
-  /** Tube / sample type (mandatory). Validated against the branch's configured list. */
+  /**
+   * Tube / sample type (mandatory). Free text typed or picked at Collect: the
+   * Collect modal offers a dropdown sourced from `AccessionSetting`, but the
+   * backend does NOT validate it against that list (any string up to 100
+   * characters is stored). Informational only: it does not affect Store,
+   * Return, Forward, Repeat or the analyzer.
+   */
   @IsString()
   @MaxLength(100)
   tubeType: string;

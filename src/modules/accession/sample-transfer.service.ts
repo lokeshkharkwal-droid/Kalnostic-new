@@ -94,6 +94,7 @@ import {
   TransferOrderCancelledException,
   CenterChangesRefusedException,
   TransferItemRemovedException,
+  TransferRetrieveAfterSenderConfirmedException,
   TransferLogisticsMissingException,
   TransferOutsourceNotAssignedException,
   TransferRetrieveBlockedException,
@@ -396,6 +397,8 @@ export class SampleTransferService {
    * per-id lock order, optimistic status claim, and `skipInvalid` behaviour.
    * @throws SampleTransferNotFoundException / TransferWrongBranchException
    * @throws TransferItemRemovedException / InvalidTransferTransitionException
+   * @throws TransferRetrieveAfterSenderConfirmedException if the transfer is closed as a Repeat / Reject and the sending branch has
+   * already acted on it (confirmed the Repeat, flagged the sample Error): its sample left Sent
    */
   async retrieveTransfer(
     transferIds: string[],
@@ -483,6 +486,56 @@ export class SampleTransferService {
             where: { id: transfer.sampleId, tenantId },
             select: { id: true, branchId: true, status: true },
           });
+          // INTERNAL transfers only (the receiving branch is the one retrieving; an external / outsource transfer is retrieved
+          // by the sender, whose sample is never "Sent"). The receiving branch asked for a Repeat and the SENDER has confirmed it (its sample left "Sent" and now waits
+          // for a new tube): stepping the transfer back to Received would leave the receiver holding a transfer for a
+          // sample the sender is collecting again (and it could Accept it again, taking the report). Retrieve is a fair
+          // undo only until the sender confirms.
+          if (
+            transfer.kind === TransferKind.INTERNAL &&
+            (transfer.transferStatus === TransferStatus.REPEAT ||
+              transfer.transferStatus === TransferStatus.REJECTED)
+          ) {
+            // Claim the transfer BEFORE reading the sender's sample: the sender's Repeat takes the same row lock first (see
+            // `isSentReturnAction`), so the two can never both pass their check at the same moment (the receiver putting the
+            // transfer back to Received while the sender's sample goes to Repeat). Whoever is second sees the other's result.
+            const hold = await tx.sampleTransfer.updateMany({
+              where: {
+                id: transfer.id,
+                deletedAt: null,
+                transferStatus: transfer.transferStatus,
+              },
+              data: { updatedBy: personId },
+            });
+            if (hold.count !== 1) {
+              throw new InvalidTransferTransitionException(
+                'retrieve',
+                transfer.transferStatus,
+              );
+            }
+            const senderNow = await tx.orderSample.findFirst({
+              where: { id: transfer.sampleId, tenantId },
+              select: { status: true },
+            });
+            if (senderNow && senderNow.status !== SampleStatus.SENT_INTERNAL) {
+              const refusal = new TransferRetrieveAfterSenderConfirmedException(
+                transfer.id,
+                transfer.transferStatus === TransferStatus.REPEAT
+                  ? 'repeat'
+                  : 'reject',
+              );
+              if (skipInvalid) {
+                skipped.push({
+                  id,
+                  accessionNo: accNoById.get(id) ?? null,
+                  reason: refusalMessage(refusal),
+                  code: refusal.errorCode,
+                });
+                continue;
+              }
+              throw refusal;
+            }
+          }
           // Clear the just-undone step's own fields so the record stays coherent.
           const clear: Prisma.SampleTransferUpdateManyMutationInput = {};
           if (transfer.transferStatus === TransferStatus.PICKED_UP) {

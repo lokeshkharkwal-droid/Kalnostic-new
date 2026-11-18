@@ -42,6 +42,12 @@ docs {
   From IN_TRANSIT there is nothing for the receiver to undo, so Retrieve is refused
   with 422 INVALID_TRANSFER_TRANSITION (and is not offered in the UI at that status).
 
+  REPEAT / REJECTED -> RECEIVED (INTERNAL transfers) is allowed only until the SENDING branch acts on it (confirms the
+  Repeat, or flags the rejected sample as Error): while its sample is still "Sent". Once the sender's sample has left Sent it waits for a new tube, and stepping the transfer back would
+  leave the two branches disagreeing (the receiver could even Accept again and take the report): Retrieve is then
+  refused with 422 `TRANSFER_RETRIEVE_AFTER_SENDER_CONFIRMED` (skipped, with that reason, in a group call with
+  `skipInvalid`). External / Outsource transfers are retrieved by their sender and are not affected.
+
   This is a MINIMAL step-back: it changes only `transferStatus` (and clears the
   just-undone step's own field — pickedUpAt/pickedUpBy, receivedAt/receiveCondition,
   or acceptedAt) and writes a `retrieve` row on the sample's history timeline.

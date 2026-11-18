@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { publicOrderQrCode } from '../lab-report/utils/print-barcode.util';
@@ -50,6 +50,8 @@ import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebo
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
 import { EmergencyPricingService } from '../registration-settings/emergency-pricing.service';
+import { InventoryConsumptionService } from '../inventory-integration/inventory-consumption.service';
+import { InventoryUpstreamError } from '../inventory-integration/inventory-consumption.client';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
@@ -240,6 +242,7 @@ import {
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
   OrderCodeConflictException,
+  OrderIdempotencyKeyConflictException,
   OrderConsultantDoctorNotFoundException,
   OrderDepartmentNotFoundException,
   OrderCategoryNotFoundException,
@@ -293,6 +296,8 @@ import {
   PaymentWithoutBillGeneratedException,
   TestNotDeletableAfterReportException,
   EmergencyPricingChangedException,
+  OrderInventoryStockException,
+  OrderInventoryConsumeFailedException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -503,6 +508,8 @@ const BILL_DOCUMENT_PRINT_TYPES = new Set<OrderPrintType>([
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
@@ -521,6 +528,10 @@ export class OrderService {
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly config: ConfigService,
     private readonly emergencyPricingService: EmergencyPricingService,
+    // Optional so the many unit specs that construct OrderService positionally
+    // need no change; the real app always injects it (global provider). When
+    // absent, inventory consumption is simply skipped.
+    private readonly inventoryConsumption?: InventoryConsumptionService,
   ) {}
 
   /**
@@ -589,6 +600,18 @@ export class OrderService {
     personId: string | null,
     dto: CreateOrderDto,
   ): Promise<OrderWithRelations> {
+    // Duplicate-submission guard: a repeat of a submission that already created
+    // an order (same `idempotencyKey`) gets that order back — before any
+    // validation, since the first order may itself have changed what the gates
+    // see (credit used, dues settled). Nothing is written, no event is re-sent.
+    const replay = await this.findIdempotentReplay(
+      tenantId,
+      branchId,
+      dto.patientId,
+      dto.idempotencyKey,
+    );
+    if (replay) return replay;
+
     const patientGender = await this.assertPatient(tenantId, dto.patientId);
     this.assertPregnancyAllowed(dto.isPregnant, dto.patientId, patientGender);
     await this.assertItems(tenantId, dto.items);
@@ -614,6 +637,19 @@ export class OrderService {
         internalReferralId: dto.internalReferralId,
         externalReferralId: dto.externalReferralId,
       });
+      // Inventory consumption gate: when a lab test is mapped to a proforma (at
+      // this branch) with insufficient stock, fail BEFORE the order is created so
+      // nothing is half-committed. The authoritative deduction happens AFTER
+      // creation (see below) and re-checks stock atomically. No-op unless the
+      // inventory integration is configured and a mapping applies.
+      const stock = await this.inventoryConsumption?.validateForOrder(
+        tenantId,
+        branchId,
+        dto.items ?? [],
+      );
+      if (stock && !stock.ok) {
+        throw new OrderInventoryStockException(stock.shortages);
+      }
     }
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
@@ -868,6 +904,9 @@ export class OrderService {
             externalOrderId,
             appointmentId,
             paymentStatus,
+            // Unique per tenant: a concurrent repeat of this submission fails
+            // here (P2002) once this transaction commits — see the catch below.
+            idempotencyKey: dto.idempotencyKey ?? null,
             createdBy: personId,
             updatedBy: personId,
             status: dto.status ?? OrderStatus.DRAFT,
@@ -1142,10 +1181,51 @@ export class OrderService {
         return order.id;
       });
     } catch (e) {
+      // Lost the race to a concurrent repeat of this same submission: the other
+      // request's order committed first (this transaction waited on the unique
+      // index, then rolled back entirely). Answer with that order.
+      if (dto.idempotencyKey && this.isIdempotencyKeyConflict(e)) {
+        const winner = await this.findIdempotentReplay(
+          tenantId,
+          branchId,
+          dto.patientId,
+          dto.idempotencyKey,
+        );
+        if (winner) return winner;
+      }
       this.rethrowConflict(e, dto.sourceQuotationId);
       throw e;
     }
     const created = await this.findById(createdId, tenantId);
+
+    // Inventory consumption: for a finalized ORDER, deduct the proforma-mapped
+    // products and record the linked inventory sale. The inventory call is atomic
+    // and idempotent (keyed on this order's id), so a failure deducts nothing —
+    // we then roll the order back (compensation) and surface a clear error, so the
+    // order + inventory never end up inconsistent. Skipped for DRAFT/QUOTE/
+    // APPOINTMENT and when nothing is mapped / the integration is off.
+    if (dto.status === OrderStatus.ORDER && this.inventoryConsumption) {
+      try {
+        await this.inventoryConsumption.consumeForOrder(tenantId, branchId, {
+          id: created.id,
+          orderCode: created.orderCode,
+          patientId: created.patientId,
+          orderDate: created.orderDate ?? null,
+          items: created.items,
+        });
+      } catch (err) {
+        await this.rollbackOrderAfterConsumeFailure(tenantId, created.id);
+        if (err instanceof OrderInventoryStockException) throw err;
+        const message =
+          err instanceof InventoryUpstreamError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        throw new OrderInventoryConsumeFailedException(message);
+      }
+    }
+
     // Fire-and-forget: notify the patient (email + in-app) that the order was
     // created. Handled by ClinicalEventListener; never blocks order creation.
     void this.eventEmitter.emitAsync('order.created', {
@@ -1156,6 +1236,39 @@ export class OrderService {
       orderCode: created.orderCode,
     });
     return created;
+  }
+
+  /**
+   * Compensating rollback when inventory consumption fails AFTER an order was
+   * committed: soft-delete the order + its accession samples and mark it
+   * CANCELLED, so no half-consumed order lingers. This is a system rollback (not a
+   * user cancellation), so it deliberately bypasses the cancellation business
+   * guards. Best-effort — a failure here is logged, never masking the original
+   * consume error.
+   */
+  private async rollbackOrderAfterConsumeFailure(
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    try {
+      const now = new Date();
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.orderSample.updateMany({
+          where: { orderId, tenantId, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.CANCELLED, deletedAt: now },
+        });
+      });
+    } catch (rollbackErr) {
+      this.logger.error(
+        `Failed to roll back order ${orderId} after inventory consume failure: ${String(
+          rollbackErr,
+        )}`,
+      );
+    }
   }
 
   /**
@@ -9258,6 +9371,64 @@ export class OrderService {
     throw alreadyConverted
       ? new QuotationAlreadyConvertedException(sourceQuotationId)
       : new SourceQuotationInvalidException(sourceQuotationId);
+  }
+
+  /**
+   * The order an earlier POST /orders with this `idempotencyKey` created,
+   * composed like any create response — or null when no key was sent or none
+   * matches yet. A key is only honoured as a repeat of the SAME submission: when
+   * the stored order belongs to another patient or branch, or has since been
+   * deleted, the request is rejected instead of being answered with an
+   * unrelated order (and is never allowed to create a second one).
+   * @throws OrderIdempotencyKeyConflictException on such a mismatch
+   */
+  private async findIdempotentReplay(
+    tenantId: string,
+    branchId: string | null,
+    patientId: string,
+    idempotencyKey: string | undefined,
+  ): Promise<OrderWithRelations | null> {
+    if (!idempotencyKey) return null;
+    // No `deletedAt` filter: the unique index still holds deleted rows, so a
+    // key that belongs to a deleted order must be reported, not reused.
+    const existing = await this.prisma.order.findFirst({
+      where: { tenantId, idempotencyKey },
+      select: {
+        id: true,
+        orderCode: true,
+        patientId: true,
+        branchId: true,
+        deletedAt: true,
+      },
+    });
+    if (!existing) return null;
+    if (
+      existing.deletedAt ||
+      existing.patientId !== patientId ||
+      existing.branchId !== branchId
+    ) {
+      throw new OrderIdempotencyKeyConflictException(existing.orderCode);
+    }
+    return this.findById(existing.id, tenantId);
+  }
+
+  /** True when a P2002 comes from the per-tenant `idempotency_key` unique index. */
+  private isIdempotencyKeyConflict(e: unknown): boolean {
+    if (
+      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
+      e.code !== 'P2002'
+    ) {
+      return false;
+    }
+    const target = e.meta?.target;
+    const targets: unknown[] = Array.isArray(target) ? target : [target];
+    // Postgres reports the column names (or the index name, which contains
+    // them); accept the Prisma field name too in case the engine maps it.
+    return targets.some(
+      (t) =>
+        typeof t === 'string' &&
+        (t.includes('idempotency_key') || t.includes('idempotencyKey')),
+    );
   }
 
   /**
