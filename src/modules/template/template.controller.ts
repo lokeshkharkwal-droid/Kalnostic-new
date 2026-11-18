@@ -19,6 +19,7 @@ import { UpdateTemplateDto } from './dto/update-template.dto';
 import { ListTemplateQueryDto } from './dto/list-template-query.dto';
 import { LookupTemplateQueryDto } from './dto/lookup-template-query.dto';
 import { MESSAGING_FEATURES_GROUPED } from './constants/feature-types';
+import { NOTIFICATION_TAGS_GROUPED } from './constants/notification-tags';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
 import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
 import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
@@ -100,6 +101,16 @@ export class TemplateController {
   @Get('features')
   features() {
     return MESSAGING_FEATURES_GROUPED;
+  }
+
+  /**
+   * The GLOBAL notification tag catalogue (grouped) for the template editor —
+   * every tag works in every template. Declared before `:id` so the literal
+   * `tags` segment is not captured as a template id.
+   */
+  @Get('tags')
+  tags() {
+    return NOTIFICATION_TAGS_GROUPED;
   }
 
   /**

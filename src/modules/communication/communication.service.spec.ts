@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ExchangeClient } from './exchange/exchange.client';
 import { TemplateService } from '../template/template.service';
 import { BranchService } from '../branch/branch.service';
+import { NotificationTagsService } from './services/notification-tags.service';
 
 describe('CommunicationService.dispatch — peer tenant id', () => {
   const tenantFindUnique = jest.fn();
@@ -30,6 +31,7 @@ describe('CommunicationService.dispatch — peer tenant id', () => {
       { sendSms } as unknown as ExchangeClient,
       {} as unknown as TemplateService,
       {} as unknown as BranchService,
+      {} as unknown as NotificationTagsService,
     );
   });
 
