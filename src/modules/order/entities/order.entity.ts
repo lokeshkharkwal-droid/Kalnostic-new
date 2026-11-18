@@ -547,7 +547,12 @@ export const ORDER_LIST_INCLUDE = {
     select: { id: true, fullName: true, mobileNumber: true },
   },
   externalReferral: { select: { id: true, name: true, mobileNumber: true } },
-  appointment: { select: { id: true, status: true, code: true } },
+  appointment: {
+    // `createdAt` = when the appointment record was created (Appointments list
+    // "Appointment Created Date & Time"). It can postdate the order's own
+    // `createdAt` when a DRAFT is later saved as an appointment.
+    select: { id: true, status: true, code: true, createdAt: true },
+  },
   items: {
     where: { deletedAt: null },
     select: {
