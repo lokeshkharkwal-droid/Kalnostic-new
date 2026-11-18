@@ -4407,6 +4407,8 @@ export class OrderService {
         return [{ checkedInAt: dir }, { createdAt: dir }];
       case 'appointmentAt':
         return [{ appointmentAt: dir }, { createdAt: dir }];
+      case 'appointmentCreatedAt':
+        return [{ appointment: { createdAt: dir } }, { createdAt: dir }];
       case 'orderCode':
         return { orderCode: dir };
       case 'billId':
@@ -5552,10 +5554,13 @@ export class OrderService {
       // Cancel view: only cancelled orders (enforced regardless of `statuses`).
       scoped = { AND: [scoped, { status: OrderStatus.CANCELLED }] };
     }
+    // `id` breaks `createdAt` ties: every records page re-runs this query and
+    // slices it in memory, so the order must be identical across requests or a
+    // page boundary could repeat one row and skip another.
     let orders = await this.prisma.order.findMany({
       where: scoped,
       include: BILLING_ORDER_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
     if (report === 'outstanding') {
       // Outstanding view: only orders that still owe money. `due` is a derived
