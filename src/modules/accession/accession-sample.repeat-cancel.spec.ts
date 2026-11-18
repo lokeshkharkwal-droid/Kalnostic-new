@@ -1,15 +1,15 @@
 import { SampleStatus } from '@prisma/client';
 import { OrderSampleService } from './accession-sample.service';
-import { SampleRepeatCancelBlockedException } from './exceptions/accession.exceptions';
+import { SampleRepeatMustBeCollectedException } from './exceptions/accession.exceptions';
 import { nextSampleStatus } from './constants/sample-transitions.constant';
 
 /**
- * A sample waiting to be collected again (status Repeat) cannot be cancelled: its report was reset for the repeat and
- * stays locked until the sample is accepted again, and a cancelled sample would leave that report with no sample behind it.
- *  - the transition table no longer offers Cancel from Repeat;
- *  - a group "force" Cancel (which skips the table) is refused for a Repeat sample too, and with "skip invalid" the
- *    other samples of the group are still cancelled;
- *  - New, Collected and Hold samples can still be cancelled.
+ * A sample waiting to be collected again (status Repeat) can be cancelled (Sample Search requirements, 2026-11-06). Its report
+ * was reset for the repeat and stays locked ("Sample cancelled") until Retrieve brings the sample back or the test is removed
+ * from the order - the same end state as putting the sample on Hold first and cancelling it from there.
+ *  - the transition table offers Cancel from Repeat;
+ *  - a group "force" Cancel works for a Repeat sample too, and with "skip invalid" the other samples of the group go on;
+ *  - the other forced actions from Repeat stay refused (they would skip the Collect that makes the new barcode).
  */
 interface SampleRow {
   id: string;
@@ -70,7 +70,9 @@ function build(samples: SampleRow[]) {
       reason: 'no longer needed',
       ...extra,
     });
-  return { tx, cancel };
+  const accept = (ids: string[], extra: Record<string, unknown> = {}) =>
+    service.accept(ids, 't1', 'p1', { sampleCondition: 'Good', ...extra });
+  return { tx, cancel, accept };
 }
 
 const row = (id: string, status: SampleStatus): SampleRow => ({
@@ -82,38 +84,52 @@ const row = (id: string, status: SampleStatus): SampleRow => ({
   sourceTransferId: null,
 });
 
+const updatedIds = (m: ReturnType<typeof build>) =>
+  m.tx.orderSample.update.mock.calls.map(
+    (c) => (c as [{ where: { id: string } }])[0].where.id,
+  );
+
 describe('the transition table', () => {
-  it('has no Cancel from Repeat', () => {
-    expect(nextSampleStatus('cancel', SampleStatus.REPEAT)).toBeNull();
+  it.each([
+    SampleStatus.NEW,
+    SampleStatus.COLLECTED,
+    SampleStatus.HOLD,
+    SampleStatus.REPEAT,
+  ])('cancels a %s sample', (status) => {
+    expect(nextSampleStatus('cancel', status)).toBe(SampleStatus.CANCELLED);
   });
 
-  it.each([SampleStatus.NEW, SampleStatus.COLLECTED, SampleStatus.HOLD])(
-    'still cancels a %s sample',
+  it.each([SampleStatus.ACCEPTED, SampleStatus.STORED, SampleStatus.CANCELLED])(
+    'has no Cancel from %s',
     (status) => {
-      expect(nextSampleStatus('cancel', status)).toBe(SampleStatus.CANCELLED);
+      expect(nextSampleStatus('cancel', status)).toBeNull();
     },
   );
 });
 
 describe('Cancel on a Repeat sample', () => {
-  it('is refused with SAMPLE_CANCEL_BLOCKED_REPEAT and nothing is written', async () => {
+  it('moves the sample to Cancelled and writes the history row', async () => {
     const m = build([row('s1', SampleStatus.REPEAT)]);
-    const e: unknown = await m.cancel(['s1']).catch((x: unknown) => x);
-    expect(e).toBeInstanceOf(SampleRepeatCancelBlockedException);
-    expect(e).toMatchObject({ errorCode: 'SAMPLE_CANCEL_BLOCKED_REPEAT' });
-    expect(m.tx.orderSample.update).not.toHaveBeenCalled();
-    expect(m.tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
-  });
-
-  it('is refused even by a group "force" Cancel (which skips the transition table)', async () => {
-    const m = build([row('s1', SampleStatus.REPEAT)]);
-    await expect(m.cancel(['s1'], { force: true })).rejects.toBeInstanceOf(
-      SampleRepeatCancelBlockedException,
+    const result = await m.cancel(['s1']);
+    expect(result.succeeded).toHaveLength(1);
+    expect(m.tx.orderSample.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: SampleStatus.CANCELLED,
+        }) as Record<string, unknown>,
+      }),
     );
-    expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+    expect(m.tx.orderSampleStatusHistory.create).toHaveBeenCalled();
   });
 
-  it('a group Cancel with "skip invalid" skips the Repeat sample and still cancels the others', async () => {
+  it('works for a group "force" Cancel (which skips the transition table) too', async () => {
+    const m = build([row('s1', SampleStatus.REPEAT)]);
+    const result = await m.cancel(['s1'], { force: true });
+    expect(result.succeeded).toHaveLength(1);
+    expect(updatedIds(m)).toEqual(['s1']);
+  });
+
+  it('a group Cancel cancels the Repeat sample and the others together', async () => {
     const m = build([
       row('s1', SampleStatus.REPEAT),
       row('s2', SampleStatus.COLLECTED),
@@ -123,18 +139,20 @@ describe('Cancel on a Repeat sample', () => {
       skipInvalid: true,
     });
     expect(result.succeeded.map((s) => (s as { id: string }).id)).toEqual([
+      's1',
       's2',
     ]);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]).toMatchObject({
-      id: 's1',
-      code: 'SAMPLE_CANCEL_BLOCKED_REPEAT',
-    });
-    // only the Collected sample was written
-    const updatedIds = m.tx.orderSample.update.mock.calls.map(
-      (c) => (c as [{ where: { id: string } }])[0].where.id,
-    );
-    expect(updatedIds).toEqual(['s2']);
+    expect(result.skipped).toHaveLength(0);
+    expect(updatedIds(m)).toEqual(['s1', 's2']);
+  });
+
+  it('other forced actions from Repeat stay refused (they would skip the Collect that makes the new barcode)', async () => {
+    const m = build([row('s1', SampleStatus.REPEAT)]);
+    const e: unknown = await m
+      .accept(['s1'], { force: true })
+      .catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(SampleRepeatMustBeCollectedException);
+    expect(m.tx.orderSample.update).not.toHaveBeenCalled();
   });
 });
 

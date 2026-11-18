@@ -57,6 +57,8 @@ function build(all: Row[], collecting: string[]) {
         groupingMode: AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME,
       }),
     },
+    // The tenant's sample counter row: locked before the sibling lookup (see the concurrency test below).
+    tenantBarcodeCounter: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
   let n = 20000;
@@ -370,5 +372,36 @@ describe('Retrieve out of Repeat puts the old barcode back', () => {
     expect(none.out).toBeNull();
     expect(none.tx.orderSample.update).not.toHaveBeenCalled();
     expect(none.lines).toEqual([]);
+  });
+});
+
+describe('Collect: two collects of one barcode group at the same moment', () => {
+  it('locks the tenant sample counter BEFORE it looks for a sibling barcode, so the second collect waits and then lends', async () => {
+    const m = build([row('s1'), row('s2')], ['s1']);
+    await m.run();
+    const lock = m.tx.tenantBarcodeCounter.updateMany;
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(lock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId: 't1', kind: 'SAMPLE' } }),
+    );
+    // The sibling lookup is the findMany that asks for barcoded rows (`barcode: { not: null }`).
+    const calls = m.tx.orderSample.findMany.mock.calls as [
+      { where: { barcode?: unknown } },
+    ][];
+    const siblingIdx = calls.findIndex((c) => c[0].where.barcode !== null);
+    expect(siblingIdx).toBeGreaterThanOrEqual(0);
+    expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
+      m.tx.orderSample.findMany.mock.invocationCallOrder[siblingIdx]!,
+    );
+    // ... and before the allocator takes the same lock (no new lock order).
+    expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
+      m.barcodeService.allocateNumberInTx.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('takes no lock when there is nothing to barcode', async () => {
+    const m = build([row('s1', { barcode: '10001' })], []);
+    await m.run();
+    expect(m.tx.tenantBarcodeCounter.updateMany).not.toHaveBeenCalled();
   });
 });

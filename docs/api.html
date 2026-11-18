@@ -3188,6 +3188,81 @@ length of the matching notes list.</p>
   test of an order shows the same counts. Drives the Sample / Technician Notes icons beside Report Status.</p>
 </div>
 
+<h2 id="accession-sample-search">Accession — Sample Search &amp; Discard / Return flags</h2>
+<div class="note">Added for the Sample Search popup (In-House, Internal Referral and External Referral Orders). Business-authenticated;
+tenant from the JWT, branch from the active profile. Full field notes are in the Bruno collection
+(<code>bruno/50 Accession</code>, requests 51-53).</div>
+
+<div class="ep" id="accession-sample-search-get">
+  <div><span class="m get">GET</span><span class="path">/accession/sample-search?barcode=&lt;barcode&gt;&amp;menu=IN_HOUSE|INTERNAL|EXTERNAL</span></div>
+  <div class="tags"><span class="tag">business JWT</span></div>
+  <p>Finds a barcode (exact, case-insensitive) in the caller's menu: In-House = samples held by the active branch
+  (department scope applied); Internal = transfers coming TO the branch; External = transfers going FROM it. Page filters
+  and tabs are ignored. Returns <code>{ found: false, foundIn: [...] }</code> when nothing is in that menu
+  (<code>foundIn</code> names the other menus that have the barcode), otherwise <code>{ found: true, order, fields, sections }</code>:
+  one section per status with its tests (department, category, subcategory, report status), the buttons the status allows
+  (already narrowed by legality, the Store / Return "all tests published" gate and the Discarded / Returned flags) and
+  <code>billingVisible</code> (true only for an order registered at the caller's own branch). A button the server would always
+  refuse for the report's state is left out and explained in <code>hiddenActionReasons</code> (Repeat: a validated result;
+  Send / Forward / Outsource: a report worked on; Retrieve: it would go back to before acceptance, or be recalled from another
+  branch / partner, while a report is past Pending; a section keeps a button while any of its samples would still be accepted).
+  For a department-scoped user the Store / Return reason says when the unpublished test is in a department they cannot see.
+  A Discarded / Returned section can hold rows with different flags (one barcode shared by tests of several departments): each
+  row carries its own <code>recoverable</code> / <code>returnedVerified</code>, <code>flags.mixed</code> says the rows differ, and
+  each button stays while it can act on some row (Retrieve while any row qualifies; Mark Recoverable / Mark Not Recoverable /
+  Mark Returned &amp; Verified while any row is in the other state). In an Internal Referral section the receiver's Retrieve of a
+  Repeat / Reject is left out once the sender has acted on it (its sample left Sent).
+  A Repeat takes the barcode off
+  a sample on purpose and remembers it (<code>barcodeBeforeRepeat</code>): while the sample waits for its new tube, the OLD
+  barcode finds it as its own section (<code>barcodeTakenOff</code> set, the document's Repeat buttons), next to the samples of
+  the same tube that still carry the barcode; a sample that carries the barcode always wins over waiting samples of another
+  order. Once the sample has a new barcode the old one is not found and the not-found answer carries
+  <code>replacedBy</code> (the new barcode; a message, never the sample). A sample that never had a barcode (New, Hold from
+  New) cannot be found. The match ignores capitals; a code with <code>_</code> uses plain equality (wildcard-safe).
+  400: <code>VALIDATION_ERROR</code> (empty barcode, over 50 characters, a control character, <code>%</code> or <code>\</code>
+  in it, or a bad <code>menu</code>), <code>ACTIVE_BRANCH_REQUIRED</code> (the profile has no active branch).</p>
+</div>
+
+<div class="ep" id="accession-bulk-set-recoverable">
+  <div><span class="m post">POST</span><span class="path">/accession/order-samples/bulk/set-recoverable</span></div>
+  <div class="tags"><span class="tag">business JWT</span><span class="tag">accession: discard</span></div>
+  <p>Body <code>{ ids: uuid[], isRecoverable: boolean, skipInvalid?: boolean, notes?, attachmentUrl? }</code>. With
+  <code>skipInvalid: true</code> (the popup sends it) a sample that is no longer Discarded, or whose order is cancelled, is skipped and
+  named in <code>skipped</code> instead of failing the others; without it the call is all-or-nothing. Sets the recoverable flag of
+  <strong>Discarded</strong> samples (editable while Discarded, each change logged; setting the value it already has changes and logs nothing). Retrieve out of Discarded is refused
+  (<code>SAMPLE_RETRIEVE_BLOCKED_NOT_RECOVERABLE</code>) unless it is true. <code>POST bulk/discard</code> also takes
+  <code>isRecoverable</code> (default false). <code>isRecoverable</code> must be a real JSON <code>true</code> / <code>false</code>;
+  the text "false", <code>0</code>, <code>1</code> ... give 400 <code>VALIDATION_ERROR</code>.
+  422: <code>SAMPLE_FLAG_NOT_ALLOWED</code>, <code>SAMPLE_ORDER_CANCELLED</code>.</p>
+</div>
+
+<div class="ep" id="accession-bulk-mark-returned-verified">
+  <div><span class="m post">POST</span><span class="path">/accession/order-samples/bulk/mark-returned-verified</span></div>
+  <div class="tags"><span class="tag">business JWT</span><span class="tag">accession: return</span></div>
+  <p>Body <code>{ ids: uuid[], skipInvalid?: boolean, notes?, attachmentUrl? }</code>. With <code>skipInvalid: true</code> a sample that is
+  no longer Returned, is already verified or whose order is cancelled is skipped and named in <code>skipped</code>; without it the
+  call is all-or-nothing. Confirms that <strong>Returned</strong> samples are physically back
+  and verified (once; records who and when). Retrieve out of Returned is refused
+  (<code>SAMPLE_RETRIEVE_BLOCKED_NOT_VERIFIED</code>) until then. 422: <code>SAMPLE_FLAG_NOT_ALLOWED</code>,
+  <code>SAMPLE_ORDER_CANCELLED</code>.</p>
+</div>
+
+<div class="ep" id="accession-retired-barcode-reserved">
+  <div><span class="m post">POST</span><span class="path">/accession/order-samples/bulk/assign-barcode</span> <span class="note">(new refusal)</span></div>
+  <div class="tags"><span class="tag">business JWT</span></div>
+  <p>A barcode typed by hand that a Repeat took off a sample still waiting for its new tube (Repeat or Hold, no barcode yet) is
+  reserved for it, so Retrieve can still put it back: 422 <code>BARCODE_RESERVED_BY_REPEAT</code>, nothing written. Once the sample is
+  collected again the old number is free. Automatic numbers never reuse a retired number.</p>
+</div>
+
+<div class="ep" id="accession-transfer-retrieve-after-repeat">
+  <div><span class="m post">POST</span><span class="path">/accession/transfers/bulk/retrieve</span> <span class="note">(new refusal)</span></div>
+  <div class="tags"><span class="tag">business JWT</span></div>
+  <p>The receiving branch can no longer Retrieve an INTERNAL transfer it sent back as a Repeat or a Reject once the SENDING branch has
+  acted on it (confirmed the Repeat, or flagged the rejected sample as Error: its sample left Sent): 422 <code>TRANSFER_RETRIEVE_AFTER_SENDER_CONFIRMED</code> (skipped, with that reason, when
+  <code>skipInvalid</code> is set). Before the sender confirms, Retrieve (Repeat &rarr; Received) still works.</p>
+</div>
+
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
 Generated for Kalnostics New · reflects the implemented controllers under <code>src/modules</code>.
 Token TTLs, lockout, and password/MRN formats are defined in <code>CLAUDE.md §5</code>.

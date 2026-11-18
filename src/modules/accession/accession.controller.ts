@@ -30,6 +30,10 @@ import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import {
+  BulkMarkReturnedVerifiedDto,
+  BulkSetRecoverableDto,
+} from './dto/bulk-discard-return-flags.dto';
+import {
   BulkAcceptDto,
   BulkAssignBarcodeDto,
   BulkCancelDto,
@@ -363,6 +367,41 @@ export class AccessionController {
     @Body() dto: BulkDiscardDto,
   ) {
     return this.sampleService.discard(dto.ids, tenantId, personId, dto);
+  }
+
+  /**
+   * Set the "recoverable" flag of Discarded samples (Sample Search popup). Retrieve out of
+   * Discarded needs it. Same permission as Discard.
+   */
+  @Post('bulk/set-recoverable')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_DISCARD)
+  @Audit(auditUpdate('Set the recoverable flag of discarded samples'))
+  bulkSetRecoverable(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkSetRecoverableDto,
+  ) {
+    return this.sampleService.setRecoverable(dto.ids, tenantId, personId, dto);
+  }
+
+  /**
+   * Confirm that Returned samples are physically back and verified (Sample Search popup).
+   * Retrieve out of Returned needs it. Same permission as Return.
+   */
+  @Post('bulk/mark-returned-verified')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_RETURN)
+  @Audit(auditUpdate('Marked returned samples as verified'))
+  bulkMarkReturnedVerified(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkMarkReturnedVerifiedDto,
+  ) {
+    return this.sampleService.markReturnedVerified(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+    );
   }
 
   /** Bulk Return. */

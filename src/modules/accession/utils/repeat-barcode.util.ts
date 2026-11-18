@@ -36,7 +36,9 @@ export function barcodeRemovedByRetrieveNote(barcode: string): string {
  * hyphens-only pattern would read those as "no barcode" and the undo would put nothing back. A barcode never contains a space.
  * A line written by a Retrieve ("(Retrieve back into Repeat)") is deliberately not matched.
  */
-export function barcodeRemovedFrom(notes: string | null | undefined): string | null {
+export function barcodeRemovedFrom(
+  notes: string | null | undefined,
+): string | null {
   return /^Barcode removed: (\S+) \(Repeat\)/.exec(notes ?? '')?.[1] ?? null;
 }
 
@@ -58,7 +60,10 @@ export interface RepeatBarcodeResult {
  *  - stamps one `repeatBatchId` on the rows repeated in the same action. The tag does NOT change the group: the rows stay in
  *    the same group as their mates and share its actions. Collect uses the tag only to decide who shares the new barcode:
  *    rows of one batch share one, and they never borrow the old barcode that their group mates still carry;
- *  - writes a "barcode removed" line (the barcode that was taken off) to each sample's audit trail, one per Repeat.
+ *  - writes a "barcode removed" line (the barcode that was taken off) to each sample's audit trail, one per Repeat;
+ *  - remembers that barcode on the sample (`barcodeBeforeRepeat`, only when the sample had one: a row that has none
+ *    keeps the value an earlier Repeat stored) so Search Sample can still find the sample by the old tube's barcode while
+ *    it waits for its new tube, and say "replaced by ..." once it has a new one.
  *
  * Runs inside the caller's (already tenant-scoped) transaction, after the samples were moved to REPEAT.
  * @param tx the caller's transaction
@@ -99,6 +104,11 @@ export async function clearBarcodeForRepeatInTx(
   for (const row of rows) {
     // A sample that had no barcode has nothing to record.
     if (!row.barcode) continue;
+    // Remember the barcode that came off (one value per row: rows of a group may carry different barcodes).
+    await tx.orderSample.update({
+      where: { id: row.id },
+      data: { barcodeBeforeRepeat: row.barcode },
+    });
     await tx.orderSampleStatusHistory.create({
       data: {
         tenantId,

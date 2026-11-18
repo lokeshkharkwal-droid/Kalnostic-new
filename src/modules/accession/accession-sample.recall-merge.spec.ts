@@ -77,16 +77,14 @@ function build(sampleOver: Record<string, unknown> = {}, opts: Opts = {}) {
     orderSample: {
       findFirst: jest.fn().mockResolvedValue(sample),
       // a Retrieve back INTO Repeat also takes the fresh tube's barcode off (clearBarcodeForRepeatInTx)
-      findMany: jest
-        .fn()
-        .mockResolvedValue([
-          {
-            id: sample.id,
-            branchId: sample.branchId,
-            status: SampleStatus.REPEAT,
-            barcode: (sample as { barcode?: string }).barcode ?? null,
-          },
-        ]),
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: sample.id,
+          branchId: sample.branchId,
+          status: SampleStatus.REPEAT,
+          barcode: (sample as { barcode?: string }).barcode ?? null,
+        },
+      ]),
       updateMany: jest.fn().mockResolvedValue({ count: opts.claimCount ?? 1 }),
       update: jest
         .fn<Promise<unknown>, [{ data: Record<string, unknown> }]>()
@@ -400,7 +398,14 @@ describe('the sender after the receiving branch sent the sample back (Sent – R
       const m = build({}, { latest });
       await m.run(action);
       expect(m.recall).not.toHaveBeenCalled();
-      expect(m.tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      // The only write the sender's Repeat / Error makes on the closed transfer is the row lock (a touch of `updatedAt`):
+      // it never changes the status or deletes it.
+      const touched = (
+        m.tx.sampleTransfer.updateMany.mock.calls as unknown as [
+          { data: Record<string, unknown> },
+        ][]
+      ).map((c) => Object.keys(c[0].data));
+      expect(touched.every((keys) => keys.join() === 'updatedAt')).toBe(true);
     },
   );
 
@@ -474,7 +479,14 @@ describe('the sender after the receiving branch sent the sample back (Sent – R
       );
       expect(m.tx.orderSample.update).not.toHaveBeenCalled();
       expect(m.tx.orderSample.updateMany).not.toHaveBeenCalled();
-      expect(m.tx.sampleTransfer.updateMany).not.toHaveBeenCalled();
+      // The only write the sender's Repeat / Error makes on the closed transfer is the row lock (a touch of `updatedAt`):
+      // it never changes the status or deletes it.
+      const touched = (
+        m.tx.sampleTransfer.updateMany.mock.calls as unknown as [
+          { data: Record<string, unknown> },
+        ][]
+      ).map((c) => Object.keys(c[0].data));
+      expect(touched.every((keys) => keys.join() === 'updatedAt')).toBe(true);
       expect(m.recall).not.toHaveBeenCalled();
     },
   );
@@ -500,7 +512,11 @@ describe('Retrieve of a sample that is not transferred', () => {
     // it reads the sample's WHOLE history (to replay it), tenant-scoped and live only
     const where =
       m.tx.orderSampleStatusHistory.findMany.mock.calls[0]![0].where;
-    expect(where).toMatchObject({ sampleId: 's1', tenantId: 't1', deletedAt: null });
+    expect(where).toMatchObject({
+      sampleId: 's1',
+      tenantId: 't1',
+      deletedAt: null,
+    });
   });
 
   it('runs no recall and does not move the processing branch', async () => {
@@ -514,12 +530,20 @@ describe('Retrieve of a sample that is not transferred', () => {
   });
 
   it('with no history it falls back to the transition table (Returned goes back to Accepted)', async () => {
+    // confirmed back and verified: Retrieve out of Returned needs it (its own spec covers the refusal)
     const m = build(
-      { status: SampleStatus.RETURNED, previousStatus: SampleStatus.ACCEPTED },
+      {
+        status: SampleStatus.RETURNED,
+        previousStatus: SampleStatus.ACCEPTED,
+        returnedVerifiedAt: new Date(),
+      },
       { history: null },
     );
     await m.run('retrieve');
     expect(m.updatedData().status).toBe(SampleStatus.ACCEPTED);
+    // the confirmation belonged to that Return: it is used up by the Retrieve
+    expect(m.updatedData().returnedVerifiedAt).toBeNull();
+    expect(m.updatedData().returnedVerifiedBy).toBeNull();
   });
 
   // The receiving branch returned the sample (Sent → Repeat) and the sender collected
@@ -547,17 +571,28 @@ describe('Retrieve of a sample that is not transferred', () => {
 
   it('a Retrieve back INTO Repeat takes the fresh tube barcode off (a tube waiting to be drawn has none) and says so in its own words', async () => {
     const m = build(
-      { status: SampleStatus.COLLECTED, previousStatus: SampleStatus.REPEAT, barcode: '10846' },
+      {
+        status: SampleStatus.COLLECTED,
+        previousStatus: SampleStatus.REPEAT,
+        barcode: '10846',
+      },
       { history: { fromStatus: SampleStatus.REPEAT } },
     );
     await m.run('retrieve');
     expect(m.updatedData().status).toBe(SampleStatus.REPEAT);
     expect(m.tx.orderSample.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ barcode: null, orderIdBarcode: null }) as Record<string, unknown>,
+        data: expect.objectContaining({
+          barcode: null,
+          orderIdBarcode: null,
+        }) as Record<string, unknown>,
       }),
     );
-    const lines = (m.tx.orderSampleStatusHistory.create.mock.calls as [{ data: { action: string; notes?: string } }][]).map((c) => c[0].data);
+    const lines = (
+      m.tx.orderSampleStatusHistory.create.mock.calls as [
+        { data: { action: string; notes?: string } },
+      ][]
+    ).map((c) => c[0].data);
     const removed = lines.find((l) => l.action === 'barcode-removed');
     // worded differently from a Repeat's line, so a later undo never reads it as "the barcode the Repeat took off"
     expect(removed?.notes).toContain('(Retrieve back into Repeat)');
@@ -566,12 +601,20 @@ describe('Retrieve of a sample that is not transferred', () => {
 
   it('a Retrieve that does NOT go back into Repeat leaves the barcode alone', async () => {
     const m = build(
-      { status: SampleStatus.ACCEPTED, previousStatus: SampleStatus.COLLECTED, barcode: '10846' },
+      {
+        status: SampleStatus.ACCEPTED,
+        previousStatus: SampleStatus.COLLECTED,
+        barcode: '10846',
+      },
       { history: { fromStatus: SampleStatus.COLLECTED } },
     );
     await m.run('retrieve');
     expect(m.updatedData().status).toBe(SampleStatus.COLLECTED);
-    const cleared = (m.tx.orderSample.updateMany.mock.calls as [{ data: Record<string, unknown> }][]).some((c) => 'barcode' in c[0].data);
+    const cleared = (
+      m.tx.orderSample.updateMany.mock.calls as [
+        { data: Record<string, unknown> },
+      ][]
+    ).some((c) => 'barcode' in c[0].data);
     expect(cleared).toBe(false);
   });
 
