@@ -239,6 +239,7 @@ import {
   OrderBranchLabPanelNotFoundException,
   OrderBranchLabTestNotFoundException,
   OrderCodeConflictException,
+  OrderIdempotencyKeyConflictException,
   OrderConsultantDoctorNotFoundException,
   OrderDepartmentNotFoundException,
   OrderCategoryNotFoundException,
@@ -583,6 +584,18 @@ export class OrderService {
     personId: string | null,
     dto: CreateOrderDto,
   ): Promise<OrderWithRelations> {
+    // Duplicate-submission guard: a repeat of a submission that already created
+    // an order (same `idempotencyKey`) gets that order back — before any
+    // validation, since the first order may itself have changed what the gates
+    // see (credit used, dues settled). Nothing is written, no event is re-sent.
+    const replay = await this.findIdempotentReplay(
+      tenantId,
+      branchId,
+      dto.patientId,
+      dto.idempotencyKey,
+    );
+    if (replay) return replay;
+
     const patientGender = await this.assertPatient(tenantId, dto.patientId);
     this.assertPregnancyAllowed(dto.isPregnant, dto.patientId, patientGender);
     await this.assertItems(tenantId, dto.items);
@@ -862,6 +875,9 @@ export class OrderService {
             externalOrderId,
             appointmentId,
             paymentStatus,
+            // Unique per tenant: a concurrent repeat of this submission fails
+            // here (P2002) once this transaction commits — see the catch below.
+            idempotencyKey: dto.idempotencyKey ?? null,
             createdBy: personId,
             updatedBy: personId,
             status: dto.status ?? OrderStatus.DRAFT,
@@ -1136,6 +1152,18 @@ export class OrderService {
         return order.id;
       });
     } catch (e) {
+      // Lost the race to a concurrent repeat of this same submission: the other
+      // request's order committed first (this transaction waited on the unique
+      // index, then rolled back entirely). Answer with that order.
+      if (dto.idempotencyKey && this.isIdempotencyKeyConflict(e)) {
+        const winner = await this.findIdempotentReplay(
+          tenantId,
+          branchId,
+          dto.patientId,
+          dto.idempotencyKey,
+        );
+        if (winner) return winner;
+      }
       this.rethrowConflict(e, dto.sourceQuotationId);
       throw e;
     }
@@ -9224,6 +9252,64 @@ export class OrderService {
     throw alreadyConverted
       ? new QuotationAlreadyConvertedException(sourceQuotationId)
       : new SourceQuotationInvalidException(sourceQuotationId);
+  }
+
+  /**
+   * The order an earlier POST /orders with this `idempotencyKey` created,
+   * composed like any create response — or null when no key was sent or none
+   * matches yet. A key is only honoured as a repeat of the SAME submission: when
+   * the stored order belongs to another patient or branch, or has since been
+   * deleted, the request is rejected instead of being answered with an
+   * unrelated order (and is never allowed to create a second one).
+   * @throws OrderIdempotencyKeyConflictException on such a mismatch
+   */
+  private async findIdempotentReplay(
+    tenantId: string,
+    branchId: string | null,
+    patientId: string,
+    idempotencyKey: string | undefined,
+  ): Promise<OrderWithRelations | null> {
+    if (!idempotencyKey) return null;
+    // No `deletedAt` filter: the unique index still holds deleted rows, so a
+    // key that belongs to a deleted order must be reported, not reused.
+    const existing = await this.prisma.order.findFirst({
+      where: { tenantId, idempotencyKey },
+      select: {
+        id: true,
+        orderCode: true,
+        patientId: true,
+        branchId: true,
+        deletedAt: true,
+      },
+    });
+    if (!existing) return null;
+    if (
+      existing.deletedAt ||
+      existing.patientId !== patientId ||
+      existing.branchId !== branchId
+    ) {
+      throw new OrderIdempotencyKeyConflictException(existing.orderCode);
+    }
+    return this.findById(existing.id, tenantId);
+  }
+
+  /** True when a P2002 comes from the per-tenant `idempotency_key` unique index. */
+  private isIdempotencyKeyConflict(e: unknown): boolean {
+    if (
+      !(e instanceof Prisma.PrismaClientKnownRequestError) ||
+      e.code !== 'P2002'
+    ) {
+      return false;
+    }
+    const target = e.meta?.target;
+    const targets: unknown[] = Array.isArray(target) ? target : [target];
+    // Postgres reports the column names (or the index name, which contains
+    // them); accept the Prisma field name too in case the engine maps it.
+    return targets.some(
+      (t) =>
+        typeof t === 'string' &&
+        (t.includes('idempotency_key') || t.includes('idempotencyKey')),
+    );
   }
 
   /**

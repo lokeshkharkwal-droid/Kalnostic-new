@@ -6609,6 +6609,13 @@ model Order {
   // `{order_id_barcode}` / `{order_id_qr_code}` lab-report template tags.
   orderIdBarcode  String?       @map("order_id_barcode")
   orderIdQrCode   String?       @map("order_id_qr_code")
+  // Client-generated key of the submission that created this order (one UUID per
+  // Create Order form session, kept across retries of that submission). A repeat
+  // POST /orders carrying the same key returns this order instead of creating a
+  // duplicate (and duplicate payment rows). Unique per tenant via
+  // `@@unique([tenantId, idempotencyKey])`; NULL for orders created without a
+  // key (Postgres treats NULLs as distinct, so those are never constrained).
+  idempotencyKey  String?       @map("idempotency_key")
   status          OrderStatus   @default(DRAFT)
   orderDate       DateTime      @map("order_date") @db.Date
   orderType       OrderType     @map("order_type")
@@ -6789,6 +6796,10 @@ model Order {
   @@index([billStatus])
   @@index([billId])
   @@index([branchId, externalOrderId])
+  // Duplicate-submission guard (see `idempotencyKey`). A concurrent duplicate
+  // insert blocks on this index until the first transaction commits, then fails
+  // with P2002 — which OrderService.create turns into an idempotent replay.
+  @@unique([tenantId, idempotencyKey], map: "orders_tenant_id_idempotency_key_key")
   // The order barcode VALUE is unique per TENANT among active orders, enforced by
   // the partial unique index `orders_tenant_order_barcode_active_unique` (in
   // prisma/rls.sql — Prisma can't express `WHERE deleted_at IS NULL`). It does NOT
