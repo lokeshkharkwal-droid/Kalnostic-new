@@ -370,7 +370,10 @@ export class PublicService {
             type: p.entryType,
             amount: isRefund ? num(p.refundAmount) : num(p.paidAmount),
             paymentMode: p.paymentMode,
-            paymentDate: (p.paymentDate ?? p.createdAt)?.toISOString() ?? null,
+            // `paymentDate` is a date-only value (midnight UTC), which renders as a
+            // fixed 5:30 am in IST. `createdAt` is the real instant the payment was
+            // recorded — the same kind of timestamp the Billings listing shows.
+            paymentDate: (p.createdAt ?? p.paymentDate)?.toISOString() ?? null,
             reference: p.reference ?? null,
           };
         })
