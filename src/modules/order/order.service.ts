@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { publicOrderQrCode } from '../lab-report/utils/print-barcode.util';
@@ -49,6 +49,8 @@ import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebo
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
 import { EmergencyPricingService } from '../registration-settings/emergency-pricing.service';
+import { InventoryConsumptionService } from '../inventory-integration/inventory-consumption.service';
+import { InventoryUpstreamError } from '../inventory-integration/inventory-consumption.client';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
@@ -293,6 +295,8 @@ import {
   PaymentWithoutBillGeneratedException,
   TestNotDeletableAfterReportException,
   EmergencyPricingChangedException,
+  OrderInventoryStockException,
+  OrderInventoryConsumeFailedException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -498,6 +502,8 @@ const BILL_DOCUMENT_PRINT_TYPES = new Set<OrderPrintType>([
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
@@ -516,6 +522,10 @@ export class OrderService {
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly config: ConfigService,
     private readonly emergencyPricingService: EmergencyPricingService,
+    // Optional so the many unit specs that construct OrderService positionally
+    // need no change; the real app always injects it (global provider). When
+    // absent, inventory consumption is simply skipped.
+    private readonly inventoryConsumption?: InventoryConsumptionService,
   ) {}
 
   /**
@@ -621,6 +631,19 @@ export class OrderService {
         internalReferralId: dto.internalReferralId,
         externalReferralId: dto.externalReferralId,
       });
+      // Inventory consumption gate: when a lab test is mapped to a proforma (at
+      // this branch) with insufficient stock, fail BEFORE the order is created so
+      // nothing is half-committed. The authoritative deduction happens AFTER
+      // creation (see below) and re-checks stock atomically. No-op unless the
+      // inventory integration is configured and a mapping applies.
+      const stock = await this.inventoryConsumption?.validateForOrder(
+        tenantId,
+        branchId,
+        dto.items ?? [],
+      );
+      if (stock && !stock.ok) {
+        throw new OrderInventoryStockException(stock.shortages);
+      }
     }
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
@@ -1168,6 +1191,35 @@ export class OrderService {
       throw e;
     }
     const created = await this.findById(createdId, tenantId);
+
+    // Inventory consumption: for a finalized ORDER, deduct the proforma-mapped
+    // products and record the linked inventory sale. The inventory call is atomic
+    // and idempotent (keyed on this order's id), so a failure deducts nothing —
+    // we then roll the order back (compensation) and surface a clear error, so the
+    // order + inventory never end up inconsistent. Skipped for DRAFT/QUOTE/
+    // APPOINTMENT and when nothing is mapped / the integration is off.
+    if (dto.status === OrderStatus.ORDER && this.inventoryConsumption) {
+      try {
+        await this.inventoryConsumption.consumeForOrder(tenantId, branchId, {
+          id: created.id,
+          orderCode: created.orderCode,
+          patientId: created.patientId,
+          orderDate: created.orderDate ?? null,
+          items: created.items,
+        });
+      } catch (err) {
+        await this.rollbackOrderAfterConsumeFailure(tenantId, created.id);
+        if (err instanceof OrderInventoryStockException) throw err;
+        const message =
+          err instanceof InventoryUpstreamError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        throw new OrderInventoryConsumeFailedException(message);
+      }
+    }
+
     // Fire-and-forget: notify the patient (email + in-app) that the order was
     // created. Handled by ClinicalEventListener; never blocks order creation.
     void this.eventEmitter.emitAsync('order.created', {
@@ -1178,6 +1230,39 @@ export class OrderService {
       orderCode: created.orderCode,
     });
     return created;
+  }
+
+  /**
+   * Compensating rollback when inventory consumption fails AFTER an order was
+   * committed: soft-delete the order + its accession samples and mark it
+   * CANCELLED, so no half-consumed order lingers. This is a system rollback (not a
+   * user cancellation), so it deliberately bypasses the cancellation business
+   * guards. Best-effort — a failure here is logged, never masking the original
+   * consume error.
+   */
+  private async rollbackOrderAfterConsumeFailure(
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    try {
+      const now = new Date();
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.orderSample.updateMany({
+          where: { orderId, tenantId, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.CANCELLED, deletedAt: now },
+        });
+      });
+    } catch (rollbackErr) {
+      this.logger.error(
+        `Failed to roll back order ${orderId} after inventory consume failure: ${String(
+          rollbackErr,
+        )}`,
+      );
+    }
   }
 
   /**
