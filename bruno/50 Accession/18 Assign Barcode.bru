@@ -47,6 +47,12 @@ docs {
   S3, and stores the URL in `orderIdBarcode` for **every** sample in the group.
   All samples in one group share the same barcode value + image.
 
+  **A number a Repeat took off.** A Repeat takes the barcode off a sample on purpose and keeps the number for it
+  (`barcodeBeforeRepeat`). While that sample is still waiting for its new tube (Repeat or Hold, no barcode yet) the number
+  is **reserved**: typing it, onto any sample (the waiting one included), is refused with 422
+  `BARCODE_RESERVED_BY_REPEAT` and nothing is written, so Retrieve can still put the number back. Once the sample is
+  collected again it holds a new barcode and the old number is free. Automatic numbers never reuse a retired number.
+
   **Locked samples:** the barcode belongs to the physical tube that travels, so
   it cannot be changed (422 `SAMPLE_BARCODE_LOCKED`, nothing written) for a sample
   that is out at another branch / partner / centre (Sent, Forwarded, Outsourced)

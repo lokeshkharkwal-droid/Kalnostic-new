@@ -7,6 +7,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { SampleNoteDto } from './sample-note.dto';
+import { RawBoolean } from '../../../common/decorators/raw-boolean.decorator';
 
 /**
  * Shared dispatch fields for the Send / Forward / Outsource modals (PDF §B.9
@@ -52,6 +53,7 @@ export class TransferDispatchDto extends SampleNoteDto {
    * Outsource→OUTSOURCED) with no §A.9 legality check.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 
@@ -60,6 +62,7 @@ export class TransferDispatchDto extends SampleNoteDto {
    * transfer instead of failing the whole batch. Ignored when `force` is set.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 }

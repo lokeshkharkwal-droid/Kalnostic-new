@@ -34,6 +34,7 @@ function build(rows: Row[]) {
     orderSample: {
       findMany: jest.fn().mockResolvedValue(rows),
       updateMany: jest.fn().mockResolvedValue({ count: rows.length }),
+      update: jest.fn().mockResolvedValue({}),
     },
     orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
@@ -61,6 +62,57 @@ describe('clearBarcodeForRepeatInTx', () => {
         repeatBatchId: 'batch-1',
         updatedBy: 'p1',
       },
+    });
+  });
+
+  describe('remembers the barcode that came off (Search Sample finds the sample by it)', () => {
+    it("stores each row's own barcode on the row, one value per row", async () => {
+      const m = build([
+        row('s1', { barcode: '10001' }),
+        row('s2', { barcode: '10002' }),
+      ]);
+      await m.run(['s1', 's2']);
+      expect(m.tx.orderSample.update).toHaveBeenCalledTimes(2);
+      expect(m.tx.orderSample.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { barcodeBeforeRepeat: '10001' },
+      });
+      expect(m.tx.orderSample.update).toHaveBeenCalledWith({
+        where: { id: 's2' },
+        data: { barcodeBeforeRepeat: '10002' },
+      });
+    });
+
+    it('never overwrites what an earlier Repeat stored when the row has no barcode now', async () => {
+      const m = build([row('s1', { barcode: null })]);
+      await m.run(['s1']);
+      // the row is cleared (barcode stays null) but its remembered barcode is not touched
+      expect(m.tx.orderSample.updateMany).toHaveBeenCalledTimes(1);
+      expect(m.tx.orderSample.update).not.toHaveBeenCalled();
+      expect(m.tx.orderSampleStatusHistory.create).not.toHaveBeenCalled();
+    });
+
+    it('a second Repeat remembers the newer barcode (the tube of the first Repeat was replaced long ago)', async () => {
+      const m = build([row('s1', { barcode: '10005' })]);
+      await m.run(['s1']);
+      expect(m.tx.orderSample.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { barcodeBeforeRepeat: '10005' },
+      });
+    });
+
+    it('also remembers the fresh tube when a Retrieve puts the sample back into Repeat', async () => {
+      const m = build([row('s1', { barcode: '10006' })]);
+      await clearBarcodeForRepeatInTx(m.tx as never, {
+        tenantId: 't1',
+        personId: 'p1',
+        sampleIds: ['s1'],
+        via: 'retrieve',
+      });
+      expect(m.tx.orderSample.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { barcodeBeforeRepeat: '10006' },
+      });
     });
   });
 
@@ -128,12 +180,21 @@ describe('clearBarcodeForRepeatInTx', () => {
 });
 
 describe('barcodeRemovedFrom reads back every barcode the branch settings can make', () => {
-  it.each(['10001', 'LAB-10001', 'LAB/10001', 'LAB_10001', 'LAB/10001/A', '10001-A_2'])('%s', (barcode) => {
+  it.each([
+    '10001',
+    'LAB-10001',
+    'LAB/10001',
+    'LAB_10001',
+    'LAB/10001/A',
+    '10001-A_2',
+  ])('%s', (barcode) => {
     expect(barcodeRemovedFrom(barcodeRemovedNote(barcode))).toBe(barcode);
   });
 
-  it('a line that is not a Repeat\'s (written when a Retrieve takes the fresh barcode off) is not read as one', () => {
-    expect(barcodeRemovedFrom(barcodeRemovedByRetrieveNote('LAB/10001'))).toBeNull();
+  it("a line that is not a Repeat's (written when a Retrieve takes the fresh barcode off) is not read as one", () => {
+    expect(
+      barcodeRemovedFrom(barcodeRemovedByRetrieveNote('LAB/10001')),
+    ).toBeNull();
   });
 
   it('no note, an empty note or an unrelated note: null', () => {
