@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { SecurityModule } from '../security/security.module';
+import { AuditModule } from '../audit/audit.module';
 import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { BranchModule } from '../branch/branch.module';
 import { LocationModule } from '../location/location.module';
@@ -23,6 +24,7 @@ import { ExchangeTenantIdService } from './exchange-tenant-id.service';
   imports: [
     PrismaModule,
     SecurityModule,
+    AuditModule,
     AuthRoleModule,
     BranchModule,
     LocationModule,

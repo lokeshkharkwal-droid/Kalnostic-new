@@ -129,6 +129,37 @@ export class AuditService {
   }
 
   /**
+   * Record an audit event INSIDE the caller's transaction, so the row commits (or rolls back)
+   * together with the change it describes. Unlike {@link record} this is NOT fire-and-forget:
+   * a failed insert throws and rolls the whole transaction back, so the change can never be
+   * saved without its audit row. Use it only where the record is part of the guarantee (for
+   * example a setting whose old and new value must always be on file); everything else keeps
+   * using {@link record}, which must never fail the business operation.
+   * @param tx the caller's transaction client (already tenant-scoped)
+   * @param input the event to record
+   */
+  async recordInTx(
+    tx: Prisma.TransactionClient,
+    input: AuditRecordInput,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId: input.tenantId,
+        branchId: input.branchId ?? null,
+        module: input.module,
+        action: input.action ?? AuditAction.OTHER,
+        description: input.description,
+        actorPersonId: input.actorPersonId,
+        actorRoleKey: input.actorRoleKey ?? null,
+        actorRoleLabel: input.actorRoleLabel ?? null,
+        ipAddress: input.ipAddress ?? null,
+        resourceId: input.resourceId ?? null,
+        metadata: input.metadata ?? Prisma.JsonNull,
+      },
+    });
+  }
+
+  /**
    * Record a **SiteAdmin** audit event. **Fire-and-forget** — never throws and
    * never blocks the caller, exactly like {@link record}.
    *

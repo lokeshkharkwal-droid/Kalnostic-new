@@ -63,22 +63,58 @@ describe('OrderSampleService.generateForOrderInTx - history lines of an auto-acc
     },
     labTestSample: {
       findMany: jest.fn().mockResolvedValue([
-        { id: 'lts-1', sampleName: 'Serum', sampleType: 'Blood', containerType: 'PLAIN_TUBE_RED_TOP' },
+        {
+          id: 'lts-1',
+          sampleName: 'Serum',
+          sampleType: 'Blood',
+          containerType: 'PLAIN_TUBE_RED_TOP',
+        },
       ]),
+    },
+    // The order already carries its grouping mode (decided when it first got samples).
+    order: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'order-1', groupingMode: 'DEPARTMENT_SAMPLE_NAME' },
+        ]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     tenant: { update: jest.fn().mockResolvedValue({ accessionCounter: 7 }) },
   });
 
   const lines = async (isSampleFlow: boolean) => {
     const tx = txFor(isSampleFlow);
-    await build().generateForOrderInTx(tx as never, 't1', 'b1', 'p1', 'order-1');
-    const data = (tx.orderSample.create.mock.calls as unknown as Array<[{ data: { statusHistory: { create: Array<{ action: string; createdAt?: Date }> } } }]>)[0]![0].data;
+    await build().generateForOrderInTx(
+      tx as never,
+      't1',
+      'b1',
+      'p1',
+      'order-1',
+    );
+    const data = (
+      tx.orderSample.create.mock.calls as unknown as Array<
+        [
+          {
+            data: {
+              statusHistory: {
+                create: Array<{ action: string; createdAt?: Date }>;
+              };
+            };
+          },
+        ]
+      >
+    )[0]![0].data;
     return data.statusHistory.create;
   };
 
   it('Sample Flow = No: generate, collect, accept, each with its OWN time, one millisecond apart and in that order', async () => {
     const rows = await lines(false);
-    expect(rows.map((r) => r.action)).toEqual(['generate', 'collect', 'accept']);
+    expect(rows.map((r) => r.action)).toEqual([
+      'generate',
+      'collect',
+      'accept',
+    ]);
     const times = rows.map((r) => r.createdAt!.getTime());
     expect(times.every((t) => Number.isFinite(t))).toBe(true);
     expect(times[1]! - times[0]!).toBe(1);
@@ -88,5 +124,44 @@ describe('OrderSampleService.generateForOrderInTx - history lines of an auto-acc
   it('Sample Flow = Yes: a single generate line (nothing to order)', async () => {
     const rows = await lines(true);
     expect(rows.map((r) => r.action)).toEqual(['generate']);
+  });
+
+  describe("the order's grouping mode is decided when it first gets samples", () => {
+    it('an order with no mode takes the tenant mode (read under the tenant lock) BEFORE its first sample is created', async () => {
+      const tx = txFor(true);
+      tx.order.findMany
+        .mockResolvedValueOnce([{ id: 'order-1', groupingMode: null }]) // before: undecided
+        .mockResolvedValueOnce([{ id: 'order-1', groupingMode: 'ORDER' }]); // re-read after the conditional update
+      tx.tenant.update.mockResolvedValue({
+        accessionCounter: 7,
+        groupingMode: 'ORDER',
+      });
+      await build().generateForOrderInTx(
+        tx as never,
+        't1',
+        'b1',
+        'p1',
+        'order-1',
+      );
+      expect(tx.order.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['order-1'] }, tenantId: 't1', groupingMode: null },
+        data: { groupingMode: 'ORDER' },
+      });
+      expect(tx.order.updateMany.mock.invocationCallOrder[0]!).toBeLessThan(
+        tx.orderSample.create.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('an order that already has a mode keeps it (items added later never change it)', async () => {
+      const tx = txFor(true); // the mock order is already decided
+      await build().generateForOrderInTx(
+        tx as never,
+        't1',
+        'b1',
+        'p1',
+        'order-1',
+      );
+      expect(tx.order.updateMany).not.toHaveBeenCalled();
+    });
   });
 });
