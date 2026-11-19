@@ -25,6 +25,7 @@ body:json {
     "orderType": "WALK_IN",
     "billingType": "CASH_CLIENT",
     "isUrgentBill": false,
+    "emergencyPricing": false,
     "isBillGenerated": true,
     "isPregnant": false,
     "orderNotes": "Fasting sample; collect in the morning",
@@ -207,6 +208,16 @@ docs {
     allowed when the patient's current gender is `FEMALE` — otherwise 422
     `ORDER_PREGNANCY_REQUIRES_FEMALE` (male / other / prefer-not-to-say / no
     gender recorded).
+  - **Lab test Age Restriction** (server-enforced; every status except `QUOTE`):
+    each `items[]` test line whose branch test has `isAgeRestricted`, and every
+    restricted member of a panel line, must admit the patient's age on
+    `orderDate` (min inclusive, max covers its whole unit; an age-only patient
+    is aged from the day the age was recorded). Otherwise 422
+    `ORDER_TEST_AGE_RESTRICTED`, with the patient's age and the allowed range in
+    the message, e.g. `Patient's age (5 Years) does not meet the age requirement
+    for "Vitamin B12" (allowed age: 18 Years - 60 Years).` A restricted line for
+    a patient with neither DOB nor age → 422 `ORDER_PATIENT_AGE_REQUIRED`.
+    Orders of unrestricted tests are unaffected.
   - `orderDateType` — **read-only, server-derived** classification of `orderDate`
     vs. the day the order is created (server "today"): `BACKTRACKED` when dated in
     the past, `ADVANCE_DATED` when dated in the future, `CURRENT` when today.
@@ -271,6 +282,19 @@ docs {
   "Get Order"), distinct from `branchLabTest.priceMsrp`/`branchLabPanel.priceMsrp`
   (the referenced catalogue's current master reference price, which can drift
   from what was actually charged).
+
+  **Emergency Pricing** (Registration Settings → Emergency Pricing): when it
+  applies, each catalogue **lab-test** line is priced at the list row's
+  `emergencyPrice` instead of its `listPrice` (a test whose `emergencyPrice` is
+  0 keeps its `listPrice`; panels always keep their `listPrice`). The server
+  decides — `Override || (ApplyInNonOperatingHours && branch closed now)`, see
+  `GET /registration-settings/emergency-pricing` — for every status except
+  `QUOTE` (never emergency-priced) and stamps it on the order as
+  `isEmergencyPricing`. Optional body `emergencyPricing` (boolean) = the state
+  the client priced with; when sent and it no longer matches the server's
+  decision (e.g. the branch closed while the form was open) the order is
+  rejected with **409 `EMERGENCY_PRICING_CHANGED`** — refresh the status,
+  re-price and save again.
 
   Optional `selectedMemberBranchLabTestIds` (PANEL lines only) runs only a chosen
   **subset** of a panel's member tests — the selected members' branch lab test ids.

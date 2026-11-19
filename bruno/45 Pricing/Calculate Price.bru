@@ -54,7 +54,13 @@ docs {
   payableAmount }`.
 
   - `totalAmount` = sum of the selected branch lab tests' + panels' list prices
-    (`priceMsrp`). Unknown/deleted/other-branch ids are simply not summed.
+    (`listPrice`). Unknown/deleted/other-branch ids are simply not summed.
+  - Optional `emergencyPricing` (boolean) — price lab tests at their
+    `emergencyPrice` (when > 0, else `listPrice`); panels unchanged. Create Order
+    sends the emergency-pricing state it priced with (see
+    `GET /registration-settings/emergency-pricing`, or the edited order's
+    `isEmergencyPricing`). Preview only — the order save resolves the
+    authoritative state itself. Omitted/false = list prices (Quotations).
   - `orderDiscount` is echoed from the body, clamped to `≤ totalAmount`. A
     fractional value (e.g. from percentage math on the client) is accepted and
     **rounded to a whole minor unit**, matching how the discount is stored when

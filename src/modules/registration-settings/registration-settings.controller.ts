@@ -18,6 +18,7 @@ import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.con
 import { RegistrationSettingsService } from './registration-settings.service';
 import { SaveRegistrationSettingsDto } from './dto/save-registration-settings.dto';
 import { ExternalIdService } from './external-id.service';
+import { EmergencyPricingService } from './emergency-pricing.service';
 
 /**
  * Registration settings endpoints (LIMS Settings doc "Registration Module").
@@ -31,6 +32,7 @@ export class RegistrationSettingsController {
   constructor(
     private readonly registrationSettingsService: RegistrationSettingsService,
     private readonly externalIdService: ExternalIdService,
+    private readonly emergencyPricingService: EmergencyPricingService,
   ) {}
 
   /** Select/list enum values for the frontend controls. */
@@ -57,6 +59,23 @@ export class RegistrationSettingsController {
       profile.branchId ?? '',
       purpose,
     );
+  }
+
+  /**
+   * Whether the active branch's orders are emergency-priced right now
+   * (Registration Settings → Emergency Pricing): `Override` toggle on, or the
+   * non-operating-hours toggle on while the branch is outside its operating
+   * hours. Used by Create Order to show (and price) lab tests at their Emergency
+   * Price. Login-only like the external-id preview — order creators need it
+   * without holding the settings-view permission; it exposes only booleans.
+   * A business-tier caller (no active branch) always gets `active: false`.
+   */
+  @Get('emergency-pricing')
+  getEmergencyPricingStatus(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.emergencyPricingService.resolve(tenantId, profile.branchId);
   }
 
   /**

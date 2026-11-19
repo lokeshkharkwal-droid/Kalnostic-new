@@ -93,6 +93,8 @@ function setup(
     returnCopyToOrigin: jest.fn().mockResolvedValue('sA'),
     recordReturnedByReceiverInTx: jest.fn().mockResolvedValue(undefined),
     removeTransferCloneInTx: jest.fn().mockResolvedValue(undefined),
+    // the receiver's undo of an acceptance asks whether the copy's report is past Pending: it is not
+    hasStartedReport: jest.fn().mockResolvedValue(false),
   };
   const svc = new SampleTransferService(
     prisma as never,
@@ -1334,6 +1336,48 @@ describe('SampleTransferService — Retrieve (one-step-back undo)', () => {
     };
     expect(upd.data.transferStatus).toBe(TransferStatus.RECEIVED);
     expect(upd.data.clonedSampleId).toBeNull();
+  });
+
+  it('refuses to undo an ACCEPTED transfer when the copy report is already past Pending (the receiver saved / validated a result): nothing is moved back', async () => {
+    const { svc, tx, samples } = setup({
+      transferStatus: TransferStatus.ACCEPTED,
+      clonedSampleId: 'copy1',
+    });
+    samples.hasStartedReport.mockResolvedValue(true);
+    tx.orderSample.findFirst.mockImplementation(
+      (args: { where: { id: string } }) =>
+        Promise.resolve(
+          args.where.id === 'copy1'
+            ? { id: 'copy1', status: SampleStatus.ACCEPTED, branchId: 'B' } // still Accepted, but its report was worked
+            : { id: 'sA', branchId: 'A', status: SampleStatus.SENT_INTERNAL },
+        ),
+    );
+    await expect(
+      svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
+    ).rejects.toBeInstanceOf(TransferRetrieveBlockedException);
+    expect(samples.hasStartedReport).toHaveBeenCalledWith(expect.anything(), TENANT, expect.objectContaining({ id: 'copy1' }));
+    expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
+    expect(finalWrites(tx)).toHaveLength(0);
+  });
+
+  it('with skip-invalid the transfer whose copy report was worked is skipped with its reason, not moved back', async () => {
+    const { svc, tx, samples } = setup({
+      transferStatus: TransferStatus.ACCEPTED,
+      clonedSampleId: 'copy1',
+    });
+    samples.hasStartedReport.mockResolvedValue(true);
+    tx.orderSample.findFirst.mockImplementation(
+      (args: { where: { id: string } }) =>
+        Promise.resolve(
+          args.where.id === 'copy1'
+            ? { id: 'copy1', status: SampleStatus.ACCEPTED, branchId: 'B' }
+            : { id: 'sA', branchId: 'A', status: SampleStatus.SENT_INTERNAL },
+        ),
+    );
+    const r = await svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}, true);
+    expect(r.skipped).toHaveLength(1);
+    expect(r.skipped[0]!.code).toBe('TRANSFER_RETRIEVE_BLOCKED');
+    expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
   });
 
   it('refuses to undo an ACCEPTED transfer whose clone has already been worked on', async () => {

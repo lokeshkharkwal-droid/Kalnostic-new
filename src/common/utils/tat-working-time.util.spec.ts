@@ -2,6 +2,7 @@ import { DayOfWeek, TatUnit } from '@prisma/client';
 import {
   classifyTat,
   evaluateTat,
+  fromBranchLocalInstant,
   hhmmToMinutes,
   tatUnitToMinutes,
   toBranchLocalInstant,
@@ -204,6 +205,37 @@ describe('toBranchLocalInstant', () => {
     expect(workingMinutesBetween(start, end, { shifts: [dayShift()] })).toBe(
       180,
     );
+  });
+});
+
+describe('fromBranchLocalInstant', () => {
+  it('passes the instant through unchanged when no timezone is given', () => {
+    const d = new Date('2024-01-01T00:00:00Z');
+    expect(fromBranchLocalInstant(d, null).getTime()).toBe(d.getTime());
+    expect(fromBranchLocalInstant(d, '').getTime()).toBe(d.getTime());
+  });
+
+  it('turns a business-local wall clock into the true UTC instant (14:30 IST -> 09:00Z)', () => {
+    // A Date whose UTC getters read 14:30 represents the 14:30 IST wall clock;
+    // its true instant is 09:00Z. This is the appointment-booking conversion.
+    const localAsUtc = new Date('2026-11-10T14:30:00Z');
+    expect(
+      fromBranchLocalInstant(localAsUtc, 'Asia/Kolkata').toISOString(),
+    ).toBe('2026-11-10T09:00:00.000Z');
+  });
+
+  it('round-trips with toBranchLocalInstant for assorted zones', () => {
+    const instants = [
+      new Date('2026-06-15T09:00:00Z'),
+      new Date('2026-01-01T23:45:00Z'),
+      new Date('2026-11-10T04:00:00Z'),
+    ];
+    for (const tz of ['Asia/Kolkata', 'America/New_York', 'Australia/Sydney']) {
+      for (const utc of instants) {
+        const back = fromBranchLocalInstant(toBranchLocalInstant(utc, tz), tz);
+        expect(back.getTime()).toBe(utc.getTime());
+      }
+    }
   });
 });
 

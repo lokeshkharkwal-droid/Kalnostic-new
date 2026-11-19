@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { publicOrderQrCode } from '../lab-report/utils/print-barcode.util';
@@ -7,6 +7,7 @@ import {
   AppointmentType,
   BillStatus,
   BranchStatus,
+  CollectionStatus,
   DiscountMode,
   DoctorType,
   ExternalIdFormat,
@@ -47,6 +48,9 @@ import { SlotReservationService } from '../phlebotomist-schedule/slot-reservatio
 import { PhlebotomistCollectionService } from '../phlebotomist-collection/phlebotomist-collection.service';
 import { RegistrationSettingsService } from '../registration-settings/registration-settings.service';
 import { ExternalIdService } from '../registration-settings/external-id.service';
+import { EmergencyPricingService } from '../registration-settings/emergency-pricing.service';
+import { InventoryConsumptionService } from '../inventory-integration/inventory-consumption.service';
+import { InventoryUpstreamError } from '../inventory-integration/inventory-consumption.client';
 import { ReferralCreditService } from '../referral-credit/referral-credit.service';
 import { CommunicationRecipientNotAllowedException } from '../referral-credit/referral-credit.exceptions';
 import { TenantService } from '../tenant/tenant.service';
@@ -64,6 +68,7 @@ import {
   salutationLabel,
   patientPrintAgeDisplay,
   toBranchLocalInstant,
+  fromBranchLocalInstant,
   formatTenantDate,
   formatTenantDateTime,
   formatOrderDateTime,
@@ -72,10 +77,18 @@ import {
   buildCollectionProgressWhere,
   collectionProgressByOrder,
   COLLECTION_WORKFLOW_ITEM_WHERE,
+  accessionSampleNotesWhere,
+  emptyNoteCounts,
+  formatSampleLabel,
+  labReportNotesForOrdersWhere,
+  reportSampleLinks,
+  resolveReportLabels,
+  effectiveLabTestPrice,
+  type NoteCounts,
 } from '../../common/utils';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { ListOrdersDto } from './dto/list-orders.dto';
+import { ListOrdersDto, type OrderSortKey } from './dto/list-orders.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import type { OrderNoteCategoryValue } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
@@ -121,6 +134,21 @@ import {
   recomputeBillStatusInTx,
 } from './utils/bill-status';
 import { CANCEL_BLOCKING_REPORT_STATUSES } from './utils/cancel-rules.util';
+import {
+  AgeGateLine,
+  AgeGateLookup,
+  RestrictedTest,
+  ageViolationMessage,
+  findAgeViolations,
+  linesToAgeCheck,
+  restrictedTestsOf,
+} from './utils/order-age-restriction.util';
+import {
+  formatAgeOn,
+  orderDayOf,
+  toAgeLimit,
+} from '../../common/utils/age-restriction.util';
+import { exactBirthDate } from '../../common/utils/age-dob.util';
 import { BillingGroupBy } from './dto/billing-grouped-query.dto';
 import { BillingDimension } from './dto/billing-query.dto';
 import {
@@ -236,6 +264,8 @@ import {
   OrderPatientNotFoundException,
   OrderPersonNotFoundException,
   OrderPregnancyRequiresFemalePatientException,
+  OrderTestAgeRestrictedException,
+  OrderPatientAgeRequiredException,
   OrderReferralDoctorNotFoundException,
   OrderReferralPanelNotFoundException,
   NoActiveOrderPrintTemplateException,
@@ -264,6 +294,9 @@ import {
   AppointmentPaymentRequiredException,
   PaymentWithoutBillGeneratedException,
   TestNotDeletableAfterReportException,
+  EmergencyPricingChangedException,
+  OrderInventoryStockException,
+  OrderInventoryConsumeFailedException,
 } from './exceptions/order.exceptions';
 import type { RegistrationSetting } from '@prisma/client';
 // Reused so an inline order-payment overpayment raises the SAME
@@ -306,9 +339,11 @@ type DiscountTdsPaymentRow = {
  */
 /**
  * One row in an Order Overview note stream. Unifies order-store notes
- * (`source: 'ORDER'`, editable-in-future) and the read-only accession sample
- * notes merged into the SAMPLE tab (`source: 'ACCESSION'`), so the frontend
- * renders one chronological history per tab regardless of origin.
+ * (`source: 'ORDER'`, editable-in-future), the read-only Technician Reporting
+ * notes of the order's reports (`source: 'LAB_REPORT'`, same category), and the
+ * read-only accession sample notes merged into the SAMPLE tab
+ * (`source: 'ACCESSION'`), so the frontend renders one chronological history per
+ * tab regardless of origin.
  */
 export interface OrderNoteView {
   id: string;
@@ -316,10 +351,15 @@ export interface OrderNoteView {
   body: string;
   createdByName: string | null;
   createdAt: Date;
-  source: 'ORDER' | 'ACCESSION';
+  source: 'ORDER' | 'ACCESSION' | 'LAB_REPORT';
   readonly: boolean;
   /** Only set for accession-sourced SAMPLE notes (e.g. 'collect', 'accept'). */
   action?: string;
+  /** `LAB_REPORT` notes: the test the note was written on in Technician Reporting. */
+  testName?: string | null;
+  /** `LAB_REPORT` and `ACCESSION` notes: the sample(s) it belongs to, as
+   * "<sample name> · <barcode>" (comma-separated for a test on several samples). */
+  sampleLabel?: string | null;
 }
 
 /** The order documents that support "Share and Inform". */
@@ -462,6 +502,8 @@ const BILL_DOCUMENT_PRINT_TYPES = new Set<OrderPrintType>([
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
@@ -479,6 +521,11 @@ export class OrderService {
     private readonly patientService: PatientService,
     private readonly userDepartmentScope: UserDepartmentScopeService,
     private readonly config: ConfigService,
+    private readonly emergencyPricingService: EmergencyPricingService,
+    // Optional so the many unit specs that construct OrderService positionally
+    // need no change; the real app always injects it (global provider). When
+    // absent, inventory consumption is simply skipped.
+    private readonly inventoryConsumption?: InventoryConsumptionService,
   ) {}
 
   /**
@@ -562,6 +609,16 @@ export class OrderService {
     const patientGender = await this.assertPatient(tenantId, dto.patientId);
     this.assertPregnancyAllowed(dto.isPregnant, dto.patientId, patientGender);
     await this.assertItems(tenantId, dto.items);
+    // Lab test Age Restriction — every saved order except a quotation (a quote
+    // is checked when it is converted into an order).
+    if ((dto.status ?? OrderStatus.DRAFT) !== OrderStatus.QUOTE) {
+      await this.assertAgeRestrictions(
+        tenantId,
+        dto.patientId,
+        dto.items ?? [],
+        dto.orderDate,
+      );
+    }
     await this.assertReferrals(tenantId, dto);
     // Referral Panel Settings credit gate (Section 4): block a NEW finalized
     // order when a linked referral (B2B panel / doctor / internal / external) on
@@ -574,6 +631,19 @@ export class OrderService {
         internalReferralId: dto.internalReferralId,
         externalReferralId: dto.externalReferralId,
       });
+      // Inventory consumption gate: when a lab test is mapped to a proforma (at
+      // this branch) with insufficient stock, fail BEFORE the order is created so
+      // nothing is half-committed. The authoritative deduction happens AFTER
+      // creation (see below) and re-checks stock atomically. No-op unless the
+      // inventory integration is configured and a mapping applies.
+      const stock = await this.inventoryConsumption?.validateForOrder(
+        tenantId,
+        branchId,
+        dto.items ?? [],
+      );
+      if (stock && !stock.ok) {
+        throw new OrderInventoryStockException(stock.shortages);
+      }
     }
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
@@ -645,6 +715,18 @@ export class OrderService {
       ? PaymentStatus.PAID
       : derivePaymentStatus(payNet, deferAppointmentPayment ? 0 : payPaid);
 
+    // Emergency Pricing (Registration Settings): decided server-side now and
+    // stamped on the order; lab-test lines bill at their Emergency Price when it
+    // applies. Quotations are never emergency-priced.
+    const isEmergencyPricing = await this.resolveEmergencyPricingNow(
+      tenantId,
+      branchId,
+      dto.status ?? OrderStatus.DRAFT,
+    );
+    this.assertEmergencyPricingExpectation(
+      dto.emergencyPricing,
+      isEmergencyPricing,
+    );
     // Snapshot each item's list unit price from its branch lab test/panel row so
     // the order's prices are stable even if the list is later re-priced (§B5).
     // Loaded before the billing rules so the discount/TDS checks (and the
@@ -654,6 +736,7 @@ export class OrderService {
       tenantId,
       branchId,
       dto.items ?? [],
+      isEmergencyPricing,
     );
 
     // B2B orders bypass ONLY the branch Previous-Dues + Partial-Billing rules:
@@ -826,6 +909,7 @@ export class OrderService {
             orderType: dto.orderType,
             billingType: dto.billingType,
             isUrgentBill: dto.isUrgentBill ?? false,
+            isEmergencyPricing,
             isBillGenerated: dto.isBillGenerated ?? true,
             isPregnant: dto.isPregnant ?? false,
             orderNotes: dto.orderNotes ?? null,
@@ -1107,6 +1191,35 @@ export class OrderService {
       throw e;
     }
     const created = await this.findById(createdId, tenantId);
+
+    // Inventory consumption: for a finalized ORDER, deduct the proforma-mapped
+    // products and record the linked inventory sale. The inventory call is atomic
+    // and idempotent (keyed on this order's id), so a failure deducts nothing —
+    // we then roll the order back (compensation) and surface a clear error, so the
+    // order + inventory never end up inconsistent. Skipped for DRAFT/QUOTE/
+    // APPOINTMENT and when nothing is mapped / the integration is off.
+    if (dto.status === OrderStatus.ORDER && this.inventoryConsumption) {
+      try {
+        await this.inventoryConsumption.consumeForOrder(tenantId, branchId, {
+          id: created.id,
+          orderCode: created.orderCode,
+          patientId: created.patientId,
+          orderDate: created.orderDate ?? null,
+          items: created.items,
+        });
+      } catch (err) {
+        await this.rollbackOrderAfterConsumeFailure(tenantId, created.id);
+        if (err instanceof OrderInventoryStockException) throw err;
+        const message =
+          err instanceof InventoryUpstreamError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        throw new OrderInventoryConsumeFailedException(message);
+      }
+    }
+
     // Fire-and-forget: notify the patient (email + in-app) that the order was
     // created. Handled by ClinicalEventListener; never blocks order creation.
     void this.eventEmitter.emitAsync('order.created', {
@@ -1117,6 +1230,39 @@ export class OrderService {
       orderCode: created.orderCode,
     });
     return created;
+  }
+
+  /**
+   * Compensating rollback when inventory consumption fails AFTER an order was
+   * committed: soft-delete the order + its accession samples and mark it
+   * CANCELLED, so no half-consumed order lingers. This is a system rollback (not a
+   * user cancellation), so it deliberately bypasses the cancellation business
+   * guards. Best-effort — a failure here is logged, never masking the original
+   * consume error.
+   */
+  private async rollbackOrderAfterConsumeFailure(
+    tenantId: string,
+    orderId: string,
+  ): Promise<void> {
+    try {
+      const now = new Date();
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.orderSample.updateMany({
+          where: { orderId, tenantId, deletedAt: null },
+          data: { deletedAt: now },
+        });
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.CANCELLED, deletedAt: now },
+        });
+      });
+    } catch (rollbackErr) {
+      this.logger.error(
+        `Failed to roll back order ${orderId} after inventory consume failure: ${String(
+          rollbackErr,
+        )}`,
+      );
+    }
   }
 
   /**
@@ -1248,17 +1394,58 @@ export class OrderService {
   }
 
   /**
+   * Whether an order saved now (with `status` as its effective status) bills its
+   * lab-test lines at Emergency Price — Registration Settings → Emergency
+   * Pricing, resolved by {@link EmergencyPricingService} for the order's branch.
+   * Quotations and branch-less orders are never emergency-priced.
+   * @param tenantId tenant scope
+   * @param branchId the order's branch (null → false)
+   * @param status the order's effective status after this save
+   */
+  private async resolveEmergencyPricingNow(
+    tenantId: string,
+    branchId: string | null,
+    status: OrderStatus | undefined,
+  ): Promise<boolean> {
+    if (!branchId || status === OrderStatus.QUOTE) return false;
+    const resolved = await this.emergencyPricingService.resolve(
+      tenantId,
+      branchId,
+    );
+    return resolved.active;
+  }
+
+  /**
+   * Reject a save whose client-side pricing used a different emergency-pricing
+   * state than the server's decision (e.g. the branch closed while the form was
+   * open). A no-op when the client did not send `emergencyPricing`.
+   * @throws EmergencyPricingChangedException (409)
+   */
+  private assertEmergencyPricingExpectation(
+    expected: boolean | undefined,
+    actual: boolean,
+  ): void {
+    if (expected !== undefined && expected !== actual) {
+      throw new EmergencyPricingChangedException(expected, actual);
+    }
+  }
+
+  /**
    * Load the list unit price (`listPrice`) for each item's branch lab test/panel,
    * keyed by that row id, so order items can snapshot a stable `unitPrice`. Direct
    * (free-text) items and unknown ids resolve to 0. Branch-scoped.
    * @param tenantId tenant scope
    * @param branchId active branch (null → no prices resolved)
    * @param items the order items to price
+   * @param emergency whether the order is emergency-priced — lab tests then bill
+   *   at their `emergencyPrice` when it is set (> 0), else their `listPrice`
+   *   ({@link effectiveLabTestPrice}); panels have no emergency price
    */
   private async loadItemUnitPrices(
     tenantId: string,
     branchId: string | null,
     items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
+    emergency = false,
   ): Promise<Map<string, number>> {
     const prices = new Map<string, number>();
     if (!branchId || !items.length) {
@@ -1274,7 +1461,7 @@ export class OrderService {
       testIds.length
         ? this.prisma.branchLabTest.findMany({
             where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
-            select: { id: true, listPrice: true },
+            select: { id: true, listPrice: true, emergencyPrice: true },
           })
         : Promise.resolve([]),
       panelIds.length
@@ -1290,7 +1477,10 @@ export class OrderService {
         : Promise.resolve([]),
     ]);
     for (const t of tests) {
-      prices.set(t.id, t.listPrice);
+      prices.set(
+        t.id,
+        effectiveLabTestPrice(t.listPrice, t.emergencyPrice, emergency),
+      );
     }
     for (const p of panels) {
       prices.set(p.id, p.listPrice);
@@ -2029,12 +2219,22 @@ export class OrderService {
 
   /**
    * List an order's notes, newest-first. Without `category`, returns all three
-   * tabs' notes together. For the SAMPLE stream (requested explicitly or as part
-   * of the unfiltered set) the order's accession sample notes are merged in
-   * read-only, so the Order Overview Sample tab shows the complete sample history.
+   * tabs' notes together. Each stream also merges, read-only, the notes the
+   * Technician Reporting screen saved on the order's reports in the same category
+   * (`LabReportNote`), and the SAMPLE stream (requested explicitly or as part of
+   * the unfiltered set) the order's accession sample notes, so every tab shows the
+   * order's complete history wherever a note was written. `noteCountsByOrder`
+   * counts exactly these rows (the Order Console's notes icons).
+   *
+   * With `sampleId` (the In-House list's per-sample notes icons) the list is
+   * narrowed to that sample: the Technician notes of the reports that use it,
+   * its own accession notes, and every Order Overview note - those are saved
+   * against the whole order (no sample), so they belong to every sample of it.
+   * `noteCountsBySample` counts exactly these rows. A sample that is not a live
+   * sample of this order gets an empty list.
    * @param id order id
    * @param tenantId tenant scope (from JWT)
-   * @param query optional category filter
+   * @param query optional category and sample filters
    * @returns notes in the unified `OrderNoteView` shape, `createdAt` descending
    * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
    */
@@ -2044,6 +2244,12 @@ export class OrderService {
     query: ListOrderNotesDto,
   ): Promise<OrderNoteView[]> {
     await this.assertOrderExists(id, tenantId);
+    if (
+      query.sampleId &&
+      !(await this.isLiveOrderSample(id, tenantId, query.sampleId))
+    ) {
+      return [];
+    }
     const rows = await this.prisma.orderNote.findMany({
       where: {
         orderId: id,
@@ -2063,38 +2269,161 @@ export class OrderService {
       readonly: false,
     }));
 
+    notes.push(
+      ...(await this.loadOrderLabReportNotes(
+        id,
+        tenantId,
+        query.category,
+        query.sampleId,
+      )),
+    );
     if (!query.category || query.category === 'SAMPLE') {
-      notes.push(...(await this.loadOrderSampleNotes(id, tenantId)));
+      notes.push(
+        ...(await this.loadOrderSampleNotes(id, tenantId, query.sampleId)),
+      );
     }
 
     notes.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return notes;
   }
 
+  /** Whether `sampleId` is a live sample of the order (the `sampleId` notes filter). */
+  private async isLiveOrderSample(
+    orderId: string,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<boolean> {
+    const sample = await this.prisma.orderSample.findFirst({
+      where: { id: sampleId, orderId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    return sample !== null;
+  }
+
+  /**
+   * The read-only Technician Reporting notes (Order / Sample / Tech Notes,
+   * `POST /lab-reports/:id/notes`) on any live report of the order, in the
+   * `OrderNoteView` shape. Each is tagged with the test (and its sample) it was
+   * written on, since the stream is order-wide. With `sampleId`, only the notes
+   * of the reports that use that sample (`reportSampleLinks`).
+   */
+  private async loadOrderLabReportNotes(
+    orderId: string,
+    tenantId: string,
+    category?: OrderNoteCategoryValue,
+    sampleId?: string,
+  ): Promise<OrderNoteView[]> {
+    const allRows = await this.prisma.labReportNote.findMany({
+      where: labReportNotesForOrdersWhere(tenantId, [orderId], category),
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        category: true,
+        body: true,
+        createdBy: true,
+        createdAt: true,
+        labReportId: true,
+      },
+    });
+    let rows = allRows;
+    if (sampleId && rows.length > 0) {
+      const links = await reportSampleLinks(
+        this.prisma,
+        tenantId,
+        rows.map((r) => r.labReportId),
+      );
+      rows = rows.filter((r) => links.get(r.labReportId)?.has(sampleId));
+    }
+    if (rows.length === 0) return [];
+
+    const [nameById, labelByReport] = await Promise.all([
+      this.resolveActorNames(rows.map((r) => r.createdBy)),
+      resolveReportLabels(
+        this.prisma,
+        tenantId,
+        rows.map((r) => r.labReportId),
+      ),
+    ]);
+    return rows.map((r) => ({
+      id: r.id,
+      category: r.category as OrderNoteCategoryValue,
+      body: r.body,
+      createdByName: nameById.get(r.createdBy) ?? r.createdBy,
+      createdAt: r.createdAt,
+      source: 'LAB_REPORT' as const,
+      readonly: true,
+      testName: labelByReport.get(r.labReportId)?.testName ?? null,
+      sampleLabel: labelByReport.get(r.labReportId)?.sampleLabel ?? null,
+    }));
+  }
+
+  /**
+   * Per-order counts of what {@link findNotes} lists for each category - the
+   * Order Console's notes icons (`GET /orders?includeNoteCounts=true`). Three
+   * queries for the whole page: Order Overview notes, Technician Reporting notes
+   * and (SAMPLE only) accession sample notes.
+   * @param tenantId tenant scope
+   * @param orderIds the page's order ids (may be empty)
+   * @returns map orderId → counts; every requested id is present
+   */
+  private async noteCountsByOrder(
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, NoteCounts>> {
+    const result = new Map<string, NoteCounts>(
+      orderIds.map((id) => [id, emptyNoteCounts()]),
+    );
+    if (orderIds.length === 0) return result;
+
+    const [orderNotes, labReportNotes, accessionNotes] = await Promise.all([
+      this.prisma.orderNote.groupBy({
+        by: ['orderId', 'category'],
+        where: { tenantId, orderId: { in: orderIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.labReportNote.findMany({
+        where: labReportNotesForOrdersWhere(tenantId, orderIds),
+        select: {
+          category: true,
+          labReport: { select: { orderItem: { select: { orderId: true } } } },
+        },
+      }),
+      this.prisma.orderSampleStatusHistory.findMany({
+        where: accessionSampleNotesWhere(tenantId, orderIds),
+        select: { sample: { select: { orderId: true } } },
+      }),
+    ]);
+
+    const add = (orderId: string, category: string, n = 1) => {
+      const counts = result.get(orderId);
+      if (counts && category in counts) {
+        counts[category as keyof NoteCounts] += n;
+      }
+    };
+    for (const g of orderNotes) add(g.orderId, g.category, g._count._all);
+    for (const n of labReportNotes) {
+      add(n.labReport.orderItem.orderId, n.category);
+    }
+    for (const h of accessionNotes) add(h.sample.orderId, 'SAMPLE');
+    return result;
+  }
+
   /**
    * Loads the read-only accession sample notes for an order — every
    * `OrderSampleStatusHistory` row (with a note) across the order's samples, mapped
    * into the SAMPLE `OrderNoteView` shape. These come from the accession page's
-   * Collect Sample / status-update actions (CLAUDE.md §4 accession flow).
+   * Collect Sample / status-update actions (CLAUDE.md §4 accession flow). With
+   * `sampleId`, only that sample's notes.
    */
   private async loadOrderSampleNotes(
     orderId: string,
     tenantId: string,
+    sampleId?: string,
   ): Promise<OrderNoteView[]> {
-    const samples = await this.prisma.orderSample.findMany({
-      where: { orderId, tenantId, deletedAt: null },
-      select: { id: true },
-    });
-    if (samples.length === 0) return [];
-
     const history = await this.prisma.orderSampleStatusHistory.findMany({
-      where: {
-        tenantId,
-        sampleId: { in: samples.map((s) => s.id) },
-        notes: { not: null },
-        deletedAt: null,
-      },
+      where: accessionSampleNotesWhere(tenantId, [orderId], sampleId),
       orderBy: { createdAt: 'desc' },
+      include: { sample: { select: { sampleName: true, barcode: true } } },
     });
     if (history.length === 0) return [];
 
@@ -2112,6 +2441,7 @@ export class OrderService {
       source: 'ACCESSION' as const,
       readonly: true,
       action: h.action,
+      sampleLabel: formatSampleLabel(h.sample.sampleName, h.sample.barcode),
     }));
   }
 
@@ -3807,15 +4137,25 @@ export class OrderService {
     // Appointment-date range (filters `appointmentAt`, which carries a time, so
     // the upper bound is stretched to the end of that day to stay inclusive).
     if (query.appointmentDateFrom || query.appointmentDateTo) {
-      where.appointmentAt = {};
+      // `appointmentAt` is a true UTC instant; the filter bounds are business-local
+      // calendar days, so convert each day boundary (local 00:00 … 23:59:59.999)
+      // to its UTC equivalent via the tenant zone — otherwise a "today" filter is
+      // offset by the tenant's UTC offset.
+      const { timezone } = await this.tenantService.getLocale(tenantId);
+      const appointmentAt: Prisma.DateTimeFilter = {};
       if (query.appointmentDateFrom) {
-        where.appointmentAt.gte = new Date(query.appointmentDateFrom);
+        appointmentAt.gte = fromBranchLocalInstant(
+          new Date(`${query.appointmentDateFrom.slice(0, 10)}T00:00:00.000Z`),
+          timezone,
+        );
       }
       if (query.appointmentDateTo) {
-        const end = new Date(query.appointmentDateTo);
-        end.setUTCHours(23, 59, 59, 999);
-        where.appointmentAt.lte = end;
+        appointmentAt.lte = fromBranchLocalInstant(
+          new Date(`${query.appointmentDateTo.slice(0, 10)}T23:59:59.999Z`),
+          timezone,
+        );
       }
+      where.appointmentAt = appointmentAt;
     }
 
     // Section scope + diagnostics-only flags collapse into one relation filter
@@ -4103,6 +4443,45 @@ export class OrderService {
           }
           break;
       }
+    } else if (query.quotationStatuses?.length) {
+      // Multi-value checkbox filter (Quotations screen): an order matches when
+      // its effective quotation status is ANY of the selected values. Each value
+      // reuses the same runtime derivation as the single-value filter above
+      // (EXPIRED folds in DRAFTs past the validity cutoff; DRAFT excludes them).
+      const statusOrs: Prisma.OrderWhereInput[] = [];
+      for (const st of query.quotationStatuses) {
+        switch (st) {
+          case QuotationStatus.CONVERTED:
+            statusOrs.push({ quotationStatus: QuotationStatus.CONVERTED });
+            break;
+          case QuotationStatus.EXPIRED:
+            statusOrs.push({
+              OR: [
+                { quotationStatus: QuotationStatus.EXPIRED },
+                ...(quotationExpiryCutoff
+                  ? [
+                      {
+                        quotationStatus: QuotationStatus.DRAFT,
+                        orderDate: { lt: quotationExpiryCutoff },
+                      },
+                    ]
+                  : []),
+              ],
+            });
+            break;
+          case QuotationStatus.DRAFT:
+            statusOrs.push(
+              quotationExpiryCutoff
+                ? {
+                    quotationStatus: QuotationStatus.DRAFT,
+                    orderDate: { gte: quotationExpiryCutoff },
+                  }
+                : { quotationStatus: QuotationStatus.DRAFT },
+            );
+            break;
+        }
+      }
+      if (statusOrs.length) and.push({ OR: statusOrs });
     }
 
     if (and.length) where.AND = and;
@@ -4113,6 +4492,79 @@ export class OrderService {
       quotationValidityUnit,
       quotationExpiryCutoff,
     };
+  }
+
+  /**
+   * Build the Prisma `orderBy` for the order list from the whitelisted
+   * `sortBy`/`sortOrder` (see {@link ORDER_SORT_KEYS}). Maps each key to a stored
+   * column, a to-one relation, or a denormalized billing-rollup column. Relation
+   * and name sorts add a stable `createdAt` tie-break. Defaults to newest-first
+   * (`createdAt desc`) when no sort is requested, preserving the previous
+   * behaviour. All sorting happens in the database — never client-side.
+   * @param sortBy whitelisted sort column (undefined → default)
+   * @param sortOrder `asc` | `desc` (undefined → `desc`)
+   */
+  private buildOrderListOrderBy(
+    sortBy: OrderSortKey | undefined,
+    sortOrder: 'asc' | 'desc' | undefined,
+  ):
+    | Prisma.OrderOrderByWithRelationInput
+    | Prisma.OrderOrderByWithRelationInput[] {
+    const dir: Prisma.SortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+    switch (sortBy) {
+      case 'orderDate':
+        return [{ orderDate: dir }, { createdAt: dir }];
+      case 'createdAt':
+        return { createdAt: dir };
+      case 'checkedInAt':
+        return [{ checkedInAt: dir }, { createdAt: dir }];
+      case 'appointmentAt':
+        return [{ appointmentAt: dir }, { createdAt: dir }];
+      case 'appointmentCreatedAt':
+        return [{ appointment: { createdAt: dir } }, { createdAt: dir }];
+      case 'orderCode':
+        return { orderCode: dir };
+      case 'billId':
+        return [{ billId: dir }, { createdAt: dir }];
+      case 'externalOrderId':
+        return [{ externalOrderId: dir }, { createdAt: dir }];
+      case 'status':
+        return [{ status: dir }, { createdAt: 'desc' }];
+      case 'paymentStatus':
+        return [{ paymentStatus: dir }, { createdAt: 'desc' }];
+      case 'billStatus':
+        return [{ billStatus: dir }, { createdAt: 'desc' }];
+      case 'refundStatus':
+        return [{ refundStatus: dir }, { createdAt: 'desc' }];
+      case 'patientName':
+        return [
+          { patient: { firstName: dir } },
+          { patient: { lastName: dir } },
+          { createdAt: 'desc' },
+        ];
+      case 'referralPanel':
+        return [{ referralPanel: { name: dir } }, { createdAt: 'desc' }];
+      case 'referredBy':
+        return [
+          { referredByDoctor: { firstName: dir } },
+          { referredByDoctor: { lastName: dir } },
+          { createdAt: 'desc' },
+        ];
+      case 'grossAmount':
+        return [{ grossAmount: dir }, { createdAt: 'desc' }];
+      case 'discountAmount':
+        return [{ discountAmount: dir }, { createdAt: 'desc' }];
+      case 'netAmount':
+        return [{ netAmount: dir }, { createdAt: 'desc' }];
+      case 'paidAmount':
+        return [{ paidAmount: dir }, { createdAt: 'desc' }];
+      case 'balanceAmount':
+        return [{ balanceAmount: dir }, { createdAt: 'desc' }];
+      case 'refundedAmount':
+        return [{ refundedAmount: dir }, { createdAt: 'desc' }];
+      default:
+        return { createdAt: 'desc' };
+    }
   }
 
   /**
@@ -4164,7 +4616,7 @@ export class OrderService {
         include: ORDER_LIST_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: this.buildOrderListOrderBy(query.sortBy, query.sortOrder),
       }),
       this.prisma.order.count({ where }),
     ]);
@@ -4179,12 +4631,16 @@ export class OrderService {
     ];
     const panelMemberCounts = await this.panelMemberCounts(panelIds);
     const panelMembers = await this.panelMemberTests(tenantId, panelIds);
-    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked] =
+    const [counts, collectionByOrderId, invoiceCodes, cancelBlocked, notes] =
       await Promise.all([
         this.countItemsByOrder(tenantId, orderIds),
         collectionProgressByOrder(this.prisma, tenantId, orderIds),
         this.invoicedOrderCodes(tenantId, orderIds),
         this.cancelBlockedReasons(tenantId, orderIds),
+        // Order Console notes icons - opt-in, other list screens skip the queries.
+        query.includeNoteCounts
+          ? this.noteCountsByOrder(tenantId, orderIds)
+          : Promise.resolve(null),
       ]);
     const data: OrderListRow[] = rows.map((r) => {
       // Authoritative gross/discount/net/paid via the shared rollup helper —
@@ -4278,6 +4734,7 @@ export class OrderService {
         hasInvoice: invoiceCodes.has(r.id),
         invoiceCode: invoiceCodes.get(r.id) ?? null,
         cancelBlockedReason: cancelBlocked.get(r.id) ?? null,
+        ...(notes ? { noteCounts: notes.get(r.id) ?? emptyNoteCounts() } : {}),
       };
     });
     return { data, total, page, limit };
@@ -5210,10 +5667,13 @@ export class OrderService {
       // Cancel view: only cancelled orders (enforced regardless of `statuses`).
       scoped = { AND: [scoped, { status: OrderStatus.CANCELLED }] };
     }
+    // `id` breaks `createdAt` ties: every records page re-runs this query and
+    // slices it in memory, so the order must be identical across requests or a
+    // page boundary could repeat one row and skip another.
     let orders = await this.prisma.order.findMany({
       where: scoped,
       include: BILLING_ORDER_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
     if (report === 'outstanding') {
       // Outstanding view: only orders that still owe money. `due` is a derived
@@ -6110,6 +6570,19 @@ export class OrderService {
       );
     }
     await this.assertItems(tenantId, dto.items);
+    // Lab test Age Restriction: new lines only, or every line when this update
+    // finalizes the order (draft → ORDER, appointment check-in). Quotes skip it.
+    if ((dto.status ?? current.status) !== OrderStatus.QUOTE) {
+      const becomesOrder =
+        dto.status === OrderStatus.ORDER &&
+        current.status !== OrderStatus.ORDER;
+      await this.assertAgeRestrictions(
+        tenantId,
+        current.patientId,
+        linesToAgeCheck(dto.items, current.items, becomesOrder),
+        dto.orderDate ?? current.orderDate,
+      );
+    }
     await this.assertReferrals(tenantId, dto);
     if (dto.diagnostics) {
       await this.assertDiagnostics(tenantId, dto.diagnostics);
@@ -6139,6 +6612,7 @@ export class OrderService {
         orderCode: true,
         externalOrderId: true,
         isBillGenerated: true,
+        isEmergencyPricing: true,
         createdBy: true,
         appointmentId: true,
         appointmentAt: true,
@@ -6180,6 +6654,36 @@ export class OrderService {
       appointmentStatus: existing?.appointment?.status ?? null,
       checkIn: dto.checkIn === true,
     });
+
+    // Emergency Pricing (Registration Settings). The decision is re-made on every
+    // save while the record is not yet an active order (draft / quote→order /
+    // appointment before check-in), so it reflects the moment the order really
+    // becomes billable, then frozen once active so later edits keep the same
+    // prices. A patch that doesn't replace `items` keeps the stored flag — the
+    // stored line prices aren't re-priced, so the flag must not drift from them.
+    // Quotations are never emergency-priced.
+    const wasActiveOrder = isActiveOrderForGates({
+      effectiveStatus: existing?.status,
+      appointmentStatus: existing?.appointment?.status ?? null,
+      checkIn: false,
+    });
+    const storedEmergencyPricing = existing?.isEmergencyPricing ?? false;
+    const isEmergencyPricing =
+      dto.items === undefined
+        ? storedEmergencyPricing
+        : effectiveStatus === OrderStatus.QUOTE
+          ? false
+          : wasActiveOrder
+            ? storedEmergencyPricing
+            : await this.resolveEmergencyPricingNow(
+                tenantId,
+                branchId,
+                effectiveStatus,
+              );
+    this.assertEmergencyPricingExpectation(
+      dto.emergencyPricing,
+      isEmergencyPricing,
+    );
 
     // Referral Panel Settings credit gate (Section 4) on the UPDATE path — mirrors
     // create() so finalizing a DRAFT/QUOTE/APPOINTMENT to ORDER (or adding items
@@ -6421,6 +6925,7 @@ export class OrderService {
           tenantId,
           branchId,
           dto.items,
+          isEmergencyPricing,
         );
       } else {
         const stored = await this.prisma.orderItem.findMany({
@@ -6664,6 +7169,7 @@ export class OrderService {
           orderType: dto.orderType,
           billingType: dto.billingType,
           isUrgentBill: dto.isUrgentBill,
+          isEmergencyPricing,
           isBillGenerated: dto.isBillGenerated,
           isPregnant: dto.isPregnant,
           orderNotes: dto.orderNotes,
@@ -6716,6 +7222,7 @@ export class OrderService {
           tenantId,
           branchId,
           itemDiff.keep.map((k) => k.incoming as OrderItemDto),
+          isEmergencyPricing,
         );
         for (const { id: itemId, incoming } of itemDiff.keep) {
           const i = incoming as OrderItemDto;
@@ -6740,6 +7247,7 @@ export class OrderService {
             tenantId,
             branchId,
             itemDiff.add,
+            isEmergencyPricing,
           );
           for (const raw of itemDiff.add) {
             const i = raw as OrderItemDto;
@@ -7046,6 +7554,16 @@ export class OrderService {
             newReservation.branchId,
             newReservation.phlebotomistId,
             newReservation.at,
+          );
+          // Keep the existing collection's denormalized time/phlebotomist in step
+          // with the rescheduled order, so a later collection-side action releases
+          // the correct slot (no-op when no live collection exists).
+          await this.homeVisitCollections.syncScheduleForOrderInTx(
+            tx,
+            tenantId,
+            id,
+            newReservation.at,
+            newReservation.phlebotomistId,
           );
         }
       }
@@ -7386,11 +7904,20 @@ export class OrderService {
         },
       },
     });
-    // The slot held by this booking (null if its appointment already released it).
-    // Computed from the pre-cancel state; released below whether or not an
-    // appointment is linked (a walk-in ORDER holds a slot with no appointment).
+    // The home-visit collection linked to this order (if any). A collection whose
+    // slot was already freed when IT was cancelled first must not trigger a second
+    // release here — the shared slot/day counter would be double-decremented.
+    const bookingCollection = await this.prisma.homeVisitCollection.findFirst({
+      where: { orderId: id, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    // The slot held by this booking (null if its appointment or its collection
+    // already released it). Computed from the pre-cancel state; released below
+    // whether or not an appointment is linked (a walk-in ORDER holds a slot with
+    // no appointment).
     const reservation =
-      booking?.appointment?.status === AppointmentStatus.CANCELLED
+      booking?.appointment?.status === AppointmentStatus.CANCELLED ||
+      bookingCollection?.status === CollectionStatus.CANCELLED
         ? null
         : this.homeVisitReservation(
             booking?.status,
@@ -7530,6 +8057,17 @@ export class OrderService {
           },
         });
       }
+      // Cancel the linked home-visit collection too (+ history) so a cancelled
+      // order's visit no longer shows as pending on the Collection Schedule, and a
+      // later collection-side cancel becomes a guarded no-op (no double release).
+      // This does NOT release the slot — that happens exactly once below.
+      await this.homeVisitCollections.cancelForOrderInTx(
+        tx,
+        tenantId,
+        actorId,
+        id,
+        'Order cancelled',
+      );
       // Release the phlebotomist slot the (now-cancelled) order held.
       if (reservation) {
         await this.slotReservation.releaseInTx(
@@ -7912,6 +8450,142 @@ export class OrderService {
    * @throws InvalidOrderItemException / OrderBranchLabTestNotFoundException /
    *         OrderBranchLabPanelNotFoundException
    */
+  /**
+   * Lab test "Age Restriction" gate. Every restricted test among `lines` — a
+   * test line's own test, and every member of a panel line — must admit the
+   * patient's age on the order date (min inclusive, max covers its whole unit).
+   * Returns without touching the patient when no line is restricted, so orders
+   * of unrestricted tests pay nothing extra.
+   * @param tenantId tenant scope
+   * @param patientId the order's patient
+   * @param lines the catalogue lines to check (direct lines are ignored)
+   * @param orderDate the order date (DTO ISO string or stored `Date`)
+   * @throws OrderTestAgeRestrictedException when the age is outside a range
+   * @throws OrderPatientAgeRequiredException when the patient has no DOB/age
+   */
+  private async assertAgeRestrictions(
+    tenantId: string,
+    patientId: string,
+    lines: AgeGateLine[],
+    orderDate: string | Date | null | undefined,
+  ): Promise<void> {
+    const lookup = await this.loadAgeGateLookup(tenantId, lines);
+    const restricted = restrictedTestsOf(lines, lookup);
+    const first = restricted[0];
+    if (!first) return;
+
+    const patient = await this.prisma.patient.findFirst({
+      where: { id: patientId, tenantId, deletedAt: null },
+      select: { dateOfBirth: true, age: true, ageType: true, createdAt: true },
+    });
+    // The order's own day (back-dated orders age the patient on that day).
+    const today = new Date();
+    const onDay =
+      (orderDate ? orderDayOf(orderDate) : null) ??
+      new Date(
+        Date.UTC(
+          today.getUTCFullYear(),
+          today.getUTCMonth(),
+          today.getUTCDate(),
+        ),
+      );
+    // The tenant zone is only needed to read the creation day of an age-only
+    // patient (DOB implied from the age told on that day).
+    const timeZone =
+      patient && !patient.dateOfBirth
+        ? (await this.tenantService.getLocale(tenantId)).timezone
+        : null;
+    const dob = patient ? exactBirthDate(patient, onDay, timeZone) : null;
+    if (!dob) {
+      throw new OrderPatientAgeRequiredException(
+        patientId,
+        first.panelName ?? first.test.testName,
+      );
+    }
+    const violations = findAgeViolations(lines, lookup, dob, onDay);
+    if (violations.length > 0) {
+      const patientAge = formatAgeOn(dob, onDay) ?? 'unknown';
+      throw new OrderTestAgeRestrictedException(
+        ageViolationMessage(patientAge, violations),
+        { patientId, patientAge, violations },
+      );
+    }
+  }
+
+  /**
+   * Restricted branch tests behind `lines` plus each panel line's members and
+   * name — what {@link assertAgeRestrictions} needs. Batched: at most three
+   * queries, none when there are no catalogue lines.
+   * @param tenantId tenant scope
+   * @param lines the catalogue lines to check
+   */
+  private async loadAgeGateLookup(
+    tenantId: string,
+    lines: AgeGateLine[],
+  ): Promise<AgeGateLookup> {
+    const lookup: AgeGateLookup = {
+      restricted: new Map<string, RestrictedTest>(),
+      panelMembers: new Map<string, string[]>(),
+      panelNames: new Map<string, string>(),
+    };
+    const testIds = new Set<string>();
+    const panelIds = new Set<string>();
+    for (const line of lines) {
+      if (line.branchLabTestId) testIds.add(line.branchLabTestId);
+      else if (line.branchLabPanelId) panelIds.add(line.branchLabPanelId);
+    }
+    if (testIds.size === 0 && panelIds.size === 0) return lookup;
+
+    if (panelIds.size > 0) {
+      const junctions = await this.prisma.branchLabPanelTest.findMany({
+        where: {
+          tenantId,
+          branchLabPanelId: { in: [...panelIds] },
+          deletedAt: null,
+        },
+        select: { branchLabPanelId: true, branchLabTestId: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      for (const j of junctions) {
+        const members = lookup.panelMembers.get(j.branchLabPanelId) ?? [];
+        members.push(j.branchLabTestId);
+        lookup.panelMembers.set(j.branchLabPanelId, members);
+        testIds.add(j.branchLabTestId);
+      }
+    }
+    if (testIds.size === 0) return lookup;
+
+    const tests = await this.prisma.branchLabTest.findMany({
+      where: {
+        tenantId,
+        id: { in: [...testIds] },
+        deletedAt: null,
+        isAgeRestricted: true,
+      },
+      select: {
+        id: true,
+        testName: true,
+        isAgeRestricted: true,
+        minAgeValue: true,
+        minAgeUnit: true,
+        maxAgeValue: true,
+        maxAgeUnit: true,
+      },
+    });
+    for (const t of tests) {
+      const limit = toAgeLimit(t);
+      if (limit) lookup.restricted.set(t.id, { testName: t.testName, limit });
+    }
+    if (lookup.restricted.size === 0 || panelIds.size === 0) return lookup;
+
+    const panels = await this.prisma.branchLabPanel.findMany({
+      where: { tenantId, id: { in: [...panelIds] } },
+      select: { id: true, panelName: true },
+    });
+    for (const p of panels) lookup.panelNames.set(p.id, p.panelName);
+    return lookup;
+  }
+
   private async assertItems(
     tenantId: string,
     items?: OrderItemDto[],

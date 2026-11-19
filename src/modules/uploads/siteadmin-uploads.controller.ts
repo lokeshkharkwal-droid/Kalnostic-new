@@ -18,9 +18,11 @@ import { RequireSiteAdminPermission } from '../siteadmin/decorators/require-site
 import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.constant';
 
 /**
- * MIME types accepted for a SiteAdmin template image upload — images only
- * (watermarks, header/body/footer logos), a stricter subset of the generic
- * attachment allow-list.
+ * MIME types accepted on the SiteAdmin attachment upload. Primarily template
+ * images (watermarks, header/body/footer logos), plus the common document
+ * formats the inventory module stores as a product's "digital file"
+ * (type=digital). The upload service additionally content-checks known
+ * signatures, so a renamed file is still rejected.
  */
 const ALLOWED_IMAGE_MIME_TYPES = [
   'image/jpeg',
@@ -29,6 +31,11 @@ const ALLOWED_IMAGE_MIME_TYPES = [
   'image/webp',
   'image/gif',
   'image/svg+xml',
+  // Inventory digital-product files.
+  'application/pdf',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/octet-stream',
 ] as const;
 
 /**

@@ -5,12 +5,13 @@ import {
   AppointmentStatus,
   AuditAction,
   AuditModule,
+  BarcodeCounterKind,
+  LabReportStatus,
   OrderSample,
   OrderSampleStatusHistory,
   LabTestSample,
   OrderStatus,
   Prisma,
-  SamplePriority,
   SampleStatus,
   TransferKind,
   TransferStatus,
@@ -21,16 +22,15 @@ import { ReferralPanelAccessDeniedException } from '../../common/exceptions/refe
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { barcodeGroupKey } from './utils/barcode-group-key';
-import { timestampRange } from '../../common/utils/date-range.util';
-import {
-  buildCollectionProgressWhere,
-  collectionProgressByOrder,
-} from '../../common/utils/collection-progress.util';
+import { escapeLike } from './utils/like-escape.util';
+import { NO_DEPARTMENT_FILTER } from './constants/department-filter.constant';
+import { collectionProgressByOrder } from '../../common/utils/collection-progress.util';
 import {
   toBranchLocalInstant,
   formatTenantDate,
   formatTenantTime,
   patientPrintAgeDisplay,
+  noteCountsBySample,
 } from '../../common/utils';
 import { TenantService } from '../tenant/tenant.service';
 import { AppointmentService } from '../appointment/appointment.service';
@@ -46,6 +46,7 @@ import {
   nextSampleStatus,
   FORCE_TARGET,
   COLLECTABLE_SAMPLE_STATUSES,
+  TRANSFERRED_STATUSES,
 } from './constants/sample-transitions.constant';
 import {
   TAT_STATUSES,
@@ -62,7 +63,22 @@ import {
 } from './constants/transfer-close-reasons.constant';
 import { AccessionSettingsService } from './accession-settings.service';
 import { BarcodeService } from './barcode.service';
-import { ListSamplesDto, OrderMode } from './dto/list-samples.dto';
+import { ListSamplesDto } from './dto/list-samples.dto';
+import { ListSampleOptionsDto } from './dto/list-sample-options.dto';
+import { buildSampleOptions } from './utils/sample-options.util';
+import {
+  followCloneChain,
+  pickNotesAnchor,
+  reportForSample,
+} from './utils/order-overview.util';
+import { loadSampleReportLinks } from './utils/sample-report-links.util';
+import { OrderNotFoundException } from '../order/exceptions/order.exceptions';
+import type {
+  OrderOverview,
+  OrderOverviewTest,
+} from './entities/order-overview.entity';
+import { resolveAsyncSampleFilters } from './utils/sample-filter-resolvers.util';
+import type { SampleOption } from './utils/sample-options.util';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
@@ -75,8 +91,14 @@ import { ReturnSampleDto } from './dto/return-sample.dto';
 import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import {
+  BulkMarkReturnedVerifiedDto,
+  BulkSetRecoverableDto,
+} from './dto/bulk-discard-return-flags.dto';
+import {
   SAMPLE_INCLUDE,
   SAMPLE_LIST_INCLUDE,
+  LIST_TRANSFER_SELECT,
+  ListRowTransfer,
   OrderSampleListItem,
   OrderSampleListRow,
   OrderSampleDetail,
@@ -98,12 +120,20 @@ import {
   RetrieveBlockedException,
   TransferWrongBranchException,
   SampleOrderCancelledException,
+  BarcodeReservedByRepeatException,
   SampleBarcodeLockedException,
   SampleItemRemovedException,
   SampleReturnOrderCancelledException,
+  BarcodeImageUnavailableException,
+  NoBarcodeToPrintException,
+  SampleMoveBlockedByResultException,
   SampleRepeatBlockedException,
+  SampleRepeatMustBeCollectedException,
   SampleReturnBlockedException,
-  SampleRetrieveBlockedByResultException,
+  SampleRetrieveBlockedByReportException,
+  SampleFlagNotAllowedException,
+  SampleRetrieveBlockedByFlagException,
+  SampleStoreReturnBlockedException,
   refusalMessage,
   SampleSentToBranchException,
   SendBlockedException,
@@ -114,7 +144,12 @@ import {
   isPreviousHolder,
 } from './utils/previous-holders.util';
 import { assertDestinationOffers } from './utils/destination-offers.util';
-import { escapeLike } from './utils/like-escape.util';
+import {
+  buildSampleFilterConditions,
+  transferMatches,
+  transferWhereOf,
+  ResolvedSampleFilters,
+} from './utils/sample-filters.util';
 import {
   findPanelMemberEntryFor,
   findSampleDefinitionAt,
@@ -137,6 +172,21 @@ import {
   RETURNED_BY_RECEIVER_ACTION,
 } from './utils/returned-by-receiver.util';
 import { isHiddenFromReceiver } from './utils/receiver-visibility.util';
+import { sortedOrderPage } from './utils/in-house-sort.query';
+import {
+  BARCODE_AUDIT_ACTIONS,
+  BARCODE_REMOVED_ACTION,
+  BARCODE_RESTORED_ACTION,
+  BARCODE_RESTORE_SKIPPED_ACTION,
+  barcodeRemovedFrom,
+  clearBarcodeForRepeatInTx,
+} from './utils/repeat-barcode.util';
+import {
+  latestMovementInto,
+  resolveRetrieveTarget,
+  sortHistoryRows,
+  type RepeatBarcodeUndo,
+} from './utils/retrieve-target.util';
 
 /** Resolved display fields attached to a history row for the Audit Trail UI. */
 export interface AccessionHistoryActor {
@@ -196,6 +246,13 @@ interface ActionNote {
    */
   system?: boolean;
   /**
+   * Server-only: this Repeat is part of a "Re-run with a fresh sample", which has already wiped the report(s) in the
+   * same transaction. The Repeat then neither re-checks nor resets the report again (a second reset would only write a
+   * duplicate history line); every other guard (cancelled order, removed test, sent sample, ...) still runs. Never set
+   * from a request DTO.
+   */
+  freshRerun?: boolean;
+  /**
    * Server-only: the acting user's role (from the JWT), written on the Audit-log
    * entries a Retrieve of a sent sample records. Never set from a request DTO.
    */
@@ -224,20 +281,7 @@ interface RecallAuditInfo {
   }>;
 }
 
-/**
- * The statuses a sample is in while it lives at another branch / partner / center
- * via an open transfer (Send/Forward/Outsource). A local action that moves a sample
- * OUT of one of these (Retrieve / Repeat) is a "recall": its outstanding
- * transfer(s) — and, for an accepted internal transfer, the clone materialised in
- * the receiving branch — must be unwound so no stale record is left cross-branch.
- */
-const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
-  SampleStatus.SENT_INTERNAL,
-  SampleStatus.FORWARD_EXTERNAL,
-  SampleStatus.OUTSOURCED,
-]);
-
-/** True while the sample lives at another branch/partner/center (see above). */
+/** True while the sample lives at another branch/partner/center (see `TRANSFERRED_STATUSES`). */
 function isTransferredStatus(status: SampleStatus): boolean {
   return TRANSFERRED_STATUSES.has(status);
 }
@@ -275,6 +319,20 @@ function transferKindOutFor(status: SampleStatus): TransferKind | null {
  * has a single-item and a bulk (`ids[]`) variant looping inside one transaction
  * (PDF §A.11). Reads always filter `{ tenantId, deletedAt: null }`.
  */
+/**
+ * What `buildSampleWhere` needs to know from the database before it can build the
+ * Department / Lab Test / Lab Panel filters. Resolved once per request by
+ * `resolveSampleFilterContext`; empty (and free) when none of those filters is set.
+ */
+interface SampleFilterContext {
+  /** The tenant's grouping mode - only read when a Department filter is set. */
+  groupingMode?: AccessionGroupingMode;
+  /** The Lab Test filter's master (source) test id. */
+  labTestSourceId?: string;
+  /** Every price-list copy of the Lab Panel filter's panel (its own id included). */
+  labPanelIds?: string[];
+}
+
 @Injectable()
 export class OrderSampleService {
   private readonly logger = new Logger(OrderSampleService.name);
@@ -423,6 +481,14 @@ export class OrderSampleService {
       // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
+    // The order enters accession here: decide its grouping mode now (a no-op when it already
+    // has one, e.g. items added to an accessioned order) - the tenant's current mode, read under
+    // the tenant row lock, then fixed on the order for good. Done before the first sample so
+    // the auto-collect barcodes below and every later screen use the same mode.
+    if (units.some((u) => u.sample)) {
+      await this.resolveOrderGroupingModesInTx(tx, tenantId, [orderId]);
+    }
+
     // Sample-Flow-No samples are auto-collected + auto-accepted below; collect their
     // ids so their grouping-aware barcodes are assigned in one batch after the loop.
     const autoCollectedIds: string[] = [];
@@ -444,6 +510,11 @@ export class OrderSampleService {
       // One timestamp for the auto collect + accept pair (collectedAt / receivedAt /
       // acceptedAt), mirroring the manual `collect` then `accept` transitions.
       const stampNow = autoAccept ? new Date() : null;
+      // The three history lines of an auto-accepted sample are written in ONE statement: without their own times they would
+      // all carry the same instant and the database would keep them in a random order (Accept before Collect on the History
+      // popup, and a Retrieve that could loop). One millisecond apart keeps generate -> collect -> accept.
+      const lineAt = (n: number) =>
+        new Date((stampNow ?? new Date()).getTime() + n);
       const created = await tx.orderSample.create({
         data: {
           tenantId,
@@ -494,6 +565,7 @@ export class OrderSampleService {
                     action: 'generate',
                     toStatus: SampleStatus.NEW,
                     changedBy: personId,
+                    createdAt: lineAt(0),
                   },
                   {
                     tenantId,
@@ -504,6 +576,7 @@ export class OrderSampleService {
                     reason:
                       'Sample Flow = No: auto-collected at order creation',
                     changedBy: personId,
+                    createdAt: lineAt(1),
                   },
                   {
                     tenantId,
@@ -513,6 +586,7 @@ export class OrderSampleService {
                     toStatus: SampleStatus.ACCEPTED,
                     reason: 'Sample Flow = No: auto-accepted at order creation',
                     changedBy: personId,
+                    createdAt: lineAt(2),
                   },
                 ]
               : [
@@ -571,8 +645,62 @@ export class OrderSampleService {
   }
 
   /**
+   * The grouping mode each of the given orders follows. An order carries its own mode
+   * (`orders.grouping_mode`), decided once when it first gets samples and never changed (a
+   * database rule refuses a change), so changing the tenant's mode in Accession Settings
+   * never regroups an order whose barcodes are already out on tubes, in transfers or in the
+   * analyzer.
+   *
+   * An order with NO mode yet (it has no samples, or it predates the column and was missed by
+   * the backfill) is decided here: the tenant row is locked and its CURRENT mode is read in the
+   * same statement, then stored on the order with a conditional update (`WHERE grouping_mode IS
+   * NULL`) and re-read, so two transactions deciding the same order at the same moment end up
+   * with the one value that won, never two different ones. The tenant row lock is also what
+   * serialises this against a settings change: the reader sees either entirely the old mode or
+   * entirely the new one.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param orderIds the orders whose mode is needed
+   * @returns order id -> mode (an order that does not exist is simply absent)
+   */
+  private async resolveOrderGroupingModesInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, AccessionGroupingMode>> {
+    const modes = new Map<string, AccessionGroupingMode>();
+    const unique = [...new Set(orderIds)];
+    if (unique.length === 0) return modes;
+    const read = (ids: string[]) =>
+      tx.order.findMany({
+        where: { id: { in: ids }, tenantId },
+        select: { id: true, groupingMode: true },
+      });
+    const undecided: string[] = [];
+    for (const o of await read(unique)) {
+      if (o.groupingMode) modes.set(o.id, o.groupingMode);
+      else undecided.push(o.id);
+    }
+    if (undecided.length === 0) return modes;
+
+    const tenant = await tx.tenant.update({
+      where: { id: tenantId },
+      data: { updatedAt: new Date() },
+      select: { groupingMode: true },
+    });
+    await tx.order.updateMany({
+      where: { id: { in: undecided }, tenantId, groupingMode: null },
+      data: { groupingMode: tenant.groupingMode },
+    });
+    for (const o of await read(undecided)) {
+      modes.set(o.id, o.groupingMode ?? tenant.groupingMode);
+    }
+    return modes;
+  }
+
+  /**
    * Assign a proper sequential sample barcode to each just-collected sample that
-   * lacks one, bucketed by the tenant's live grouping mode — the collect-time
+   * lacks one, bucketed by each order's own grouping mode — the collect-time
    * counterpart of the former creation-time auto-assignment. Samples in the same
    * bucket (same {@link barcodeGroupKey}, scoped to one order) share one barcode:
    * an existing group barcode — from a sibling already collected in the same
@@ -609,20 +737,54 @@ export class OrderSampleService {
         branchId: true,
         departmentId: true,
         sampleGroupLabel: true,
+        repeatBatchId: true,
       },
     });
     if (targets.length === 0) return;
 
-    const tenant = await tx.tenant.findUnique({
-      where: { id: tenantId },
-      select: { groupingMode: true },
+    // The grouping mode of each order, decided BEFORE the counter lock below. An order carries its own
+    // mode (never the tenant's live one), so a settings change can never regroup an order that already
+    // has barcodes. Only an order with no mode yet (see `resolveOrderGroupingModesInTx`) touches the
+    // tenant row here, which keeps the lock order tenant row -> barcode counter, the same as order
+    // creation, so the two can never wait on each other.
+    const orderIds = [...new Set(targets.map((t) => t.orderId))];
+    const modeByOrder = await this.resolveOrderGroupingModesInTx(
+      tx,
+      tenantId,
+      orderIds,
+    );
+    const modeOf = (orderId: string): AccessionGroupingMode =>
+      modeByOrder.get(orderId) ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
+    // Queue concurrent collects of this tenant BEFORE the sibling lookup below. Without this, two
+    // collects of tests of one barcode group that run at the same moment both find "no sibling has
+    // a barcode yet" and each allocates its own, splitting the group over two barcodes. Taking the
+    // row lock of the tenant's sample counter first makes the second collect wait until the first
+    // has committed; under READ COMMITTED its next statement (the sibling read) then sees the first
+    // collect's barcode and lends it. The allocator takes this same lock later anyway (and holds it
+    // to the end of the transaction), so no new lock order is introduced. A tenant that has never
+    // issued a barcode has no counter row yet and so is not covered for its very first barcode.
+    await tx.tenantBarcodeCounter.updateMany({
+      where: { tenantId, kind: BarcodeCounterKind.SAMPLE },
+      data: { updatedAt: new Date() },
     });
-    const mode =
-      tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
+    // Who shares a barcode: the same order, the same group AND the same repeat batch. The batch
+    // (`repeatBatchId`, set when a sample is sent back for a fresh collection) does not change the group
+    // or its actions; it only keeps the repeated samples apart from the group mates that were not
+    // repeated, so a repeated sample never borrows the old barcode its mates still carry, and the
+    // samples repeated together share one new barcode.
+    const lendKey = (s: {
+      orderId: string;
+      departmentId: string | null;
+      sampleGroupLabel: string | null;
+      id: string;
+      repeatBatchId: string | null;
+    }) =>
+      `${s.orderId}::${barcodeGroupKey(s, modeOf(s.orderId))}::${s.repeatBatchId ?? ''}`;
 
     // Existing group barcodes across the affected orders, so a sibling already
     // collected in the same order + group lends its barcode (partial collection).
-    const orderIds = [...new Set(targets.map((t) => t.orderId))];
     const barcoded = await tx.orderSample.findMany({
       where: {
         orderId: { in: orderIds },
@@ -635,6 +797,7 @@ export class OrderSampleService {
         orderId: true,
         departmentId: true,
         sampleGroupLabel: true,
+        repeatBatchId: true,
         barcode: true,
         orderIdBarcode: true,
       },
@@ -642,7 +805,7 @@ export class OrderSampleService {
     const existing = new Map<string, { barcode: string; url: string | null }>();
     for (const s of barcoded) {
       if (!s.barcode) continue;
-      const key = `${s.orderId}::${barcodeGroupKey(s, mode)}`;
+      const key = lendKey(s);
       if (!existing.has(key)) {
         existing.set(key, { barcode: s.barcode, url: s.orderIdBarcode });
       }
@@ -654,7 +817,7 @@ export class OrderSampleService {
       { branchId: string | null; ids: string[] }
     >();
     for (const t of targets) {
-      const key = `${t.orderId}::${barcodeGroupKey(t, mode)}`;
+      const key = lendKey(t);
       const bucket = buckets.get(key);
       if (bucket) bucket.ids.push(t.id);
       else buckets.set(key, { branchId: t.branchId, ids: [t.id] });
@@ -1264,7 +1427,7 @@ export class OrderSampleService {
       personId,
     );
 
-    const where = this.buildSampleWhere(
+    const where = await this.buildScopedWhere(
       tenantId,
       branchId,
       query,
@@ -1294,7 +1457,10 @@ export class OrderSampleService {
     );
     const named = await this.withDiscardMethods(
       tenantId,
-      await this.withTransferNames(tenantId, data),
+      await this.withTransferNames(
+        tenantId,
+        await this.withMatchedTransfers(tenantId, data, query),
+      ),
     );
     const items: OrderSampleListItem[] = named.map((row) => ({
       ...row,
@@ -1308,13 +1474,14 @@ export class OrderSampleService {
    * Grouped in-house list — the same filters as `findAll`, but **order-first**:
    * the Order ID is always the top-level grouping and the pagination unit (10
    * orders/page), never crossing order boundaries (Critical Rule #1). Within each
-   * order, samples are grouped into **final groups by the tenant's current
+   * order, samples are grouped into **final groups by the order's own
    * `groupingMode`** (via `barcodeGroupKey`) — Sample/Order/Department/
    * Department+Sample — so the displayed grouping, the shared barcode and the
-   * action scope always follow the live Group Settings, even after the mode is
-   * changed. Each final group carries the flat `sampleIds` its action button
+   * action scope of an order stay in step with its barcodes, even after the
+   * tenant changes its mode in Group Settings (that only applies to new orders).
+   * Each final group carries the flat `sampleIds` its action button
    * targets — a status change cascades to every sample in the group (Rule #3).
-   * The tenant's current `groupingMode` is echoed as a FE layout hint.
+   * The order's `groupingMode` is echoed as a FE layout hint.
    * Reuses `buildSampleWhere` + `deriveTatStatus`.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
@@ -1334,7 +1501,7 @@ export class OrderSampleService {
       tenantId,
       personId,
     );
-    const where = this.buildSampleWhere(
+    const where = await this.buildScopedWhere(
       tenantId,
       branchId,
       query,
@@ -1352,18 +1519,35 @@ export class OrderSampleService {
         const mode =
           tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
 
-        // Page of order ids (ordered by most-recent sample) + total order count.
-        const [pageGroups, allGroups] = await Promise.all([
-          tx.orderSample.groupBy({
-            by: ['orderId'],
+        // Page of order ids + total order count. Default: ordered by the most recent sample;
+        // with `sortBy`, ordered by that column (see `sortedOrderPage`).
+        let orderIds: string[];
+        let total: number;
+        if (query.sortBy) {
+          ({ orderIds, total } = await sortedOrderPage(tx, {
+            tenantId,
             where,
-            orderBy: { _max: { createdAt: 'desc' } },
-            skip: (page - 1) * limit,
-            take: limit,
-          }),
-          tx.orderSample.groupBy({ by: ['orderId'], where }),
-        ]);
-        const orderIds = pageGroups.map((g) => g.orderId);
+            sortBy: query.sortBy,
+            dir: query.sortOrder ?? 'asc',
+            page,
+            limit,
+            tat,
+            nowMs,
+          }));
+        } else {
+          const [pageGroups, allGroups] = await Promise.all([
+            tx.orderSample.groupBy({
+              by: ['orderId'],
+              where,
+              orderBy: { _max: { createdAt: 'desc' } },
+              skip: (page - 1) * limit,
+              take: limit,
+            }),
+            tx.orderSample.groupBy({ by: ['orderId'], where }),
+          ]);
+          orderIds = pageGroups.map((g) => g.orderId);
+          total = allGroups.length;
+        }
 
         // Fetch all samples belonging to this page's orders.
         const rows = await tx.orderSample.findMany({
@@ -1383,7 +1567,7 @@ export class OrderSampleService {
 
         return {
           orderIds,
-          total: allGroups.length,
+          total,
           rows,
           mode,
           collectionByOrderId,
@@ -1416,7 +1600,10 @@ export class OrderSampleService {
     // The destination / center names the "Send details" column shows (one lookup per page).
     const namedRows = await this.withDiscardMethods(
       tenantId,
-      await this.withTransferNames(tenantId, rows),
+      await this.withTransferNames(
+        tenantId,
+        await this.withMatchedTransfers(tenantId, rows, query),
+      ),
     );
 
     // Assemble one InHouseOrderGroup per paged order id (order-first).
@@ -1438,13 +1625,40 @@ export class OrderSampleService {
       });
     }
 
+    if (query.includeNoteCounts) {
+      await this.attachSampleNoteCounts(tenantId, groups);
+    }
+
     return paginated(groups, total, page, limit);
   }
 
   /**
+   * Puts each listed sample's Sample / Tech note counts on it (`noteCounts`, the
+   * Sample Status column's notes icons) - three batched queries for the page,
+   * see `noteCountsBySample`.
+   */
+  private async attachSampleNoteCounts(
+    tenantId: string,
+    groups: InHouseOrderGroup[],
+  ): Promise<void> {
+    const samples = groups.flatMap((o) => o.groups.flatMap((g) => g.samples));
+    if (samples.length === 0) return;
+    const counts = await this.prisma.withTenant(tenantId, (tx) =>
+      noteCountsBySample(
+        tx,
+        tenantId,
+        samples.map((s) => ({ id: s.id, orderId: s.orderId })),
+      ),
+    );
+    for (const s of samples) {
+      s.noteCounts = counts.get(s.id) ?? { SAMPLE: 0, TECH: 0 };
+    }
+  }
+
+  /**
    * Grouped samples for a **single order** — the same order-first grouping the
-   * in-house list produces (via {@link buildOrderGroup} keyed on the tenant's
-   * current `groupingMode`), but scoped to one order id rather than a page of
+   * in-house list produces (via {@link buildOrderGroup} keyed on the order's own
+   * `groupingMode`), but scoped to one order id rather than a page of
    * orders. Powers the Product Overview modal's grouped Test Details, so its
    * groups/barcodes/action-scope match `/accession/inhouse-orders` exactly.
    * Scoped by tenant + order id only (no branch filter): the modal always
@@ -1607,26 +1821,30 @@ export class OrderSampleService {
   /**
    * Assemble a single order's {@link InHouseOrderGroup}: enrich each raw sample
    * row with its derived TAT band + department name, then bucket the order's
-   * samples into **final groups** by the tenant's LIVE grouping mode
+   * samples into **final groups** by the ORDER'S OWN grouping mode
    * (Sample-wise = per sample; Order-wise = the whole order; Department-wise =
    * per department; Dept+Sample = per department + sample name) — the very same
-   * `barcodeGroupKey` used at barcode-assignment time. Grouping keys off the
-   * current mode (not the frozen barcode), so the displayed grouping, the
-   * barcode grouping and the action scope always agree with the tenant's current
-   * Group Settings — even after the mode is changed, a sample is missing a
-   * barcode, or a barcode was edited. Shared by {@link findAllGrouped} (list)
+   * `barcodeGroupKey` used at barcode-assignment time. The order carries its mode
+   * (`orders.grouping_mode`, decided when it first got samples and never changed),
+   * so the displayed grouping, the barcode grouping and the action scope of an order
+   * stay in step with the barcodes it already has, even after the tenant changes
+   * its mode in Group Settings (that only applies to orders created afterwards). An
+   * order with no mode yet (NULL: no samples so far) falls back to `fallbackMode`,
+   * the tenant's current mode. Shared by {@link findAllGrouped} (list)
    * and {@link findOrderGrouped} (single order). `itemRemovedIds` are the samples
    * whose test was removed from the order (each row's `itemRemoved` flag).
    */
   private buildOrderGroup(
     orderId: string,
     orderRows: OrderSampleListRow[],
-    mode: AccessionGroupingMode,
+    fallbackMode: AccessionGroupingMode,
     deptNameById: Map<string, string>,
     tat: TatThresholds,
     nowMs: number,
     itemRemovedIds: ReadonlySet<string> = new Set(),
   ): InHouseOrderGroup {
+    // All rows of one order carry the same `order` object, so the first row has the mode.
+    const mode = orderRows[0]?.order?.groupingMode ?? fallbackMode;
     const toItem = (row: OrderSampleListRow): GroupedSampleItem => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
@@ -1660,13 +1878,16 @@ export class OrderSampleService {
           samples.map((s) => s.sampleGroupLabel ?? null),
         );
         // One shared barcode per group when the members agree; `null` (→ the
-        // FE's "No barcode") when they carry differing/blank values — e.g.
-        // left stale after a mode change (which nulls them) — flagging the
+        // FE's "No barcode") when they carry differing/blank values — e.g. a
+        // group not collected yet, or part of it repeated — flagging the
         // group for a fresh Assign Barcode.
         const barcode = distinctOrNull(samples.map((s) => s.barcode ?? null));
+        // Part of a group can carry another barcode (a repeated sample has a new one, or none yet): list them all.
+        const barcodes = [...new Set(samples.map((s) => s.barcode ?? null))];
         return {
           groupKey: `${orderId}::${bucketKey}`,
           barcode,
+          barcodes,
           department: deptId
             ? { id: deptId, name: deptNameById.get(deptId) ?? deptId }
             : null,
@@ -1714,7 +1935,7 @@ export class OrderSampleService {
     );
     const tat = await this.tatThresholds(tenantId, branchId);
     const nowMs = Date.now();
-    const where = this.buildSampleWhere(
+    const where = await this.buildScopedWhere(
       tenantId,
       branchId,
       {
@@ -1969,10 +2190,13 @@ export class OrderSampleService {
     branchId: string | null,
   ): Promise<Array<OrderSampleStatusHistory & AccessionHistoryActor>> {
     const sample = await this.findById(id, tenantId, branchId);
-    const rows = await this.prisma.orderSampleStatusHistory.findMany({
+    // Read oldest first and put lines that share one instant in the order they really happened (an auto-accepted tube writes
+    // generate / collect / accept in ONE statement, so they carry the same timestamp), then hand them over newest first.
+    const oldestFirst = await this.prisma.orderSampleStatusHistory.findMany({
       where: { sampleId: id, tenantId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
+    const rows = sortHistoryRows(oldestFirst).reverse();
     // A copy created by an accepted transfer is born ACCEPTED, so its single
     // `transfer-accept` row has no `fromStatus` - but it is the one fact the
     // receiving branch's trail has ("accepted from another branch"), so it is kept.
@@ -1986,7 +2210,17 @@ export class OrderSampleService {
         (r.fromStatus !== null && r.fromStatus !== r.toStatus) ||
         r.action === 'transfer-accept' ||
         r.action === 'retrieve' ||
-        r.action === RETURNED_BY_RECEIVER_ACTION,
+        r.action === RETURNED_BY_RECEIVER_ACTION ||
+        // A barcode taken off by a Repeat, put back by a Retrieve, or not put back: no status change, but the trail keeps
+        // every barcode the sample ever had.
+        BARCODE_AUDIT_ACTIONS.includes(r.action) ||
+        // The note of a Re-run with a fresh sample on a tube that keeps its status (an outsourced one: only its transfer
+        // is closed as Repeat): no status change, but the trail must say that, and why, it was re-run.
+        r.action === 're-run-fresh' ||
+        // The Discarded "recoverable" flag changing, and a Returned sample confirmed back and verified: no status change,
+        // but they are what allows (or refuses) a later Retrieve, so the trail shows who did it and when.
+        r.action === 'recoverable-flag' ||
+        r.action === 'returned-verified',
     );
     // A cancelled order shows its cancellation in the trail too, at its place in
     // the timeline (newest first, like every other entry).
@@ -2056,7 +2290,7 @@ export class OrderSampleService {
    * codebase today. Falls back to `null` for either field rather than
    * guessing, e.g. if the person has no active profile at this branch anymore.
    */
-  private async enrichHistoryActors(
+  async enrichHistoryActors(
     rows: OrderSampleStatusHistory[],
     tenantId: string,
     branchId: string | null,
@@ -2125,6 +2359,9 @@ export class OrderSampleService {
     templateId?: string,
   ): Promise<Buffer> {
     const sample = await this.findById(id, tenantId);
+    // No barcode yet (a tube waiting to be collected again): nothing to print, not a blank label.
+    if (!sample.barcode) throw new NoBarcodeToPrintException(1);
+    await this.ensureBarcodeImages([sample], tenantId);
     const context = await this.buildLabelContext(sample, tenantId);
     const resolvedTemplateId =
       templateId ??
@@ -2161,10 +2398,13 @@ export class OrderSampleService {
     tenantId: string,
     branchId: string | null,
     templateId?: string,
-  ): Promise<Buffer> {
-    const samples = await Promise.all(
-      ids.map((id) => this.findById(id, tenantId)),
-    );
+  ): Promise<{ pdf: Buffer; skipped: number }> {
+    const all = await Promise.all(ids.map((id) => this.findById(id, tenantId)));
+    // A sample with no barcode (waiting to be collected again) has no label: it is left out, and the caller is told how many.
+    const samples = all.filter((s) => !!s.barcode);
+    const skipped = all.length - samples.length;
+    if (samples.length === 0) throw new NoBarcodeToPrintException(all.length);
+    await this.ensureBarcodeImages(samples, tenantId);
     const { timezone, dateFormat, timeFormat } =
       await this.tenantService.getLocale(tenantId);
 
@@ -2190,11 +2430,49 @@ export class OrderSampleService {
         branchId,
         'multiple_order_label_print',
       ));
-    return this.pdfReportTemplateService.generatePdf(
+    const pdf = await this.pdfReportTemplateService.generatePdf(
       resolvedTemplateId,
       tenantId,
       combined,
     );
+    return { pdf, skipped };
+  }
+
+  /**
+   * Make the barcode picture of every sample that has a barcode but no picture (e.g. one restored while the file storage was
+   * down), once per distinct barcode, and keep it. If the storage is still unreachable the print is refused with a clear
+   * message instead of printing a label with an empty image.
+   * @throws BarcodeImageUnavailableException when a missing picture cannot be made now
+   */
+  private async ensureBarcodeImages(
+    samples: OrderSampleDetail[],
+    tenantId: string,
+  ): Promise<void> {
+    const missing = new Map<string, OrderSampleDetail[]>();
+    for (const s of samples) {
+      if (!s.barcode || s.orderIdBarcode) continue;
+      const group = missing.get(s.barcode) ?? [];
+      group.push(s);
+      missing.set(s.barcode, group);
+    }
+    for (const [barcode, group] of missing) {
+      let url: string;
+      try {
+        url = await this.barcodeService.generateAndUpload(barcode, tenantId);
+      } catch (e) {
+        this.logger.warn(
+          `Barcode image for ${barcode} could not be made for printing: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        throw new BarcodeImageUnavailableException();
+      }
+      await this.prisma.withTenant(tenantId, (tx) =>
+        tx.orderSample.updateMany({
+          where: { id: { in: group.map((g) => g.id) }, tenantId },
+          data: { orderIdBarcode: url },
+        }),
+      );
+      for (const g of group) g.orderIdBarcode = url;
+    }
   }
 
   /**
@@ -2295,10 +2573,13 @@ export class OrderSampleService {
    * Flat `{variable}` values for one **barcode group's** label row — one or
    * more samples sharing a barcode, merged into a single label. Fields that
    * are identical across the group's samples (barcode/image, patient,
-   * order/UHID, department, sample type/container, collected time) are taken
-   * from the first sample; fields that vary per sample (accession number,
-   * test names) are comma-joined across every sample in the group so the one
-   * printed label still reflects everything the shared barcode covers.
+   * order/UHID, collected time) are taken from the first sample; fields that
+   * vary per sample are comma-joined across every sample in the group so the
+   * one printed label still reflects everything the shared barcode covers:
+   * accession number, test names, and the department, sample name, sample type
+   * and container (one barcode can cover several of each in the Order and
+   * Department grouping modes). Only the distinct non-empty values are listed,
+   * in the order the samples appear. A single-sample label is unchanged.
    */
   private buildMergedLabelVariables(
     group: OrderSampleDetail[],
@@ -2306,13 +2587,26 @@ export class OrderSampleService {
     dateFormat: string,
     timeFormat: string,
   ): Record<string, unknown> {
-    const base = this.buildLabelVariables(
-      group[0]!,
-      timezone,
-      dateFormat,
-      timeFormat,
+    const perSample = group.map((s) =>
+      this.buildLabelVariables(s, timezone, dateFormat, timeFormat),
     );
+    const base = perSample[0]!;
     if (group.length === 1) return base;
+    // `splitOnComma`: a sample's department field is already a comma-joined list of its
+    // tests' departments, so it is split before the distinct pass (no "A, B, B").
+    const distinctJoined = (key: string, splitOnComma = false): string =>
+      [
+        ...new Set(
+          perSample
+            .flatMap((v) => {
+              const raw = v[key];
+              const text = typeof raw === 'string' ? raw.trim() : '';
+              return splitOnComma ? text.split(',') : [text];
+            })
+            .map((t) => t.trim())
+            .filter(Boolean),
+        ),
+      ].join(', ');
     return {
       ...base,
       accession_no: group
@@ -2324,6 +2618,10 @@ export class OrderSampleService {
           group.flatMap((s) => s.tests.map((t) => t.testName).filter(Boolean)),
         ),
       ].join(', '),
+      department_name: distinctJoined('department_name', true),
+      sample_name: distinctJoined('sample_name'),
+      sample_type: distinctJoined('sample_type'),
+      container_type: distinctJoined('container_type'),
     };
   }
 
@@ -2374,26 +2672,41 @@ export class OrderSampleService {
     personId: string | null,
     sampleIds: string[],
   ): Promise<void> {
-    if (sampleIds.length === 0) return;
+    const forbidden = await this.findSamplesOutsideDepartmentScope(
+      tenantId,
+      personId,
+      sampleIds,
+    );
+    if (forbidden.length > 0) {
+      throw new SampleDepartmentForbiddenException(forbidden);
+    }
+  }
+
+  /**
+   * The ids, among `sampleIds`, that are OUTSIDE the caller's departments (empty when the caller is unrestricted or every
+   * sample is in scope). A caller mapped to no department is unrestricted (same rule as the In-House listing): there is
+   * nothing to enforce. Only a caller WITH departments is held to them; a sample with no department is in everyone's scope.
+   * Shared by {@link assertSamplesInDepartmentScope} (which refuses) and the Re-run pop-up (which greys such tests out).
+   */
+  async findSamplesOutsideDepartmentScope(
+    tenantId: string,
+    personId: string | null,
+    sampleIds: string[],
+  ): Promise<string[]> {
+    if (sampleIds.length === 0) return [];
     const scopeIds = personId
       ? await this.userDepartmentScope.resolveDepartmentIds(tenantId, personId)
       : [];
-    // A caller mapped to no department is unrestricted (same rule as the In-House
-    // listing): there is nothing to enforce. Only a caller WITH departments is
-    // held to them.
-    if (scopeIds.length === 0) return;
+    if (scopeIds.length === 0) return [];
     const samples = await this.prisma.orderSample.findMany({
       where: { id: { in: sampleIds }, tenantId, deletedAt: null },
       select: { id: true, departmentId: true },
     });
-    const forbidden = samples
+    return samples
       .filter(
         (s) => !(s.departmentId === null || scopeIds.includes(s.departmentId)),
       )
       .map((s) => s.id);
-    if (forbidden.length > 0) {
-      throw new SampleDepartmentForbiddenException(forbidden);
-    }
   }
 
   /**
@@ -2704,6 +3017,16 @@ export class OrderSampleService {
             'repeat',
             () => ({ data: {}, reason: dto.repeatReason }),
             dto,
+            // The repeated samples need a NEW tube, so the old barcode comes off (in the same transaction as the
+            // status change, for the samples that really moved to Repeat); Collect makes the new one
+            // (see clearBarcodeForRepeatInTx).
+            async (tx, changedIds) => {
+              await clearBarcodeForRepeatInTx(tx, {
+                tenantId,
+                personId,
+                sampleIds: changedIds,
+              });
+            },
           )
         : { succeeded: [], skipped: [] };
     // Fire-and-forget: inform the order's referring panel (B2B). Handled by
@@ -2916,6 +3239,20 @@ export class OrderSampleService {
     sampleId: string,
     action: 'repeat' | 'error',
   ): Promise<boolean> {
+    // Take the row lock of the closed transfer(s) first (a no-op write): the receiver's Retrieve of that transfer claims the
+    // same row before it reads this sample, so the sender's confirmation and the receiver's Retrieve cannot both pass their
+    // checks at the same moment. If the receiver wins, its status change is visible to the read below and the sender is refused.
+    await tx.sampleTransfer.updateMany({
+      where: {
+        sampleId,
+        tenantId,
+        deletedAt: null,
+        transferStatus: {
+          in: [TransferStatus.REPEAT, TransferStatus.REJECTED],
+        },
+      },
+      data: { updatedAt: new Date() },
+    });
     const back = (await findReceiverReturns(tx, tenantId, [sampleId])).get(
       sampleId,
     );
@@ -3281,8 +3618,102 @@ export class OrderSampleService {
       tenantId,
       personId,
       'discard',
-      () => ({ data: {}, reason: dto.discardMethod }),
+      () => ({
+        data: { isRecoverable: dto.isRecoverable ?? false },
+        reason: dto.discardMethod,
+      }),
       dto,
+    );
+  }
+
+  /**
+   * Set the "recoverable" flag of Discarded samples (Sample Search popup): whether the physical
+   * sample can still be recovered. Editable while the sample stays Discarded; each change is
+   * logged on its history ("Recoverable changed: No → Yes"). Setting the value it already has changes
+   * and logs nothing. Retrieve out of Discarded is refused unless the flag is true. A group is
+   * all-or-nothing, unless `skipInvalid` is set: then a sample that is no longer Discarded is skipped and named.
+   * @throws SampleFlagNotAllowedException if a sample is not Discarded
+   * @throws SampleOrderCancelledException if a sample's order is cancelled
+   */
+  async setRecoverable(
+    ids: string[],
+    tenantId: string,
+    personId: string | null,
+    dto: BulkSetRecoverableDto,
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    const yesNo = (v: boolean | null) => (v ? 'Yes' : 'No');
+    return this.mutateIds(
+      ids,
+      tenantId,
+      personId,
+      'recoverable-flag',
+      (sample) =>
+        // never set (null) counts as "No": No -> No is not a change
+        (sample.isRecoverable ?? false) === dto.isRecoverable
+          ? null
+          : {
+              data: { isRecoverable: dto.isRecoverable },
+              reason: `Recoverable changed: ${yesNo(sample.isRecoverable)} → ${yesNo(dto.isRecoverable)}`,
+            },
+      dto,
+      async (tx, sample) => {
+        if (sample.status !== SampleStatus.DISCARDED) {
+          throw new SampleFlagNotAllowedException(
+            'discard',
+            sample.status,
+            'The recoverable flag can only be set on a Discarded sample.',
+          );
+        }
+        if (await this.isOrderCancelled(tx, tenantId, sample.orderId)) {
+          throw new SampleOrderCancelledException('update', sample.status);
+        }
+      },
+    );
+  }
+
+  /**
+   * Confirm that Returned samples are physically back and checked (Sample Search popup). Retrieve
+   * out of Returned is refused until this is done. Logged on the sample's history with who and
+   * when. A sample can be verified once; a group is all-or-nothing, unless `skipInvalid` is set: then a sample that is
+   * no longer Returned or is already verified is skipped and named.
+   * @throws SampleFlagNotAllowedException if a sample is not Returned, or is already verified
+   * @throws SampleOrderCancelledException if a sample's order is cancelled
+   */
+  async markReturnedVerified(
+    ids: string[],
+    tenantId: string,
+    personId: string | null,
+    dto: BulkMarkReturnedVerifiedDto,
+  ): Promise<BulkActionResult<OrderSampleWithRelations>> {
+    return this.mutateIds(
+      ids,
+      tenantId,
+      personId,
+      'returned-verified',
+      () => ({
+        data: { returnedVerifiedAt: new Date(), returnedVerifiedBy: personId },
+        reason: 'Returned sample confirmed physically back and verified',
+      }),
+      dto,
+      async (tx, sample) => {
+        if (sample.status !== SampleStatus.RETURNED) {
+          throw new SampleFlagNotAllowedException(
+            'return',
+            sample.status,
+            'Only a Returned sample can be marked as returned and verified.',
+          );
+        }
+        if (sample.returnedVerifiedAt) {
+          throw new SampleFlagNotAllowedException(
+            'return',
+            sample.status,
+            'This returned sample is already marked as verified.',
+          );
+        }
+        if (await this.isOrderCancelled(tx, tenantId, sample.orderId)) {
+          throw new SampleOrderCancelledException('update', sample.status);
+        }
+      },
     );
   }
 
@@ -3405,7 +3836,7 @@ export class OrderSampleService {
     };
   }
 
-  /** Cancel — New/Collected/Hold → Cancelled (records the cancellation reason). */
+  /** Cancel — New/Collected/Hold/Repeat → Cancelled (records the cancellation reason). */
   async cancel(
     ids: string[],
     tenantId: string,
@@ -3532,7 +3963,8 @@ export class OrderSampleService {
    * sample ids): the typed `dto.barcode` when supplied, otherwise the next
    * system-sequential value from the branch counter (which skips any value
    * already taken). A manual value is rejected when already used by a sample
-   * outside this group. A single Code 39 image is rendered and uploaded to S3,
+   * outside this group (ignoring capitals; typed assignments take turns, so two
+   * simultaneous ones cannot both claim a number). A single Code 128 image is rendered and uploaded to S3,
    * and all members are updated to the shared `barcode` + `orderIdBarcode` in one
    * transaction (all-or-none). A failed render/upload rolls the whole assignment
    * back (fail-together).
@@ -3541,6 +3973,7 @@ export class OrderSampleService {
    * @throws SampleBarcodeLockedException if a sample is out at another
    *   branch / partner / centre, or is a copy received from another branch
    * @throws ValidationException if a manual barcode is already in use
+   * @throws BarcodeReservedByRepeatException if a manual barcode was taken off a sample by a Repeat and that sample is still waiting for its new tube
    */
   async assignBarcode(
     ids: string[],
@@ -3589,15 +4022,28 @@ export class OrderSampleService {
       const unchanged =
         !!dto.barcode && samples.every((s) => s.barcode === dto.barcode);
       if (dto.barcode) {
+        // Typed barcodes take turns: the tenant row is locked until this transaction ends, so two people
+        // typing the same new barcode at the same moment cannot both pass the check below (there is no
+        // database unique rule on the sample barcode - a group legitimately shares one number). Typing a
+        // barcode by hand is rare, and the lock order (tenant row first, counter after) is the one the
+        // order and collect code already use.
+        await tx.tenant.update({
+          where: { id: tenantId },
+          data: { updatedAt: new Date() },
+          select: { id: true },
+        });
         // A manually-entered barcode must be free across the tenant: reject when
-        // any sample OUTSIDE the current group already carries it. Re-assigning
-        // the same value to this same group stays allowed (idempotent edit).
+        // any sample OUTSIDE the current group already carries it, whatever the capitals
+        // ("Cv1" and "cv1" are the same barcode: the search ignores capitals too). The
+        // value is limited to letters, digits and hyphens by the DTO, so the
+        // case-insensitive match cannot be turned into a pattern. Re-assigning the same
+        // value to this same group stays allowed (idempotent edit).
         const clash = unchanged
           ? null
           : await tx.orderSample.findFirst({
               where: {
                 tenantId,
-                barcode: dto.barcode,
+                barcode: { equals: dto.barcode, mode: 'insensitive' },
                 deletedAt: null,
                 id: { notIn: ids },
               },
@@ -3607,6 +4053,24 @@ export class OrderSampleService {
           throw new ValidationException(
             `Barcode "${dto.barcode}" is already in use.`,
           );
+        }
+        // A number a Repeat took off a sample that is still waiting for its new tube stays reserved for it: Retrieve
+        // can put it back only while nobody else holds it, and typing it onto another sample (or onto the waiting
+        // sample itself, which would give the new tube the old tube's number) defeats the point of taking it off. Once
+        // the sample is collected again it holds a new barcode and the old number is free. Same condition the Search
+        // popup uses for "waiting": no barcode now, the old one remembered.
+        if (!unchanged) {
+          const reserved = await tx.orderSample.findFirst({
+            where: {
+              tenantId,
+              deletedAt: null,
+              barcode: null,
+              status: { in: [SampleStatus.REPEAT, SampleStatus.HOLD] },
+              barcodeBeforeRepeat: { equals: dto.barcode, mode: 'insensitive' },
+            },
+            select: { id: true },
+          });
+          if (reserved) throw new BarcodeReservedByRepeatException(dto.barcode);
         }
         value = dto.barcode;
       } else if (branchId) {
@@ -3817,11 +4281,69 @@ export class OrderSampleService {
       throw new SampleSentToBranchException(action, sample.status);
     }
 
+    // Retrieve out of Discarded needs the "recoverable" flag, out of Returned the "returned and
+    // verified" confirmation (Sample Search requirements, 2026-11-06). Skippable like the other
+    // refusals; the system-driven moves are not user actions and pass.
+    if (
+      action === 'retrieve' &&
+      !note.system &&
+      ((sample.status === SampleStatus.DISCARDED &&
+        sample.isRecoverable !== true) ||
+        (sample.status === SampleStatus.RETURNED && !sample.returnedVerifiedAt))
+    ) {
+      throw new SampleRetrieveBlockedByFlagException(sample.status);
+    }
+
+    // Store and Return of an ACCEPTED tube need every test on its barcode published (Sample Search
+    // requirements, 2026-11-06). Runs before the `force` override below so no route can skip it. A
+    // refusal is skippable like the other guards, so a group action still processes the samples that
+    // qualify. System moves are not user actions and pass.
+    if (
+      (action === 'store' || action === 'return') &&
+      sample.status === SampleStatus.ACCEPTED &&
+      !note.system
+    ) {
+      const gate = await this.storeReturnGate(tx, tenantId, sample);
+      if (gate.gated && gate.unpublished > 0) {
+        throw new SampleStoreReturnBlockedException(
+          action,
+          sample.status,
+          gate.unpublished,
+        );
+      }
+    }
+
     // Group status actions force a direct override: the sample is moved to the
     // action's fixed target status regardless of its current status (no legality
     // check). `retrieve` and `return` have no forced target (see FORCE_TARGET), so
     // they keep the normal legality check — a Collected sample can never be Returned.
     const forced = note.force ? FORCE_TARGET[action] : undefined;
+
+    // A forced action must not break the Repeat / validated-result rules the normal actions keep:
+    //  - a sample waiting in Repeat can only be collected (or held, or cancelled): a forced Accept / Store / ... would skip the
+    //    Collect that makes its new barcode and leave an Accepted tube with no barcode (a cancelled tube has none to leave);
+    //  - a sample whose result is validated cannot be pulled back to before its acceptance: the Approved report would be locked
+    //    "waiting for its sample".
+    if (forced) {
+      if (
+        sample.status === SampleStatus.REPEAT &&
+        action !== 'collect' &&
+        action !== 'hold' &&
+        action !== 'cancel'
+      ) {
+        throw new SampleRepeatMustBeCollectedException(action, sample.status);
+      }
+      if (
+        forced !== SampleStatus.REPEAT &&
+        PRE_ACCEPT_SAMPLE_STATUSES.includes(forced) &&
+        !PRE_ACCEPT_SAMPLE_STATUSES.includes(sample.status) &&
+        !isTransferredStatus(sample.status) &&
+        !note.system &&
+        (await this.hasValidatedResult(tx, tenantId, sample))
+      ) {
+        throw new SampleMoveBlockedByResultException(action, sample.status);
+      }
+    }
 
     // The receiving branch sent this sample back (REPEAT with a SENT_INTERNAL
     // previous status): nothing to pull back — the sender collects it again. Checked
@@ -3850,55 +4372,14 @@ export class OrderSampleService {
     }
 
     let toStatus: SampleStatus | null;
+    // Which barcode undoing the sample's current Repeat puts back (read from its history below; see resolveRetrieveTarget).
+    let repeatUndo: RepeatBarcodeUndo = { known: false, barcode: null };
     if (forced) {
       toStatus = forced;
-    } else if (action === 'retrieve' && isTransferredStatus(sample.status)) {
-      // A sample that is out at another branch / partner goes back to the status it
-      // had before it was sent (a group "force" send can leave a NEW / COLLECTED
-      // sample at the other branch - pulling it back must not skip its steps).
-      toStatus = this.retrieveTarget(sample);
     } else if (action === 'retrieve') {
-      // Revert to the sample's immediately-previous status from its OWN history:
-      // the `fromStatus` of the most recent NON-retrieve transition INTO the
-      // current status. Repeated retrieves therefore walk back the real timeline
-      // (New → Collected → Accepted ⇒ Accepted → Collected → New), instead of
-      // oscillating on the single `previousStatus` column. Falls back to the §A.9
-      // transfer-return target, then `null`: a sample with no prior history (just
-      // created, or already back at its first status) yields an "invalid"
-      // transition, so bulk `skipInvalid` skips it gracefully — no-op, no loop —
-      // rather than forcing a hardcoded previous status.
-      const prevRow = await tx.orderSampleStatusHistory.findFirst({
-        where: {
-          sampleId: sample.id,
-          tenantId,
-          deletedAt: null,
-          toStatus: sample.status,
-          // Only a genuine MOVEMENT into the current status counts — not a prior
-          // retrieve (which would walk back up), and not a no-status-change row
-          // (assign-barcode / update notes / share all record toStatus ==
-          // fromStatus == current). `{ not: current }` on the nullable fromStatus
-          // also drops the `generate` row (fromStatus = null), so a freshly-created
-          // sample correctly yields no previous status. Mirrors findHistory's
-          // movement filter so the UI's shown "New Status" matches what happens.
-          fromStatus: { not: sample.status },
-          action: { not: 'retrieve' },
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        select: { fromStatus: true },
-      });
-      const walkedTo =
-        prevRow?.fromStatus ?? nextSampleStatus('retrieve', sample.status);
-      // A sample is in Sent / Forwarded / Outsourced only through a real, open
-      // transfer. Once it has come back (the receiving branch returned it) and been
-      // collected again, the history still says "Sent → Repeat": stepping back must
-      // stop there. Landing on a transferred status with no open transfer is an
-      // impossible state (the report would turn view-only and the sample could not be
-      // repeated or re-sent). A sample that really is out is retrieved by the branch
-      // above (`retrieveTarget`), never by this walk-back.
-      if (walkedTo && isTransferredStatus(walkedTo)) {
-        throw new RetrieveBlockedException(sample.status, 'RETURNED');
-      }
-      toStatus = walkedTo;
+      const destination = await this.retrieveDestination(tx, tenantId, sample);
+      toStatus = destination.toStatus;
+      repeatUndo = destination.repeatUndo;
     } else {
       toStatus = nextSampleStatus(action, sample.status);
     }
@@ -3906,19 +4387,23 @@ export class OrderSampleService {
       throw new InvalidSampleTransitionException(action, sample.status);
     }
 
-    // Retrieve is the universal undo, but it may not pull a sample (that is at this
-    // branch) back to BEFORE its acceptance while a test on it already has a
-    // validated result: the sample would say "not accepted yet" next to a result
-    // that is done. Same rule as Repeat. A sample that is out at another branch
-    // keeps its own transfer rules below, and an undo that stays at or after
-    // acceptance (Stored -> Accepted, Halted -> Accepted, ...) is not affected.
+    // The manager's rule: Retrieve only while every report the sample serves is still PENDING. After that (a result was
+    // entered and saved, submitted, rejected, validated, or reported as an error) it is refused, so the sample is never
+    // taken back to another tube / place while a report carries the result of the tube it was entered for. It applies to
+    //  - going back to BEFORE acceptance (Accepted -> Collected, Repeat -> ..., Hold / Halt / Error / Acquired -> ...): the
+    //    sample would say "not accepted yet" next to a worked report;
+    //  - the sender's recall of a tube that is OUT (Sent / Forwarded / Outsourced -> Accepted): for a Sent tube the report is
+    //    always Pending (a worked report cannot be sent), for a Forwarded / Outsourced tube it is the partner's result.
+    // An undo that stays at or after acceptance and comes from inside the lab (Stored -> Accepted, Returned -> Accepted,
+    // Discarded -> Stored) is not affected, and neither are the system moves (`note.system`: the receiving branch's Reject /
+    // Repeat / Return), which have their own wipe and validated-result checks.
     if (
       action === 'retrieve' &&
       !note.system &&
-      !isTransferredStatus(sample.status) &&
-      PRE_ACCEPT_SAMPLE_STATUSES.includes(toStatus)
+      (isTransferredStatus(sample.status) ||
+        PRE_ACCEPT_SAMPLE_STATUSES.includes(toStatus))
     ) {
-      await this.assertNoValidatedResultForRetrieve(tx, tenantId, sample);
+      await this.assertNoStartedReportForRetrieve(tx, tenantId, sample);
     }
 
     // The open INTERNAL transfers a Retrieve takes back (soft-deleted below); what the
@@ -4005,7 +4490,10 @@ export class OrderSampleService {
     // back (`sentReturnAction`) resets nothing: the report was already reset and
     // handed back when the receiving branch acted, and has been view-only since.
     const repeatReportIds =
-      action === 'repeat' && !note.system && !sentReturnAction
+      action === 'repeat' &&
+      !note.system &&
+      !note.freshRerun &&
+      !sentReturnAction
         ? await this.reportsToResetOnRepeat(tx, tenantId, sample)
         : [];
 
@@ -4059,6 +4547,14 @@ export class OrderSampleService {
         ...built.data,
         status: toStatus,
         previousStatus: sample.status,
+        // Retrieving a Discarded / Returned sample uses up its flag: a later Discard or Return
+        // starts without one (the flag belongs to that Discard / Return).
+        ...(action === 'retrieve' && sample.status === SampleStatus.DISCARDED
+          ? { isRecoverable: null }
+          : {}),
+        ...(action === 'retrieve' && sample.status === SampleStatus.RETURNED
+          ? { returnedVerifiedAt: null, returnedVerifiedBy: null }
+          : {}),
         // A recalled sample is processed at its origin again: revert the processing
         // branch (set to the destination on Send / Assign Center) and clear the
         // now-void dispatch fields so the origin branch's list is accurate.
@@ -4112,23 +4608,347 @@ export class OrderSampleService {
         personId,
       );
     }
+    // Undoing a Repeat (Retrieve out of Repeat): the tube that was drawn is the valid tube again, so it gets back the
+    // barcode the Repeat took off - even if a new tube was collected and got a barcode in between.
+    if (action === 'retrieve' && sample.status === SampleStatus.REPEAT) {
+      const restored = await this.restoreBarcodeAfterRepeatUndoInTx(
+        tx,
+        tenantId,
+        personId,
+        sample,
+        toStatus,
+        repeatUndo,
+      );
+      if (restored) return { ...updated, ...restored };
+    }
+    // A Retrieve that puts a tube back INTO Repeat cancels the fresh tube that was drawn: it is waiting to be drawn again, so
+    // it has no barcode, exactly as after a Repeat (Collect makes the next one). Without this the tube kept the cancelled
+    // tube's barcode while saying "waiting for a fresh tube". The line it writes is worded differently from a Repeat's, so a
+    // later undo never mistakes it for the barcode the Repeat took off.
+    if (
+      action === 'retrieve' &&
+      toStatus === SampleStatus.REPEAT &&
+      !isTransferredStatus(sample.status)
+    ) {
+      const cleared = await clearBarcodeForRepeatInTx(tx, {
+        tenantId,
+        personId,
+        sampleIds: [sample.id],
+        via: 'retrieve',
+      });
+      return {
+        ...updated,
+        barcode: null,
+        orderIdBarcode: null,
+        repeatBatchId: cleared.batchId,
+      };
+    }
     return updated;
   }
 
   /**
-   * Refuses a Retrieve that would take this sample back to before its acceptance
-   * while a report it serves has a validated result (Result Done, Approved or
-   * Published). The reports are locked first (the same fixed-order lock Repeat
-   * takes), so a validation in flight cannot slip in after the answer. Nothing is
-   * changed or deleted: results that are not validated yet stay saved (and are
-   * write-locked while the sample waits to be accepted again).
-   * @throws SampleRetrieveBlockedByResultException if a report's result is validated
+   * Put back the barcode a Repeat took off a sample, when the Repeat is undone (Retrieve out of Repeat). The value is the one
+   * named in the "barcode removed" audit line of THE Repeat being undone (`paired`, read from the sample's history): a sample
+   * repeated several times gets its barcodes back one by one, newest Repeat first, not the same one again. When the history
+   * cannot say which Repeat it is (an old history, a Repeat entered by a Retrieve) the sample's most recent line is used, as
+   * before. Its image is made again and the repeat batch tag is dropped. If the sample got a new barcode in between (it was
+   * collected again), that one is replaced and the audit line says so.
+   *
+   * Nothing is restored when the Repeat took off no barcode. When the number is now used by a sample of ANOTHER order (it was
+   * free after the Repeat and someone assigned it) it cannot be put back: a sample that still holds a barcode keeps it, and a
+   * sample with none (the usual case right after a Repeat) is given a NEW barcode, so an Accepted tube is never left without
+   * one (it could not be printed or matched by the analyzer). The audit line says which. Samples of the same order may share a
+   * number, so they are not a clash.
+   * @param paired which barcode undoing this Repeat puts back (from `resolveRetrieveTarget`)
+   * @returns the fields it set, or null when nothing was restored
    */
-  private async assertNoValidatedResultForRetrieve(
+  private async restoreBarcodeAfterRepeatUndoInTx(
     tx: Prisma.TransactionClient,
     tenantId: string,
+    personId: string | null,
     sample: OrderSample,
-  ): Promise<void> {
+    statusNow: SampleStatus,
+    paired: RepeatBarcodeUndo,
+  ): Promise<{
+    barcode: string;
+    orderIdBarcode: string | null;
+    repeatBatchId: null;
+  } | null> {
+    let value: string | null;
+    if (paired.known) {
+      value = paired.barcode;
+    } else {
+      const removed = await tx.orderSampleStatusHistory.findFirst({
+        where: {
+          sampleId: sample.id,
+          tenantId,
+          deletedAt: null,
+          action: BARCODE_REMOVED_ACTION,
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { notes: true },
+      });
+      value = barcodeRemovedFrom(removed?.notes);
+    }
+    if (!value) return null;
+    const note = (action: string, text: string) =>
+      tx.orderSampleStatusHistory.create({
+        data: {
+          tenantId,
+          branchId: sample.branchId,
+          sampleId: sample.id,
+          action,
+          fromStatus: statusNow,
+          toStatus: statusNow,
+          notes: text,
+          changedBy: personId,
+        },
+      });
+    const clash = await tx.orderSample.findFirst({
+      where: {
+        tenantId,
+        barcode: value,
+        deletedAt: null,
+        orderId: { not: sample.orderId },
+      },
+      select: { id: true },
+    });
+    // The barcode the sample holds now (made when it was collected again), if any, is replaced.
+    const current = await tx.orderSample.findFirst({
+      where: { id: sample.id, tenantId },
+      select: { barcode: true },
+    });
+    if (clash) {
+      const notPutBack = `Repeat undone, but barcode ${value} was not put back: it is now used by a sample of another order.`;
+      // A sample that still holds a barcode keeps it (and so does one with no branch: no counter to make a new one from).
+      if (current?.barcode || !sample.branchId) {
+        await note(BARCODE_RESTORE_SKIPPED_ACTION, notPutBack);
+        return null;
+      }
+      // Right after a Repeat the sample holds none: give it a NEW barcode so the Accepted tube is never left without one.
+      const fresh = await this.barcodeService.allocateNumberInTx(
+        tx,
+        tenantId,
+        sample.branchId,
+      );
+      let freshUrl: string | null = null;
+      try {
+        freshUrl = await this.barcodeService.generateAndUpload(fresh, tenantId);
+      } catch (e) {
+        this.logger.warn(
+          `Barcode image for ${fresh} could not be made while undoing a Repeat (made at print time): ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      await tx.orderSample.update({
+        where: { id: sample.id },
+        data: {
+          barcode: fresh,
+          orderIdBarcode: freshUrl,
+          repeatBatchId: null,
+          updatedBy: personId,
+        },
+      });
+      await note(
+        BARCODE_RESTORE_SKIPPED_ACTION,
+        `${notPutBack} New barcode ${fresh} was given to the sample instead: reprint its label.`,
+      );
+      return { barcode: fresh, orderIdBarcode: freshUrl, repeatBatchId: null };
+    }
+    const replaced =
+      current?.barcode && current.barcode !== value ? current.barcode : null;
+    // The number is what matters: the picture is a bonus. If the file storage cannot be reached now, the barcode still comes
+    // back (an undo must not fail because of storage) and the picture is made when the label is printed.
+    let url: string | null = null;
+    try {
+      url = await this.barcodeService.generateAndUpload(value, tenantId);
+    } catch (e) {
+      this.logger.warn(
+        `Barcode image for ${value} could not be made while undoing a Repeat (made at print time): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    await tx.orderSample.update({
+      where: { id: sample.id },
+      data: {
+        barcode: value,
+        orderIdBarcode: url,
+        repeatBatchId: null,
+        updatedBy: personId,
+      },
+    });
+    await note(
+      BARCODE_RESTORED_ACTION,
+      `Repeat undone: barcode ${value} is back on the sample${replaced ? ` (barcode ${replaced} removed)` : ''}${url ? '' : '; its image could not be made now and is made when the label is printed'}.`,
+    );
+    return { barcode: value, orderIdBarcode: url, repeatBatchId: null };
+  }
+
+  /**
+   * The Store / Return gate of an ACCEPTED sample: how many of the tests that share its barcode are not published yet.
+   *
+   * The group is every live sample with the same barcode at the sample's branch and order (the tube's rows: one row holds one
+   * test). Rows that no longer count are ignored: Sent (the receiving branch's copy counts instead), Cancelled, Returned,
+   * Discarded, and rows whose test was removed from the order. A row is "published" when it has at least one report and every
+   * report it serves is PUBLISHED; a row with no report, or with any other status (Approved, Error Reported, Result Rejected ...),
+   * counts as not published. A sample with no barcode is a group of one.
+   *
+   * Not gated (`gated: false`): a sample whose own test was removed from the order, and the received copy of a cancelled order -
+   * both must stay possible to put away (they can never be published).
+   *
+   * The reports are locked first (the fixed-order lock Repeat and Retrieve take), so a Save or Publish in flight cannot slip in
+   * after the answer. Public so the Sample Search lookup shows the buttons by the very same rule the server enforces.
+   * @param tx the caller's (tenant-scoped) transaction
+   * @param sample the sample asked about (any status; callers only gate ACCEPTED ones)
+   * @returns whether the rule applies, how many tests of the group are not published, and which sample rows they are (the
+   *   Sample Search popup tells the ones a department-scoped person cannot see from the ones they can)
+   */
+  async storeReturnGate(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: Pick<
+      OrderSample,
+      'id' | 'branchId' | 'orderId' | 'barcode' | 'sourceTransferId'
+    >,
+  ): Promise<{
+    gated: boolean;
+    unpublished: number;
+    unpublishedSampleIds: string[];
+  }> {
+    if (
+      (await findItemRemovedSampleIds(tx, tenantId, [sample.id])).has(sample.id)
+    ) {
+      return { gated: false, unpublished: 0, unpublishedSampleIds: [] };
+    }
+    if (
+      sample.sourceTransferId &&
+      (await this.isOrderCancelled(tx, tenantId, sample.orderId))
+    ) {
+      return { gated: false, unpublished: 0, unpublishedSampleIds: [] };
+    }
+
+    const group = sample.barcode
+      ? await tx.orderSample.findMany({
+          where: {
+            tenantId,
+            branchId: sample.branchId,
+            orderId: sample.orderId,
+            barcode: sample.barcode,
+            deletedAt: null,
+            status: {
+              notIn: [
+                SampleStatus.SENT_INTERNAL,
+                SampleStatus.CANCELLED,
+                SampleStatus.RETURNED,
+                SampleStatus.DISCARDED,
+              ],
+            },
+          },
+          select: { id: true, branchId: true },
+        })
+      : [{ id: sample.id, branchId: sample.branchId }];
+    const removed = await findItemRemovedSampleIds(
+      tx,
+      tenantId,
+      group.map((g) => g.id),
+    );
+    const counted = group.filter((g) => !removed.has(g.id));
+    if (counted.length === 0) {
+      return { gated: true, unpublished: 0, unpublishedSampleIds: [] };
+    }
+
+    const links = await tx.orderSampleTest.findMany({
+      where: {
+        tenantId,
+        sampleId: { in: counted.map((g) => g.id) },
+        deletedAt: null,
+      },
+      select: { sampleId: true, orderItemId: true, labTestId: true },
+    });
+    const reportIdsByRow = new Map<string, string[]>();
+    const allReportIds = new Set<string>();
+    for (const row of counted) {
+      const ids = await this.labReportService.findReportIdsForSampleTests(
+        tx,
+        tenantId,
+        row.branchId,
+        links.filter((l) => l.sampleId === row.id),
+      );
+      reportIdsByRow.set(row.id, ids);
+      ids.forEach((id) => allReportIds.add(id));
+    }
+    await this.labReportService.lockReports(tx, tenantId, [...allReportIds]);
+    const reports = await tx.labReport.findMany({
+      where: { id: { in: [...allReportIds] }, tenantId, deletedAt: null },
+      select: { id: true, status: true },
+    });
+    const statusById = new Map(reports.map((r) => [r.id, r.status]));
+
+    const unpublishedSampleIds: string[] = [];
+    for (const row of counted) {
+      const statuses = (reportIdsByRow.get(row.id) ?? [])
+        .map((id) => statusById.get(id))
+        .filter((s): s is NonNullable<typeof s> => !!s);
+      if (
+        statuses.length === 0 ||
+        statuses.some((s) => s !== LabReportStatus.PUBLISHED)
+      ) {
+        unpublishedSampleIds.push(row.id);
+      }
+    }
+    return {
+      gated: true,
+      unpublished: unpublishedSampleIds.length,
+      unpublishedSampleIds,
+    };
+  }
+
+  /**
+   * Whether the Sample Search popup should hide this sample's Retrieve: the server refuses a Retrieve that would take the
+   * sample back to before its acceptance (or recall it from another branch / partner) while a report it serves is past Pending.
+   * Uses the very destination and report rule the Retrieve uses. Any other reason a Retrieve fails is not this method's
+   * business (it answers false), so nothing is hidden for a reason the person cannot read.
+   */
+  async retrieveRefusedByStartedReport(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<boolean> {
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+    });
+    if (!sample) return false;
+    let toStatus: SampleStatus | null;
+    try {
+      toStatus = (await this.retrieveDestination(tx, tenantId, sample))
+        .toStatus;
+    } catch (e) {
+      if (e instanceof RetrieveBlockedException) return false;
+      throw e;
+    }
+    if (!toStatus) return false;
+    if (
+      !isTransferredStatus(sample.status) &&
+      !PRE_ACCEPT_SAMPLE_STATUSES.includes(toStatus)
+    ) {
+      return false;
+    }
+    return this.hasStartedReport(tx, tenantId, sample);
+  }
+
+  /**
+   * Which of Repeat, Send / Forward / Outsource the server would refuse for the report(s) this sample serves, for the Sample
+   * Search popup: Repeat when a result is validated (Result Done, Approved, Published), the three dispatches when a report has
+   * been worked on at all. The same checks the actions run, read without changing anything.
+   */
+  async reportBlocksFor(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sampleId: string,
+  ): Promise<{ repeat: boolean; dispatch: boolean }> {
+    const sample = await tx.orderSample.findFirst({
+      where: { id: sampleId, tenantId, deletedAt: null },
+      select: { id: true, branchId: true },
+    });
+    if (!sample) return { repeat: false, dispatch: false };
     const tests = await tx.orderSampleTest.findMany({
       where: { sampleId: sample.id, tenantId, deletedAt: null },
       select: { orderItemId: true, labTestId: true },
@@ -4140,11 +4960,155 @@ export class OrderSampleService {
       tests,
     );
     await this.labReportService.lockReports(tx, tenantId, reportIds);
-    if (
-      !(await this.labReportService.canReturnToSender(tx, tenantId, reportIds))
-    ) {
-      throw new SampleRetrieveBlockedByResultException(sample.status);
+    const repeat = !(await this.labReportService.canReturnToSender(
+      tx,
+      tenantId,
+      reportIds,
+    ));
+    let dispatch = false;
+    for (const id of reportIds) {
+      if (!(await this.labReportService.isReportUntouched(tx, tenantId, id))) {
+        dispatch = true;
+        break;
+      }
     }
+    return { repeat, dispatch };
+  }
+
+  /**
+   * Where a (non-forced) Retrieve would put the sample, and which barcode undoing its current Repeat puts back. One place for
+   * the rule so the Retrieve itself and the Sample Search popup (which must hide a Retrieve the server will refuse) agree.
+   * @throws RetrieveBlockedException when the walk back would land on a Sent / Forwarded / Outsourced status
+   */
+  private async retrieveDestination(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<{ toStatus: SampleStatus | null; repeatUndo: RepeatBarcodeUndo }> {
+    let repeatUndo: RepeatBarcodeUndo = { known: false, barcode: null };
+    if (isTransferredStatus(sample.status)) {
+      // A sample that is out at another branch / partner goes back to the status it
+      // had before it was sent (a group "force" send can leave a NEW / COLLECTED
+      // sample at the other branch - pulling it back must not skip its steps).
+      return { toStatus: this.retrieveTarget(sample), repeatUndo };
+    }
+    // Revert to the sample's immediately-previous status from its OWN history:
+    // the `fromStatus` of the most recent NON-retrieve transition INTO the
+    // current status. Repeated retrieves therefore walk back the real timeline
+    // (New → Collected → Accepted ⇒ Accepted → Collected → New), instead of
+    // oscillating on the single `previousStatus` column. Falls back to the §A.9
+    // transfer-return target, then `null`: a sample with no prior history (just
+    // created, or already back at its first status) yields an "invalid"
+    // transition, so bulk `skipInvalid` skips it gracefully — no-op, no loop —
+    // rather than forcing a hardcoded previous status.
+    //
+    // The history is replayed as a STACK (`resolveRetrieveTarget`): a move pushes
+    // the status it went to and a Retrieve pops the one it came from, so a step a
+    // Retrieve already undid is never walked through again. (The earlier rule -
+    // "the latest move into the current status" - did not know a Retrieve had
+    // cancelled a move: after a Repeat was undone, further Retrieves looped
+    // Collected -> Repeat -> Accepted -> Collected ... and never reached New.)
+    // Rows that change no status (a barcode removed / restored, notes) are ignored,
+    // as in `findHistory`, so what the screen shows matches what happens.
+    const historyRows = sortHistoryRows(
+      await tx.orderSampleStatusHistory.findMany({
+        where: { sampleId: sample.id, tenantId, deletedAt: null },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: {
+          action: true,
+          fromStatus: true,
+          toStatus: true,
+          notes: true,
+          createdAt: true,
+        },
+      }),
+    );
+    const replay = resolveRetrieveTarget(historyRows, sample.status);
+    repeatUndo = replay.repeatBarcode;
+    // A history that does not replay to the current status (rows lost, a status
+    // set outside the history) falls back to the latest move into it.
+    const walked = replay.consistent
+      ? replay.target
+      : latestMovementInto(historyRows, sample.status);
+    const walkedTo = walked ?? nextSampleStatus('retrieve', sample.status);
+    // A sample is in Sent / Forwarded / Outsourced only through a real, open
+    // transfer. Once it has come back (the receiving branch returned it) and been
+    // collected again, the history still says "Sent → Repeat": stepping back must
+    // stop there. Landing on a transferred status with no open transfer is an
+    // impossible state (the report would turn view-only and the sample could not be
+    // repeated or re-sent). A sample that really is out is retrieved by the branch
+    // above (`retrieveTarget`), never by this walk-back.
+    if (walkedTo && isTransferredStatus(walkedTo)) {
+      throw new RetrieveBlockedException(sample.status, 'RETURNED');
+    }
+    return { toStatus: walkedTo, repeatUndo };
+  }
+
+  /**
+   * Refuses a Retrieve while a report this sample serves is already past Pending (see the rule at the call site). The
+   * reports are locked first (the same fixed-order lock Repeat takes), so a Save in flight cannot slip in after the answer.
+   * Nothing is changed or deleted.
+   * @throws SampleRetrieveBlockedByReportException if a report is past Pending
+   */
+  private async assertNoStartedReportForRetrieve(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<void> {
+    if (await this.hasStartedReport(tx, tenantId, sample)) {
+      throw new SampleRetrieveBlockedByReportException(sample.status);
+    }
+  }
+
+  /**
+   * Whether a report this sample serves is already past Pending (a result entered and saved, submitted, rejected,
+   * validated or reported as an error). The reports are locked first, so a Save in flight cannot slip in after the answer.
+   * Public: the transfer service asks it before the receiver undoes the acceptance of a copy.
+   */
+  async hasStartedReport(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: Pick<OrderSample, 'id' | 'branchId'>,
+  ): Promise<boolean> {
+    const tests = await tx.orderSampleTest.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    return this.labReportService.hasStartedReport(tx, tenantId, reportIds);
+  }
+
+  /**
+   * Whether a report this sample serves has a validated result (Result Done, Approved or Published). The reports are locked
+   * first (the same fixed-order lock Repeat takes), so a validation in flight cannot slip in after the answer.
+   */
+  private async hasValidatedResult(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    sample: OrderSample,
+  ): Promise<boolean> {
+    const tests = await tx.orderSampleTest.findMany({
+      where: { sampleId: sample.id, tenantId, deletedAt: null },
+      select: { orderItemId: true, labTestId: true },
+    });
+    const reportIds = await this.labReportService.findReportIdsForSampleTests(
+      tx,
+      tenantId,
+      sample.branchId,
+      tests,
+    );
+    await this.labReportService.lockReports(tx, tenantId, reportIds);
+    return !(await this.labReportService.canReturnToSender(
+      tx,
+      tenantId,
+      reportIds,
+    ));
   }
 
   /**
@@ -4734,7 +5698,10 @@ export class OrderSampleService {
   /**
    * Apply a no-status-change mutation (update notes / share) to each id in one
    * transaction, appending a history row that keeps the current status.
-   * @param guard optional per-sample refusal, run before anything is written
+   * @param guard optional per-sample refusal, run before anything is written. A refusal fails the whole batch unless
+   * `note.skipInvalid` is set: then a refusal that is an `InvalidSampleTransitionException` (a flag not allowed from the
+   * sample's status, a cancelled order) skips that sample, names it in `skipped` and carries on with the others. A missing
+   * id always fails the batch.
    * @throws OrderSampleNotFoundException / AccessionNumberConflictException
    */
   private async mutateIds(
@@ -4742,7 +5709,7 @@ export class OrderSampleService {
     tenantId: string,
     personId: string | null,
     action: string,
-    build: (sample: OrderSample) => ActionPatch,
+    build: (sample: OrderSample) => ActionPatch | null,
     note: ActionNote,
     guard?: (
       tx: Prisma.TransactionClient,
@@ -4750,6 +5717,7 @@ export class OrderSampleService {
     ) => Promise<void>,
   ): Promise<BulkActionResult<OrderSampleWithRelations>> {
     let changed: string[];
+    const skipped: BulkSkippedItem[] = [];
     try {
       changed = await this.prisma.withTenant(tenantId, async (tx) => {
         const done: string[] = [];
@@ -4759,10 +5727,35 @@ export class OrderSampleService {
             where: { id, tenantId, deletedAt: null },
           });
           if (!sample) throw new OrderSampleNotFoundException(id);
-          // A caller's refusal (e.g. a cancelled order), before anything is written;
-          // it aborts the whole transaction, so a group is all-or-nothing.
-          if (guard) await guard(tx, sample);
+          // A caller's refusal (e.g. a cancelled order), before anything is written; it aborts the whole transaction, so a
+          // group is all-or-nothing - unless the caller asked to skip invalid samples (the Sample Search popup does, so a
+          // row someone else changed a moment ago does not fail the rows that are still fine).
+          if (guard) {
+            try {
+              await guard(tx, sample);
+            } catch (e) {
+              if (
+                note.skipInvalid === true &&
+                e instanceof InvalidSampleTransitionException
+              ) {
+                skipped.push({
+                  id: sample.id,
+                  accessionNo: sample.accessionNo ?? null,
+                  reason: refusalMessage(e),
+                  code: e.errorCode,
+                });
+                continue;
+              }
+              throw e;
+            }
+          }
           const built = build(sample);
+          // `null` = nothing to change for this sample (e.g. the flag already has that value): no write and no
+          // history row, so a repeated click leaves no duplicate audit entries. It still counts as done.
+          if (!built) {
+            done.push(sample.id);
+            continue;
+          }
           await tx.orderSample.update({
             where: { id: sample.id },
             data: { ...built.data, updatedBy: personId },
@@ -4789,22 +5782,385 @@ export class OrderSampleService {
       this.rethrowConflict(e);
       throw e;
     }
-    // No-status-change mutations never skip (a missing id throws), so `skipped`
-    // is always empty — returned for a uniform bulk-result contract.
+    // `skipped` is empty unless the caller asked to skip invalid samples (a missing id still throws).
     const succeeded = await Promise.all(
       changed.map((id) => this.findById(id, tenantId)),
     );
-    return { succeeded, skipped: [] };
+    return { succeeded, skipped: inRequestOrder(skipped, ids, (x) => x.id) };
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   /**
-   * Build the tenant/branch-scoped `where` for the sample list from the §A.3
-   * filter panel. Order-level filters (date range, department, lab test/panel,
-   * order mode, home-collection) are applied through the `order` relation; the
-   * TAT band is translated to a `createdAt` range. `AND` holds the composite
-   * conditions (search + urgent + outsource) so they don't clobber each other.
+   * The read-only Order Overview behind the In-House list's Order ID: every test of the order that
+   * THIS branch's list shows (same rows, same department visibility - so the two cannot drift),
+   * each with its report status and, for a sample this branch sent on, where it is now. The notes
+   * anchor is the first report of the order held at this branch (see `pickNotesAnchor`).
+   * Read-only: it changes nothing. Its rows carry everything the list's status label reads
+   * (`transfers`, `status`), so the popup shows the same "Sent - Rejected" the list does.
+   * @param tenantId tenant scope (from JWT)
+   * @param branchId the active branch (from the JWT profile)
+   * @param personId the caller, for the department-visibility scope
+   * @param orderId the order to describe
+   */
+  async findOrderOverview(
+    tenantId: string,
+    branchId: string | null,
+    personId: string,
+    orderId: string,
+  ): Promise<OrderOverview> {
+    const scopeIds = await this.userDepartmentScope.resolveDepartmentIds(
+      tenantId,
+      personId,
+    );
+    const tat = await this.tatThresholds(tenantId, branchId);
+    const nowMs = Date.now();
+
+    const loaded = await this.prisma.withTenant(tenantId, async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id: orderId, tenantId, deletedAt: null },
+        select: { id: true, orderCode: true, status: true },
+      });
+      if (!order) return null;
+
+      const rows = await tx.orderSample.findMany({
+        where: {
+          tenantId,
+          branchId,
+          orderId,
+          deletedAt: null,
+          AND: [this.departmentScopeForSamples(scopeIds)],
+        },
+        include: SAMPLE_LIST_INCLUDE,
+        orderBy: { createdAt: 'asc' },
+      });
+      const reports = await tx.labReport.findMany({
+        where: { tenantId, deletedAt: null, orderItem: { orderId } },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          status: true,
+          branchId: true,
+          orderItemId: true,
+          labTestId: true,
+          memberBranchLabTestId: true,
+        },
+      });
+
+      // The links each sample needs to find its report, and where each sent sample is now: both
+      // follow the chain of copies (an accepted INTERNAL transfer makes a copy at the receiving
+      // branch, and the report is re-pointed at THAT copy's test).
+      const { linksBySample, cloneOf } = await loadSampleReportLinks(
+        tx,
+        tenantId,
+        rows.map((r) => r.id),
+      );
+      const holderIds = [
+        ...new Set(
+          rows
+            .map((r) => followCloneChain(r.id, cloneOf))
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+      const holders =
+        holderIds.length > 0
+          ? await tx.orderSample.findMany({
+              where: { id: { in: holderIds }, tenantId },
+              select: { id: true, status: true, branchId: true },
+            })
+          : [];
+
+      const branchIds = [
+        ...new Set(
+          [
+            ...holders.map((h) => h.branchId),
+            ...reports.map((r) => r.branchId),
+          ].filter((id): id is string => !!id),
+        ),
+      ];
+      const branches =
+        branchIds.length > 0
+          ? await tx.branch.findMany({
+              where: { id: { in: branchIds }, tenantId },
+              select: { id: true, name: true },
+            })
+          : [];
+      const deptIds = [
+        ...new Set(
+          rows.map((r) => r.departmentId).filter((v): v is string => !!v),
+        ),
+      ];
+      const departments =
+        deptIds.length > 0
+          ? await tx.department.findMany({
+              where: { id: { in: deptIds }, tenantId, deletedAt: null },
+              select: { id: true, name: true },
+            })
+          : [];
+      return {
+        order,
+        rows,
+        reports,
+        linksBySample,
+        cloneOf,
+        holders,
+        branches,
+        departments,
+      };
+    });
+    if (!loaded) throw new OrderNotFoundException(orderId);
+
+    const {
+      order,
+      rows,
+      reports,
+      linksBySample,
+      cloneOf,
+      holders,
+      branches,
+      departments,
+    } = loaded;
+    const removedIds = await findItemRemovedSampleIds(
+      this.prisma,
+      tenantId,
+      rows.map((r) => r.id),
+    );
+    const named = await this.withTransferNames(tenantId, rows);
+
+    const branchName = new Map(branches.map((b) => [b.id, b.name]));
+    const deptName = new Map(departments.map((d) => [d.id, d.name]));
+    const holderById = new Map(holders.map((h) => [h.id, h]));
+
+    const tests: OrderOverviewTest[] = named.map((row) => {
+      const report = reportForSample(
+        linksBySample.get(row.id) ?? [],
+        reports,
+        branchId,
+      );
+      const holderId = followCloneChain(row.id, cloneOf);
+      const holder = holderId ? holderById.get(holderId) : undefined;
+      return {
+        sample: {
+          ...row,
+          tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
+          itemRemoved: removedIds.has(row.id),
+        },
+        testName:
+          row.tests
+            .map((t) => t.testName)
+            .filter((n): n is string => !!n)
+            .join(', ') || '',
+        department: row.departmentId
+          ? (deptName.get(row.departmentId) ?? null)
+          : null,
+        report: report
+          ? {
+              id: report.id,
+              status: report.status,
+              heldHere: !!branchId && report.branchId === branchId,
+              heldAtBranchName: report.branchId
+                ? (branchName.get(report.branchId) ?? null)
+                : null,
+            }
+          : null,
+        holder: holder
+          ? {
+              branchId: holder.branchId,
+              branchName: holder.branchId
+                ? (branchName.get(holder.branchId) ?? null)
+                : null,
+              status: holder.status,
+            }
+          : null,
+      };
+    });
+
+    return {
+      orderId: order.id,
+      orderCode: order.orderCode,
+      orderCancelled: order.status === OrderStatus.CANCELLED,
+      notesReportId: pickNotesAnchor(reports, branchId),
+      tests,
+    };
+  }
+
+  /**
+   * The choices of the Sample Name / Sample Type filter: the distinct values the
+   * samples visible to this branch really hold, spelling variants merged into one
+   * entry (see `buildSampleOptions`), plus the "Not set" count - the number of samples
+   * with no value. Visible = held by this branch, or moved to / from it by a transfer.
+   * Searchable and paginated like every dropdown.
+   */
+  async sampleOptions(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSampleOptionsDto,
+  ): Promise<PaginatedResult<SampleOption> & { notSetCount: number }> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const column = query.field === 'name' ? 'sampleName' : 'sampleType';
+    const where: Prisma.OrderSampleWhereInput = { tenantId, deletedAt: null };
+    if (branchId) {
+      where.OR = [
+        { branchId },
+        {
+          transfers: {
+            some: {
+              deletedAt: null,
+              OR: [
+                { originBranchId: branchId },
+                { destinationBranchId: branchId },
+              ],
+            },
+          },
+        },
+      ];
+    }
+    const rows = await this.prisma.orderSample.groupBy({
+      by: [column],
+      where,
+      _count: { _all: true },
+    });
+    const { notSetCount, options } = buildSampleOptions(
+      rows.map((r) => ({ value: r[column], count: r._count._all })),
+      query.field,
+      query.search,
+    );
+    const start = (page - 1) * limit;
+    return {
+      ...paginated(
+        options.slice(start, start + limit),
+        options.length,
+        page,
+        limit,
+      ),
+      notSetCount,
+    };
+  }
+
+  /**
+   * Resolve the list filters that need an extra query - category / subcategory and
+   * report status - into plain id lists, then build the scoped `where`. Every list
+   * and the summary go through here so the tabs, TAT cards and rows stay in step.
+   */
+  private async buildScopedWhere(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+    tat: TatThresholds,
+    nowMs: number,
+    scopeIds: string[],
+  ): Promise<Prisma.OrderSampleWhereInput> {
+    const resolved = await this.resolveAsyncFilters(tenantId, branchId, query);
+    const filterCtx = await this.resolveSampleFilterContext(
+      tenantId,
+      branchId,
+      query,
+    );
+    return this.buildSampleWhere(
+      tenantId,
+      branchId,
+      query,
+      tat,
+      nowMs,
+      scopeIds,
+      resolved,
+      filterCtx,
+    );
+  }
+
+  /**
+   * The filters a plain relation condition cannot express (category, report status,
+   * order status), resolved with one tenant-scoped query each - see
+   * `resolveAsyncSampleFilters`, shared with the transfer queues. This screen shows the
+   * active branch's samples, so that is the scope the reports / orders are read in.
+   */
+  private resolveAsyncFilters(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<ResolvedSampleFilters> {
+    return resolveAsyncSampleFilters(this.prisma, tenantId, query, {
+      tenantId,
+      branchId,
+      deletedAt: null,
+    });
+  }
+
+  /**
+   * Look up what the Department / Lab Test / Lab Panel filters depend on:
+   *  - the grouping mode (ORDER keeps a qualifying order whole; the other modes match the sample),
+   *  - the Lab Test dropdown row's master test id (the dropdown sends a branch test id),
+   *  - every price-list copy of the Lab Panel dropdown row's panel.
+   * No filter set = no query. An id that is not found is read as the master id itself.
+   */
+  private async resolveSampleFilterContext(
+    tenantId: string,
+    branchId: string | null,
+    query: ListSamplesDto,
+  ): Promise<SampleFilterContext> {
+    if (
+      !query.departmentId &&
+      !query.branchLabTestId &&
+      !query.branchLabPanelId
+    ) {
+      return {};
+    }
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const ctx: SampleFilterContext = {};
+      if (query.departmentId) {
+        const tenant = await tx.tenant.findUnique({
+          where: { id: tenantId },
+          select: { groupingMode: true },
+        });
+        ctx.groupingMode =
+          tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+      }
+      if (query.branchLabTestId) {
+        const row = await tx.branchLabTest.findFirst({
+          where: { id: query.branchLabTestId, tenantId },
+          select: { sourceLabTestId: true },
+        });
+        ctx.labTestSourceId = row?.sourceLabTestId ?? query.branchLabTestId;
+      }
+      if (query.branchLabPanelId) {
+        const row = await tx.branchLabPanel.findFirst({
+          where: { id: query.branchLabPanelId, tenantId },
+          select: { sourceLabPanelId: true },
+        });
+        const sourceLabPanelId = row
+          ? row.sourceLabPanelId
+          : query.branchLabPanelId;
+        const copies = sourceLabPanelId
+          ? await tx.branchLabPanel.findMany({
+              where: {
+                tenantId,
+                ...(branchId ? { branchId } : {}),
+                sourceLabPanelId,
+                deletedAt: null,
+              },
+              select: { id: true },
+            })
+          : [];
+        ctx.labPanelIds = [
+          ...new Set([query.branchLabPanelId, ...copies.map((c) => c.id)]),
+        ];
+      }
+      return ctx;
+    });
+  }
+
+  /**
+   * Build the tenant/branch-scoped `where` for the sample list: the user-chosen
+   * filters (see {@link buildSampleFilterConditions}, shared with other lists) plus
+   * the mandatory SCOPE - tenant, active branch, not deleted and the caller's
+   * department visibility. `AND` holds the composite conditions so they never
+   * clobber each other; the department scope is pushed last.
+   *
+   * Three things are In-House-only and are applied HERE instead of in the shared
+   * builder, so the transfer queues (which use the shared builder) keep their own
+   * matching: the sample-level Department / Lab Test / Lab Panel filters (see
+   * {@link SampleFilterContext}) and the Global Search.
    */
   private buildSampleWhere(
     tenantId: string,
@@ -4813,99 +6169,181 @@ export class OrderSampleService {
     tat: TatThresholds,
     nowMs: number,
     scopeIds: string[],
+    resolved: ResolvedSampleFilters = {},
+    filterCtx: SampleFilterContext = {},
   ): Prisma.OrderSampleWhereInput {
+    // The In-House-only filters (Department / Lab Test / Lab Panel and the Global
+    // Search) are left out of the shared builder - they are applied below. The transfer
+    // queues call the shared builder with these set and keep their own matching.
+    const { sample, order, and } = buildSampleFilterConditions(
+      {
+        ...query,
+        search: undefined,
+        departmentId: undefined,
+        branchLabTestId: undefined,
+        branchLabPanelId: undefined,
+      },
+      tat,
+      nowMs,
+      resolved,
+    );
     const where: Prisma.OrderSampleWhereInput = {
       tenantId,
       branchId,
       deletedAt: null,
+      ...sample,
     };
-    if (query.status) where.status = query.status;
-    if (query.priority) where.priority = query.priority;
-    if (query.orderId) where.orderId = query.orderId;
-    if (query.originBranchId) where.originBranchId = query.originBranchId;
-    if (query.processingBranchId) {
-      where.processingBranchId = query.processingBranchId;
+    // Department / Lab Test / Lab Panel are INDEPENDENT filters: an order qualifies
+    // when it satisfies each one that is set (they need not be satisfied by the same
+    // line or sample). Collected here and ANDed onto the order below.
+    const orderAnd: Prisma.OrderWhereInput[] = [];
+    if (query.departmentId) {
+      // Judged on the SAMPLE's own (stamped) department, not on the ordered test.
+      const sampleDepartmentId =
+        query.departmentId === NO_DEPARTMENT_FILTER ? null : query.departmentId;
+      // Each ORDER has its own grouping mode, so one list can mix the two rules:
+      //  - an order in ORDER mode qualifies when at least one of its samples is in the
+      //    department, and the whole order is then shown;
+      //  - an order in any other mode matches on the sample's own department: a group's
+      //    samples share one department (or are a single sample), so matching the sample
+      //    keeps each qualifying group whole.
+      // An order with no mode yet (NULL: no samples so far) follows the tenant's current
+      // mode (`filterCtx.groupingMode`).
+      const tenantIsOrder =
+        filterCtx.groupingMode === AccessionGroupingMode.ORDER;
+      const otherModes = [
+        AccessionGroupingMode.DEPARTMENT,
+        AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME,
+        AccessionGroupingMode.SAMPLE_NAME,
+      ];
+      const orderModeIsOrder: Prisma.OrderWhereInput = tenantIsOrder
+        ? {
+            OR: [
+              { groupingMode: AccessionGroupingMode.ORDER },
+              { groupingMode: null },
+            ],
+          }
+        : { groupingMode: AccessionGroupingMode.ORDER };
+      const orderModeIsOther: Prisma.OrderWhereInput = tenantIsOrder
+        ? { groupingMode: { in: otherModes } }
+        : {
+            OR: [{ groupingMode: { in: otherModes } }, { groupingMode: null }],
+          };
+      and.push({
+        OR: [
+          {
+            order: {
+              is: {
+                AND: [
+                  orderModeIsOrder,
+                  {
+                    orderSamples: {
+                      some: {
+                        deletedAt: null,
+                        branchId,
+                        departmentId: sampleDepartmentId,
+                        // only samples the caller may see count, so a restricted user
+                        // cannot learn (or filter on) a department outside their scope
+                        AND: [this.departmentScopeForSamples(scopeIds)],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            departmentId: sampleDepartmentId,
+            order: { is: orderModeIsOther },
+          },
+        ],
+      });
     }
-    if (query.reportStatus) where.reportStatus = query.reportStatus;
-    if (query.tatStatus) {
-      where.createdAt = tatCreatedAtRange(query.tatStatus, tat, nowMs);
-      if (!query.status) {
-        where.status = { notIn: [...TERMINAL_SAMPLE_STATUSES] };
-      }
+    if (query.branchLabTestId) {
+      // Ordered directly - in ANY price list's copy of the test (the dropdown shows only
+      // the default list's copy, but an order priced from another list holds that list's
+      // copy) - OR served by one of the order's samples, which also finds a test that
+      // arrived through a panel.
+      const sourceLabTestId = filterCtx.labTestSourceId;
+      orderAnd.push({
+        OR: [
+          {
+            items: {
+              some: {
+                deletedAt: null,
+                OR: [
+                  { branchLabTestId: query.branchLabTestId },
+                  ...(sourceLabTestId
+                    ? [{ branchLabTest: { is: { sourceLabTestId } } }]
+                    : []),
+                ],
+              },
+            },
+          },
+          ...(sourceLabTestId
+            ? [
+                {
+                  orderSamples: {
+                    some: {
+                      deletedAt: null,
+                      OR: [
+                        {
+                          tests: {
+                            some: {
+                              deletedAt: null,
+                              labTestId: sourceLabTestId,
+                              orderItem: { deletedAt: null },
+                            },
+                          },
+                        },
+                        // a sample with no test links (older data) is read by its own test
+                        {
+                          labTestId: sourceLabTestId,
+                          tests: { none: { deletedAt: null } },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
     }
-
-    const order: Prisma.OrderWhereInput = {};
-    if (query.patientId) order.patientId = query.patientId;
-    if (query.referredByDoctorId) {
-      order.referredByDoctorId = query.referredByDoctorId;
-    }
-    if (query.referralPanelId) order.referralPanelId = query.referralPanelId;
-    if (query.dateFrom || query.dateTo) {
-      order.orderDate = {
-        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-      };
-    }
-    if (query.departmentId || query.branchLabTestId || query.branchLabPanelId) {
-      order.items = {
-        some: {
-          deletedAt: null,
-          ...(query.branchLabTestId
-            ? { branchLabTestId: query.branchLabTestId }
-            : {}),
-          ...(query.branchLabPanelId
-            ? { branchLabPanelId: query.branchLabPanelId }
-            : {}),
-          ...(query.departmentId
-            ? { branchLabTest: { is: { departmentId: query.departmentId } } }
-            : {}),
-        },
-      };
-    }
-    if (query.isHomeCollection) {
-      order.diagnostics = { is: { isHomeVisit: true } };
-    }
-    if (query.internalReferralId) {
-      order.internalReferralId = query.internalReferralId;
-    }
-    if (query.externalReferralId) {
-      order.externalReferralId = query.externalReferralId;
-    }
-    if (query.internalReferralBranchId) {
-      order.internalReferral = {
-        is: { branchId: query.internalReferralBranchId },
-      };
-    }
-    if (query.externalReferralOrganisation) {
-      order.externalReferral = {
-        is: {
-          organisationName: {
-            equals: query.externalReferralOrganisation,
-            mode: 'insensitive',
+    if (query.branchLabPanelId) {
+      // The dropdown shows the default price list's copy of a panel; an order priced
+      // from another list holds that list's copy, so match every copy of the panel.
+      orderAnd.push({
+        items: {
+          some: {
+            deletedAt: null,
+            branchLabPanelId: {
+              in: filterCtx.labPanelIds?.length
+                ? filterCtx.labPanelIds
+                : [query.branchLabPanelId],
+            },
           },
         },
-      };
+      });
     }
-    if (query.collectionStatus) {
-      // Order-level collection progress (PENDING/PARTIAL/COLLECTED), derived from
-      // the order's workflow items — the same rule as the Order Console's
-      // `sampleStatus`, applied here through the sample's to-one `order` relation.
+    if (orderAnd.length > 0) {
+      // The shared builder may already have put the collection-status rule on `order.AND`.
       order.AND = [
         ...(Array.isArray(order.AND)
           ? order.AND
           : order.AND
             ? [order.AND]
             : []),
-        buildCollectionProgressWhere(query.collectionStatus),
+        ...orderAnd,
       ];
     }
 
-    const and: Prisma.OrderSampleWhereInput[] = [];
-    // Global Search — the same matching as Technician → Reporting's search, plus the
-    // Accession-only keys (Accession No, UHID, Mobile). The text is trimmed (a scanner or
-    // a stray space must not make it match nothing), a blank search is no search, and
-    // `%`, `_` and `\` are matched as typed (Prisma hands `contains` to LIKE as it is, so
-    // an unescaped `%` would match every row).
+    // Global Search - the same matching as Technician → Reporting's search (patient name,
+    // Order ID, barcode, test / panel name, referral panel) plus UHID and Mobile. The
+    // Accession No is deliberately NOT searched. The text is trimmed (a scanner or a stray
+    // space must not make it match nothing), a blank search is no search, and `%`, `_` and
+    // `\` are matched as typed (Prisma hands `contains` to LIKE as it is, so an unescaped
+    // `%` would match every row).
     const typedSearch = query.search?.trim();
     if (typedSearch) {
       const s = escapeLike(typedSearch);
@@ -4927,7 +6365,6 @@ export class OrderSampleService {
       };
       and.push({
         OR: [
-          { accessionNo: { contains: s, mode: 'insensitive' } },
           { barcode: { contains: s, mode: 'insensitive' } },
           {
             order: {
@@ -4993,80 +6430,9 @@ export class OrderSampleService {
         ],
       });
     }
-    if (query.isOutsource) and.push({ status: SampleStatus.OUTSOURCED });
-    // Logistics: how a sample TRAVELS is recorded on its transfer (a Send / Forward / Outsource
-    // writes it there, never on the sample), so match the transfer of a sample that is out
-    // now; the sample's own column is kept as an alternative for older rows.
-    if (query.logisticsType) {
-      and.push({
-        OR: [
-          { logisticsType: query.logisticsType },
-          {
-            status: { in: [...TRANSFERRED_STATUSES] },
-            transfers: {
-              some: { deletedAt: null, logisticsType: query.logisticsType },
-            },
-          },
-        ],
-      });
-    }
-    // "Sent to": the sample is Sent right now and its transfer is addressed to that branch.
-    if (query.destinationBranchId) {
-      and.push(
-        this.heldTransfer(SampleStatus.SENT_INTERNAL, TransferKind.INTERNAL, {
-          destinationBranchId: query.destinationBranchId,
-        }),
-      );
-    }
-    // "Forward partner": the sample is Forwarded right now to a partner with this name.
-    const partner = query.externalPartnerName?.trim();
-    if (partner) {
-      and.push(
-        this.heldTransfer(
-          SampleStatus.FORWARD_EXTERNAL,
-          TransferKind.EXTERNAL,
-          {
-            // literal text: `%` and `_` typed by the user are not wildcards
-            externalPartnerName: {
-              contains: escapeLike(partner),
-              mode: 'insensitive',
-            },
-          },
-        ),
-      );
-    }
-    if (query.outsourceCenterId) {
-      and.push({
-        transfers: {
-          some: {
-            deletedAt: null,
-            kind: TransferKind.OUTSOURCE,
-            outsourceCenterId: query.outsourceCenterId,
-          },
-        },
-      });
-    }
-    // Send / Forward / Outsource date: the sample has a transfer of that kind
-    // dispatched on the chosen day (its `sendDate`, else when it was created).
-    for (const [kind, day] of [
-      [TransferKind.INTERNAL, query.sendDate],
-      [TransferKind.EXTERNAL, query.forwardDate],
-      [TransferKind.OUTSOURCE, query.outsourceDate],
-    ] as const) {
-      if (day) and.push(this.transferOnDay(kind, day));
-    }
-    if (query.isUrgent) {
-      and.push({
-        OR: [
-          { priority: { in: [SamplePriority.URGENT, SamplePriority.STAT] } },
-          { order: { is: { isUrgentBill: true } } },
-        ],
-      });
-    }
-    this.applyOrderMode(query.orderMode, order, and);
 
     // Department visibility scope (mandatory, not a user filter): a sample is
-    // visible when its department is unassigned (NULL → everyone) or one of the
+    // visible when its department is unassigned (NULL -> everyone) or one of the
     // caller's mapped departments. Pushed into `and` so it never clobbers the
     // search/urgent/outsource conditions and is applied before pagination.
     and.push(this.departmentScopeForSamples(scopeIds));
@@ -5088,8 +6454,10 @@ export class OrderSampleService {
   ): Promise<OrderSampleListRow[]> {
     const branchIds = new Set<string>();
     const centerIds = new Set<string>();
+    const transfersOf = (r: OrderSampleListRow): ListRowTransfer[] =>
+      r.matchedTransfer ? [...r.transfers, r.matchedTransfer] : r.transfers;
     for (const r of rows) {
-      for (const t of r.transfers) {
+      for (const t of transfersOf(r)) {
         if (t.destinationBranchId) branchIds.add(t.destinationBranchId);
         if (t.outsourceCenterId) centerIds.add(t.outsourceCenterId);
       }
@@ -5113,18 +6481,79 @@ export class OrderSampleService {
     }));
     const branchName = new Map(names.branches.map((b) => [b.id, b.name]));
     const centerName = new Map(names.centers.map((c) => [c.id, c.name]));
+    const named = (t: ListRowTransfer): ListRowTransfer => ({
+      ...t,
+      destinationBranchName: t.destinationBranchId
+        ? (branchName.get(t.destinationBranchId) ?? null)
+        : null,
+      outsourceCenterName: t.outsourceCenterId
+        ? (centerName.get(t.outsourceCenterId) ?? null)
+        : null,
+    });
     return rows.map((r) => ({
       ...r,
-      transfers: r.transfers.map((t) => ({
-        ...t,
-        destinationBranchName: t.destinationBranchId
-          ? (branchName.get(t.destinationBranchId) ?? null)
-          : null,
-        outsourceCenterName: t.outsourceCenterId
-          ? (centerName.get(t.outsourceCenterId) ?? null)
-          : null,
-      })),
+      transfers: r.transfers.map(named),
+      ...(r.matchedTransfer
+        ? { matchedTransfer: named(r.matchedTransfer) }
+        : {}),
     }));
+  }
+
+  /**
+   * While a transfer filter (Sent To, Forwarded To, outsource center, send / forward / outsource
+   * date) is active, attach to each row the transfer that MET it (`matchedTransfer`). The list only
+   * carries the latest transfer, which can be a different one: a sample sent to B on the 28th,
+   * rejected, and sent to C on the 30th is found by "B + 28th", so its row must describe the
+   * transfer to B. One batched query per kind per page; the latest match of the kind that fits the
+   * row's status wins (else the newest of any asked kind). Without a transfer filter nothing is added.
+   */
+  private async withMatchedTransfers(
+    tenantId: string,
+    rows: OrderSampleListRow[],
+    query: ListSamplesDto,
+  ): Promise<OrderSampleListRow[]> {
+    const matches = transferMatches(query);
+    if (matches.length === 0 || rows.length === 0) return rows;
+    const sampleIds = rows.map((r) => r.id);
+    const perKind = await this.prisma.withTenant(tenantId, (tx) =>
+      Promise.all(
+        matches.map((m) =>
+          tx.sampleTransfer.findMany({
+            where: {
+              tenantId,
+              sampleId: { in: sampleIds },
+              ...transferWhereOf(m),
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            select: { ...LIST_TRANSFER_SELECT, sampleId: true },
+          }),
+        ),
+      ),
+    );
+    // sample id -> kind -> its newest matching transfer (rows arrive newest first)
+    const bySample = new Map<string, Map<TransferKind, ListRowTransfer>>();
+    perKind.flat().forEach(({ sampleId, ...transfer }) => {
+      const kinds =
+        bySample.get(sampleId) ?? new Map<TransferKind, ListRowTransfer>();
+      if (!kinds.has(transfer.kind)) kinds.set(transfer.kind, transfer);
+      bySample.set(sampleId, kinds);
+    });
+    const kindOfStatus = new Map<SampleStatus, TransferKind>([
+      [SampleStatus.SENT_INTERNAL, TransferKind.INTERNAL],
+      [SampleStatus.FORWARD_EXTERNAL, TransferKind.EXTERNAL],
+      [SampleStatus.OUTSOURCED, TransferKind.OUTSOURCE],
+    ]);
+    return rows.map((r) => {
+      const kinds = bySample.get(r.id);
+      if (!kinds) return r;
+      const fitting = kindOfStatus.get(r.status);
+      const matched =
+        (fitting ? kinds.get(fitting) : undefined) ??
+        [...kinds.values()].sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        )[0];
+      return matched ? { ...r, matchedTransfer: matched } : r;
+    });
   }
 
   /**
@@ -5167,52 +6596,14 @@ export class OrderSampleService {
   }
 
   /**
-   * "The sample is out on a `kind` transfer right now": its status is the matching
-   * transferred one (`status`) and it has a live (not recalled) transfer of that kind
-   * matching `transfer`. A transfer the other side closed as repeated / rejected stays live, so
-   * a sample that is still "Sent - Repeated" is found; once the sender repeats or retrieves it,
-   * its status changes and it is not.
-   */
-  private heldTransfer(
-    status: SampleStatus,
-    kind: TransferKind,
-    transfer: Prisma.SampleTransferWhereInput,
-  ): Prisma.OrderSampleWhereInput {
-    return {
-      status,
-      transfers: { some: { deletedAt: null, kind, ...transfer } },
-    };
-  }
-
-  /**
-   * "Has a `kind` transfer dispatched on `day`" (YYYY-MM-DD, whole day). Uses the
-   * transfer's `sendDate`, falling back to `createdAt` when no send date was set.
-   */
-  private transferOnDay(
-    kind: TransferKind,
-    day: string,
-  ): Prisma.OrderSampleWhereInput {
-    const range = timestampRange(day, day);
-    return {
-      transfers: {
-        some: {
-          deletedAt: null,
-          kind,
-          OR: [{ sendDate: range }, { sendDate: null, createdAt: range }],
-        },
-      },
-    };
-  }
-
-  /**
    * The department-visibility condition for `OrderSample.departmentId` (a
    * denormalized, indexed snapshot). A caller mapped to one or more departments
    * sees a sample only when its department is unassigned (NULL → everyone) or one
    * of theirs. A caller mapped to NO department is UNRESTRICTED on the Accession
    * In-House workflow — they see every sample regardless of department, so an
    * empty scope contributes no constraint (an empty `{}` fragment matches all).
-   * (This is the Accession In-House rule only; Technician Reporting keeps the
-   * stricter "no mapping → only unassigned" — see `LabReportService`.)
+   * (Technician Reporting applies the same rule per branch, on the report's own
+   * department — see `LabReportService.applyDepartmentScope`.)
    * @param scopeIds the caller's department ids (see UserDepartmentScopeService)
    */
   private departmentScopeForSamples(
@@ -5221,36 +6612,6 @@ export class OrderSampleService {
     return scopeIds.length > 0
       ? { OR: [{ departmentId: null }, { departmentId: { in: scopeIds } }] }
       : {};
-  }
-
-  /** Translate the §A.3 "Order Mode" filter into order/sample conditions. */
-  private applyOrderMode(
-    mode: OrderMode | undefined,
-    order: Prisma.OrderWhereInput,
-    and: Prisma.OrderSampleWhereInput[],
-  ): void {
-    switch (mode) {
-      case 'Home Visit':
-        order.diagnostics = { is: { isHomeVisit: true } };
-        break;
-      case 'Emergency':
-        order.isUrgentBill = true;
-        break;
-      case 'Referral':
-        order.OR = [
-          { internalReferralId: { not: null } },
-          { externalReferralId: { not: null } },
-        ];
-        break;
-      case 'Outsource':
-        and.push({ status: SampleStatus.OUTSOURCED });
-        break;
-      case 'Walk-in':
-        order.diagnostics = { is: { isHomeVisit: false } };
-        break;
-      default:
-        break;
-    }
   }
 
   /**

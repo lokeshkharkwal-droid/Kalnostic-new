@@ -5,6 +5,7 @@ import {
   TransferStatus,
 } from '@prisma/client';
 import { PERMISSION_KEYS } from '../../permissions/constants/module-permissions.constant';
+import { dateOnlyRange } from '../../../common/utils/date-range.util';
 
 /**
  * Report statuses visible at one branch: every status (`'ALL'` — the caller's own
@@ -177,5 +178,26 @@ export function worklistRowBranchWhere(scope: WorklistBranchScope): {
 } {
   return {
     OR: usableRules(scope).map((r) => ({ labReport: { is: ruleWhere(r) } })),
+  };
+}
+
+/**
+ * `where` fragment limiting a special worklist row (re-run, critical alert,
+ * out-of-range flag, delta check, scheduled test) to reports whose ORDER date
+ * falls in the range — the same column and inclusive calendar-day semantics the
+ * main Reporting worklist filters on, so every view of the screen agrees.
+ * Returns `{}` (no limit) when neither bound is given. Uses the `labReport` key;
+ * {@link worklistRowBranchWhere} uses `OR`, so both can be spread together.
+ */
+export function worklistRowDateWhere(dates?: {
+  dateFrom?: string;
+  dateTo?: string;
+}): { labReport?: { is: Prisma.LabReportWhereInput } } {
+  const orderDate = dateOnlyRange(dates?.dateFrom, dates?.dateTo);
+  if (!orderDate) return {};
+  return {
+    labReport: {
+      is: { orderItem: { is: { order: { is: { orderDate } } } } },
+    },
   };
 }

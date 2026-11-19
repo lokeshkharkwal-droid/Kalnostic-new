@@ -54,9 +54,12 @@ export const SAMPLE_TRANSITIONS: Readonly<
   acquire: {
     [SampleStatus.COLLECTED]: SampleStatus.ACQUIRED,
   },
-  // Hault — pause processing (quality/volume issue).
+  // Hault — pause processing (quality/volume issue). Allowed again from ACQUIRED
+  // (Sample Search requirements of 2026-11-06 list Halt on an Acquired sample;
+  // it had been removed on 2026-09-18 and is restored on the manager's say-so).
   halt: {
     [SampleStatus.COLLECTED]: SampleStatus.HALT,
+    [SampleStatus.ACQUIRED]: SampleStatus.HALT,
   },
   // Error — flag the sample erroneous.
   error: {
@@ -110,7 +113,12 @@ export const SAMPLE_TRANSITIONS: Readonly<
     [SampleStatus.ERROR]: SampleStatus.RETURNED,
     [SampleStatus.STORED]: SampleStatus.RETURNED,
   },
-  // Cancel — cancel the order/sample.
+  // Cancel — cancel the order/sample. Allowed from REPEAT too (Sample Search requirements of
+  // 2026-11-06 list Cancel on Repeat): a sample waiting to be collected again for a Repeat /
+  // Re-run with a fresh sample can be cancelled. Its report was reset and stays locked
+  // ("Sample cancelled", see `AWAITING_SAMPLE_STATUSES`) until Retrieve brings the sample back
+  // (to Repeat) or the test is removed from the order - exactly as when the sample is put on
+  // Hold first and cancelled from there.
   cancel: {
     [SampleStatus.NEW]: SampleStatus.CANCELLED,
     [SampleStatus.COLLECTED]: SampleStatus.CANCELLED,
@@ -208,6 +216,20 @@ export const FORCE_TARGET: Partial<Record<SampleAction, SampleStatus>> = {
   forward: SampleStatus.FORWARD_EXTERNAL,
   outsource: SampleStatus.OUTSOURCED,
 };
+
+/**
+ * The statuses a sample is in while it lives at another branch / partner / center
+ * via an open transfer (Send/Forward/Outsource). A local action that moves a sample
+ * OUT of one of these (Retrieve / Repeat) is a "recall": its outstanding
+ * transfer(s) — and, for an accepted internal transfer, the clone materialised in
+ * the receiving branch — must be unwound so no stale record is left cross-branch.
+ * Also read by the list filters (`utils/sample-filters.util.ts`).
+ */
+export const TRANSFERRED_STATUSES: ReadonlySet<SampleStatus> = new Set([
+  SampleStatus.SENT_INTERNAL,
+  SampleStatus.FORWARD_EXTERNAL,
+  SampleStatus.OUTSOURCED,
+]);
 
 /**
  * Resolve the target status for an action from a given current status, or `null`

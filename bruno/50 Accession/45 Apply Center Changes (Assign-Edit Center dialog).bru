@@ -46,7 +46,9 @@ docs {
   - `changes[]` - `{ transferId, destinationBranchId }` per ticked tube: each tube carries its
     OWN center, so one request can send different tubes to different branches. A tube whose
     center is unchanged is left out unless the logistics were edited.
-  - `retrieveSampleIds[]` - the un-ticked tubes. Each is Retrieved exactly like
+  - `retrieveSampleIds[]` - the un-ticked tubes (the Retrieve rule applies: a Forwarded / Outsourced tube whose
+    report is already past Pending - the partner's result is entered - is refused 422
+    SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED and the whole request changes nothing). Each is Retrieved exactly like
     `POST order-samples/:id/retrieve` (back to Accepted, the open INTERNAL transfer is
     soft-deleted - see that request for the audit entries).
   - the shared logistics fields (`sendDate`, `sendTime`, `sampleForm`, `logisticsType`,

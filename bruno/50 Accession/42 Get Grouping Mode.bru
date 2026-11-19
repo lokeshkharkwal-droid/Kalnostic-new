@@ -33,9 +33,11 @@ tests {
 docs {
   Read the caller tenant's Accession **Group Settings** mode
   (`AccessionGroupingMode`) — the tenant-wide setting (configured on the
-  business-admin Accession Settings page) that controls how
-  `GET /accession/order-samples/grouped` groups samples within an order **and**
-  the scope at which a group action/status update fans out. Defaults to
+  business-admin Accession Settings page) that is the mode **new orders** take.
+  Each order keeps its own mode once it has samples (`orders.grouping_mode`), and
+  that per-order mode is what controls how `GET /accession/order-samples/grouped`
+  groups its samples **and** the scope at which a group action/status update fans
+  out. Defaults to
   `DEPARTMENT_SAMPLE_NAME`. Gated by the `ACC_SETTINGS_VIEW` permission.
 
   Modes:

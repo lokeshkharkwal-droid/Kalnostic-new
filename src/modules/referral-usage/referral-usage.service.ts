@@ -6,6 +6,7 @@ import {
   INACTIVE_ORDER_STATUSES,
   TERMINAL_LAB_REPORT_STATUS,
 } from './constants/active-order.constant';
+import { LAST_ORDER_EXCLUDED_STATUSES } from './constants/last-order.constant';
 import { SAMPLE_NOT_ITEM_REMOVED } from '../accession/utils/item-removed.util';
 
 /**
@@ -20,10 +21,12 @@ export type ReferralFkField =
 
 /**
  * Shared, read-only helper that answers "is this referral still used by an
- * active-workflow order?". Injected into all four referral services (via
- * `ReferralUsageModule`) so the delete guard and the listing `hasActiveOrder`
- * flag share one definition of "active" (CLAUDE.md rule #3 — wired through DI,
- * never a direct service import).
+ * active-workflow order?" and "when was an order last created with it?".
+ * Injected into all four referral services (via `ReferralUsageModule`) so the
+ * delete guard and the listing `hasActiveOrder` flag share one definition of
+ * "active", and the listing `lastOrderCreatedAt` column shares one definition
+ * of "an order" (CLAUDE.md rule #3 — wired through DI, never a direct service
+ * import).
  *
  * Both methods are reads and therefore run under the request's RLS context set
  * by the global tenant interceptor — they must NOT be wrapped in
@@ -125,5 +128,49 @@ export class ReferralUsageService {
       if (typeof id === 'string') active.add(id);
     }
     return active;
+  }
+
+  /**
+   * For a PAGE of referral ids, when was the most recent order created with each
+   * one? One `groupBy` per page (SQL `GROUP BY <fk>` + `MAX(created_at)`), so the
+   * listing endpoints can show "Last Order Created Date and Time" per row without
+   * an N+1. Computed live on every request, so editing an order's referral,
+   * cancelling, or deleting it is reflected immediately (nothing is cached or
+   * denormalised).
+   *
+   * Counts every non-deleted order except drafts and quotations
+   * ({@link LAST_ORDER_EXCLUDED_STATUSES}), and uses the record's `createdAt`
+   * (when it was actually created), not the user-entered `orderDate`, so a
+   * back-dated order does not show a misleading time.
+   *
+   * @param tenantId caller's tenant (RLS + defence-in-depth filter)
+   * @param field which `Order` referral FK column to match on
+   * @param referralIds the page's referral ids
+   * @returns referral id → latest order `createdAt`; ids with no counted order
+   *   are absent from the map
+   */
+  async findLastOrderCreatedAt(
+    tenantId: string,
+    field: ReferralFkField,
+    referralIds: string[],
+  ): Promise<Map<string, Date>> {
+    const latest = new Map<string, Date>();
+    if (referralIds.length === 0) return latest;
+    const rows = await this.prisma.order.groupBy({
+      by: [field],
+      where: {
+        tenantId,
+        [field]: { in: referralIds },
+        deletedAt: null,
+        status: { notIn: [...LAST_ORDER_EXCLUDED_STATUSES] },
+      },
+      _max: { createdAt: true },
+    });
+    for (const row of rows) {
+      const id = (row as Record<string, unknown>)[field];
+      const createdAt = row._max?.createdAt;
+      if (typeof id === 'string' && createdAt) latest.set(id, createdAt);
+    }
+    return latest;
   }
 }

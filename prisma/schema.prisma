@@ -2815,6 +2815,16 @@ model LabTest {
   /// explicitly set to No, which auto-accepts it and skips collection.
   isSampleFlow        Boolean @default(true) @map("is_sample_flow")
   isMandatoryTest     Boolean @default(false) @map("is_mandatory_test")
+  /// Age Restriction: when true the test may only be ordered for a patient whose
+  /// age on the order date lies inside minAge..maxAge (min inclusive, max covers
+  /// its whole unit — the reference-range calendar rule). All four bound columns
+  /// are NULL when the flag is false (= no age limit). Mirrored onto
+  /// branch_lab_tests via the normal Master Data import/sync.
+  isAgeRestricted     Boolean  @default(false) @map("is_age_restricted")
+  minAgeValue         Int?     @map("min_age_value")
+  minAgeUnit          AgeUnit? @map("min_age_unit")
+  maxAgeValue         Int?     @map("max_age_value")
+  maxAgeUnit          AgeUnit? @map("max_age_unit")
 
   // Mandatory-test classification — real relations to the catalogue tables
   // (FK to departments / categories / sub_categories). Distinct from the
@@ -3364,6 +3374,13 @@ model BranchLabTest {
   // straight to the technician. Default TRUE = normal collection flow.
   isBillOnlyTest      Boolean @default(false) @map("is_bill_only_test")
   isSampleFlow        Boolean @default(true) @map("is_sample_flow")
+  // Age Restriction mirrored from the source LabTest (propagated on import/sync);
+  // enforced on Create Order for the test and for any panel containing it.
+  isAgeRestricted     Boolean  @default(false) @map("is_age_restricted")
+  minAgeValue         Int?     @map("min_age_value")
+  minAgeUnit          AgeUnit? @map("min_age_unit")
+  maxAgeValue         Int?     @map("max_age_value")
+  maxAgeUnit          AgeUnit? @map("max_age_unit")
 
   // Mandatory-test classification (logical refs)
   mandatoryDeptId             String?             @map("mandatory_dept_id")
@@ -5802,6 +5819,21 @@ model RegistrationSetting {
   // types the UMID manually (required).
   Patients_AutoIncrementExternalPatientIdFormat ExternalIdFormat @default(NONE) @map("patients_auto_increment_ext_patient_id_format")
 
+  // ── Emergency Pricing ──
+  // The two toggles are independent; the effective rule (EmergencyPricingService)
+  // is `Override || (ApplyInNonOperatingHours && branch closed now)`. When it
+  // applies, each catalogue LAB TEST line on an order bills at its
+  // `BranchLabTest.emergencyPrice` (falls back to `listPrice` when that is 0);
+  // panels have no emergency price and keep their list price. Orders only —
+  // quotations are never emergency-priced. Defaults false = existing behaviour.
+  // When true, an order that becomes a real order while the branch is outside
+  // its operating hours (active Schedule shifts, else operationalDays +
+  // openingTime/closingTime) is emergency-priced. A branch with no operating
+  // hours configured is never treated as "non-operating".
+  EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours Boolean @default(false) @map("emergency_pricing_apply_in_non_operating_hours")
+  // When true, every order is emergency-priced, at any time of day.
+  EmergencyPricing_OverrideEmergencyPrices                 Boolean @default(false) @map("emergency_pricing_override_emergency_prices")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -6584,11 +6616,26 @@ model Order {
   // `@@unique([tenantId, idempotencyKey])`; NULL for orders created without a
   // key (Postgres treats NULLs as distinct, so those are never constrained).
   idempotencyKey  String?       @map("idempotency_key")
+  // The Accession grouping mode this order's samples follow (barcode groups, display
+  // groups, action scope). Decided ONCE, when the order first gets samples (taken from
+  // the tenant's mode under the tenant row lock), then never changed - a database rule
+  // (`orders_grouping_mode_immutable`) rejects any later change. NULL = not decided yet
+  // (a draft / quote / appointment with no samples): such an order follows the tenant's
+  // current mode until its first sample or barcode is made. A change of the tenant mode
+  // in Accession Settings therefore only affects orders that have no mode yet.
+  groupingMode    AccessionGroupingMode? @map("grouping_mode")
   status          OrderStatus   @default(DRAFT)
   orderDate       DateTime      @map("order_date") @db.Date
   orderType       OrderType     @map("order_type")
   billingType     BillingType   @map("billing_type")
   isUrgentBill    Boolean       @default(false) @map("is_urgent_bill")
+  // Whether this order's catalogue lab-test lines are billed at their Emergency
+  // Price (Registration Settings → Emergency Pricing). Server-stamped by
+  // OrderService: re-resolved on every save while the record is not yet an
+  // active order (draft / quote→order / appointment before check-in), then
+  // frozen once it becomes one so later edits keep the same pricing. Always
+  // false for quotations.
+  isEmergencyPricing Boolean    @default(false) @map("is_emergency_pricing")
   isBillGenerated Boolean       @default(false) @map("is_bill_generated")
   // Patient was pregnant at the time of THIS order (Create Order → Patient
   // Details). Stored per order, not on the patient, so it never leaks into the
@@ -6625,6 +6672,21 @@ model Order {
   // `BillStatus`). Stored for the same reason as paymentStatus: the derivation
   // sums the ledger + items, which Prisma can't express in a `where`.
   billStatus BillStatus @default(NOT_PAID) @map("bill_status")
+
+  // Denormalized billing rollups — the exact gross / discount / net / paid /
+  // balance / refunded the Billings, Quotations, Appointments and Order Console
+  // lists render per row (see OrderService.billingRollups). Stored for the SAME
+  // reason as paymentStatus/billStatus: these are sums over the item + payment
+  // ledger that Prisma can't `ORDER BY`, so the lists could only sort them
+  // client-side (one page at a time) — a violation of the server-side-sort rule.
+  // Recomputed in the same transaction as every billing-state write by
+  // `recomputeBillStatusInTx`. `balanceAmount` = max(0, net − paid) (the "Due").
+  grossAmount    Int @default(0) @map("gross_amount")
+  discountAmount Int @default(0) @map("discount_amount")
+  netAmount      Int @default(0) @map("net_amount")
+  paidAmount     Int @default(0) @map("paid_amount")
+  balanceAmount  Int @default(0) @map("balance_amount")
+  refundedAmount Int @default(0) @map("refunded_amount")
 
   // Fee (rupees, up to 2 decimal places) retained by the lab when the order is
   // cancelled (0 = none). Deducted from the order's effective paid amount;
@@ -7803,6 +7865,14 @@ enum ReRunStatus {
   CANCELLED
 }
 
+/// How a re-run is carried out: SAME = the test is processed again on the sample it already has (the report goes
+/// back to Pending, nothing changes in Accession); FRESH = the test's sample goes back for a fresh collection
+/// (Repeat) with a new barcode, and the report stays locked until that sample is accepted again.
+enum ReRunSampleMode {
+  SAME
+  FRESH
+}
+
 /// Status vocabulary for the Schedule Test worklist (LABORATORY.docx §8.5) — a
 /// test is Scheduled, moves to In Progress, may be Rescheduled, then Completed.
 enum ScheduledTestStatus {
@@ -7835,6 +7905,12 @@ model ReRunRequest {
   status       ReRunStatus @default(PENDING)
   requestedBy  String      @map("requested_by")
   requestNotes String?     @map("request_notes")
+
+  /// SAME sample (default) or a FRESH sample (the tube is repeated and recollected).
+  sampleMode ReRunSampleMode @default(SAME) @map("sample_mode")
+  /// For a FRESH re-run: the batch tag given to the repeated sample rows (`OrderSample.repeatBatchId`), so the
+  /// request can be traced to the rows that were repeated together.
+  repeatBatchId String? @map("repeat_batch_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -8189,6 +8265,32 @@ model OrderFieldConfig {
   @@index([tenantId])
   @@index([branchId])
   @@map("order_field_configs")
+}
+
+/// A user's own default date filter for one list screen (Registration Billings,
+/// Finance Billings, Registration Order Console). Personal UI preference:
+/// one row per (tenant, person, screen), set from the screen's "Default date
+/// filter" pop-up and applied whenever that user opens the screen. `preset` is
+/// a relative range (`TODAY`, `LAST_7_DAYS`, …) resolved against the business
+/// day at open time; only `CUSTOM` stores fixed `dateFrom`/`dateTo`.
+model UserDateFilterPreference {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  personId  String @map("person_id")
+  screenKey String @map("screen_key")
+
+  preset   String
+  dateFrom DateTime? @map("date_from") @db.Date
+  dateTo   DateTime? @map("date_to") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([tenantId, personId, screenKey])
+  @@index([tenantId])
+  @@index([personId])
+  @@map("user_date_filter_preferences")
 }
 
 /// A payment/ledger entry against an order (1:many). Amounts are integer minor
@@ -8565,6 +8667,16 @@ model OrderSample {
   logisticsPerson String?   @map("logistics_person")
   dispatchedAt    DateTime? @map("dispatched_at")
 
+  // Discard / Return conditions for a later Retrieve (Sample Search requirements, 2026-11-06).
+  // `isRecoverable`: set when the sample is Discarded (the person discarding says whether the
+  // physical sample can still be recovered) and editable while it stays Discarded; Retrieve out of
+  // Discarded is refused unless it is true. Null = never discarded (or already retrieved).
+  // `returnedVerifiedAt/By`: set when staff confirm a Returned sample is physically back and
+  // checked; Retrieve out of Returned is refused until then. Null = not verified (or retrieved).
+  isRecoverable      Boolean?  @map("is_recoverable")
+  returnedVerifiedAt DateTime? @map("returned_verified_at")
+  returnedVerifiedBy String?   @map("returned_verified_by")
+
   // Branch context (logical refs — validated in the service).
   originBranchId     String? @map("origin_branch_id")
   processingBranchId String? @map("processing_branch_id")
@@ -8579,6 +8691,16 @@ model OrderSample {
   // set when a copy is created. Empty on a never-transferred sample (its own and
   // origin branch are implied). A sample may never be sent to any of these again.
   heldBranchIds String[] @default([]) @map("held_branch_ids")
+
+  /// Set when this row was sent back for a fresh collection (Repeat / Re-run with a fresh sample): the rows
+  /// repeated together in one action share the tag. It is part of the barcode group key, so they form their own
+  /// group with their own new barcode and never borrow the old group's barcode. Null = never repeated this way.
+  repeatBatchId String? @map("repeat_batch_id")
+
+  /// The barcode a Repeat (or a Retrieve back into Repeat) last took off this sample. While the sample waits for its
+  /// new tube (`barcode` is null) Search Sample uses it to find the sample by the OLD tube's barcode; after the sample
+  /// has a barcode again it lets the search say "replaced by <new barcode>". Written only when the sample had a barcode.
+  barcodeBeforeRepeat String? @map("barcode_before_repeat")
 
   tests         OrderSampleTest[]
   statusHistory OrderSampleStatusHistory[]
@@ -8732,8 +8854,10 @@ model SampleTransfer {
   @@index([sampleId])
   @@index([kind])
   @@index([transferStatus])
+  @@index([originBranchId])
   @@index([destinationBranchId])
   @@index([outsourceCenterId])
+  @@index([sendDate])
   @@index([clonedSampleId])
   @@index([deletedAt])
   @@map("sample_transfers")

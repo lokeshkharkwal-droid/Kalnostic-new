@@ -100,6 +100,7 @@ import {
   type SampleNameNote,
 } from './utils/sample-name.util';
 import { blankNotesToNull } from './utils/param-notes.util';
+import { resolveAgeRestriction } from './utils/age-restriction.util';
 import { ImportLabTestTemplatesDto } from './dto/import-lab-test-templates.dto';
 import { SyncLabTestTemplatesDto } from './dto/sync-lab-test-templates.dto';
 import {
@@ -320,6 +321,8 @@ export class LabTestService {
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
     await this.assertLabAdapterRefs(tenantId, dto.resultParams ?? []);
+    // Disabled → bounds cleared; enabled → all bounds required, min ≤ max.
+    const ageRestriction = resolveAgeRestriction(dto);
 
     const { samples, resultParams, ...scalars } = dto;
     let createdId: string;
@@ -328,6 +331,7 @@ export class LabTestService {
         const labTest = await tx.labTest.create({
           data: {
             ...scalars,
+            ...ageRestriction,
             tenantId,
             branchId: masterData.branchId,
             masterDataId,
@@ -1314,6 +1318,8 @@ export class LabTestService {
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
     await this.assertLabAdapterRefs(tenantId, dto.resultParams ?? []);
+    // Merged with the stored columns; untouched → left as is.
+    const ageRestriction = resolveAgeRestriction(dto, existing);
 
     const { samples, resultParams, ...scalars } = dto;
     const now = new Date();
@@ -1321,7 +1327,7 @@ export class LabTestService {
       await this.prisma.withTenant(tenantId, async (tx) => {
         await tx.labTest.update({
           where: { id: labTestId },
-          data: scalars,
+          data: { ...scalars, ...ageRestriction },
         });
         if (existing.branchId) {
           await this.propagateTatToBranchLabTestCopies(
@@ -2231,6 +2237,7 @@ export class LabTestService {
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
+    const ageRestriction = resolveAgeRestriction(dto);
 
     const { samples, resultParams, ...scalars } = dto;
     let createdId: string;
@@ -2239,6 +2246,7 @@ export class LabTestService {
         const labTest = await tx.labTest.create({
           data: {
             ...scalars,
+            ...ageRestriction,
             ...TEMPLATE_NULLED_REFS,
             tenantId: null,
             branchId: null,
@@ -2373,6 +2381,7 @@ export class LabTestService {
     });
     (dto.resultParams ?? []).forEach((p) => this.assertParam(p));
     this.assertFormulaSet(dto.resultParams ?? []);
+    const ageRestriction = resolveAgeRestriction(dto, existing);
 
     const { samples, resultParams, ...scalars } = dto;
     const now = new Date();
@@ -2380,7 +2389,7 @@ export class LabTestService {
       await this.prisma.$transaction(async (tx) => {
         await tx.labTest.update({
           where: { id: labTestId },
-          data: { ...scalars, ...TEMPLATE_NULLED_REFS },
+          data: { ...scalars, ...ageRestriction, ...TEMPLATE_NULLED_REFS },
         });
         if (samples !== undefined) {
           await tx.labTestSample.updateMany({

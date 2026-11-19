@@ -341,21 +341,153 @@ export class SampleRepeatBlockedException extends InvalidSampleTransitionExcepti
 }
 
 /**
- * 422 — a sample cannot be Retrieved (the universal undo) back to before its
- * acceptance because a test on it already has a validated result (Result Done,
- * Approved or Published): the sample would say "not accepted yet" while its
- * result is done. A validated result is redone with Re-run instead. Anything
- * earlier (no result, saved, validation pending) does not block. Skippable by
- * group "skip invalid" actions.
+ * 422 — a sample waiting to be collected again (status Repeat) can only be collected (or put on Hold, cancelled or retrieved): a
+ * forced Accept / Store / Discard ... would skip the Collect that makes its new barcode and leave an Accepted tube with no barcode.
+ * Skippable by group "skip invalid" actions.
  */
-export class SampleRetrieveBlockedByResultException extends InvalidSampleTransitionException {
+export class SampleRepeatMustBeCollectedException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction, from: SampleStatus) {
+    super(
+      action,
+      from,
+      'This sample is waiting to be collected again (Repeat). Collect it first: it cannot skip the Collect that makes its new barcode.',
+      'SAMPLE_REPEAT_MUST_BE_COLLECTED',
+    );
+  }
+}
+
+/**
+ * 422 — a sample whose test has a validated result (Result Done, Approved or Published) cannot be moved back to before its
+ * acceptance, not even by a forced action: the report would be locked "waiting for its sample" under an approved result. Use
+ * Re-run to redo a validated result. Skippable by group "skip invalid" actions.
+ */
+export class SampleMoveBlockedByResultException extends InvalidSampleTransitionException {
+  constructor(action: SampleAction, from: SampleStatus) {
+    super(
+      action,
+      from,
+      'The result of this test is already done (Result Done, Approved or Published), so the sample cannot be moved back to before its acceptance. Use Re-run to redo a validated result.',
+      'SAMPLE_MOVE_BLOCKED_RESULT_DONE',
+    );
+  }
+}
+
+/** 422 — nothing to print: none of the selected samples has a barcode yet (e.g. they were repeated and not collected again). */
+export class NoBarcodeToPrintException extends KaltrosException {
+  constructor(count: number) {
+    super(
+      'NO_BARCODE_TO_PRINT',
+      count === 1
+        ? 'This sample has no barcode yet, so there is no label to print. It gets its barcode when it is collected.'
+        : 'None of the selected samples has a barcode yet, so there is nothing to print. They get their barcode when they are collected.',
+      { count },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/** 503 — the barcode picture could not be made right now (the file storage is unreachable); the label is not printed blank. */
+export class BarcodeImageUnavailableException extends KaltrosException {
+  constructor() {
+    super(
+      'BARCODE_IMAGE_UNAVAILABLE',
+      'The barcode image could not be made right now (the file storage is not reachable). Please try printing again in a moment.',
+      {},
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  }
+}
+
+/**
+ * 422 — a sample cannot be Retrieved (the universal undo) because a report on it is
+ * already past Pending: a result was entered and saved, submitted, rejected,
+ * validated (Result Done, Approved, Published) or reported as an error. The manager's
+ * rule: Retrieve only while every report is still Pending. Otherwise the sample would
+ * go back to an earlier tube / place while the report still carries the result of the
+ * tube it was entered for. Applies to going back to before Accepted (and the sender's
+ * recall of a Forwarded / Outsourced tube); Stored -> Accepted is not affected. The
+ * way forward is Repeat (an unfinished report is wiped), Re-run, or reporting an error.
+ * Skippable by group "skip invalid" actions.
+ */
+export class SampleRetrieveBlockedByReportException extends InvalidSampleTransitionException {
   constructor(from: SampleStatus) {
     super(
       'retrieve',
       from,
-      'The result of this test is already done (Result Done, Approved or Published), so the sample cannot be retrieved back to before its acceptance. Use Re-run to redo a validated result.',
-      'SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE',
+      'A test on this sample is already past Pending (a result was entered, saved, submitted or validated), so the sample cannot be retrieved. To redo an unfinished result use Repeat; to redo a finished one (Result Done, Approved or Published) use Re-run.',
+      'SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED',
     );
+  }
+}
+
+/**
+ * 422 — an ACCEPTED sample cannot be Stored or Returned because not every test that shares its
+ * barcode (same branch and order) has a PUBLISHED report. A test with no report at all counts as
+ * not published, so the tube is refused rather than put away on a guess. Only Accepted samples are
+ * gated; Acquired, Halt and Error samples are not, and neither are samples of a removed test or the
+ * received copy of a cancelled order (they must stay possible to put away). Skippable by group
+ * "skip invalid" actions, so the samples that qualify are still processed.
+ */
+export class SampleStoreReturnBlockedException extends InvalidSampleTransitionException {
+  /**
+   * @param action the refused action
+   * @param from the sample's current status
+   * @param unpublished how many tests of the barcode group are not published (or have no report)
+   */
+  constructor(
+    action: 'store' | 'return',
+    from: SampleStatus,
+    unpublished: number,
+  ) {
+    super(
+      action,
+      from,
+      `${unpublished} test${unpublished === 1 ? '' : 's'} on this barcode ${unpublished === 1 ? 'is' : 'are'} not published yet (this can include tests in a department you cannot see), so the sample cannot be ${action === 'store' ? 'stored' : 'returned'}. Store and Return need every test published.`,
+      'SAMPLE_STORE_RETURN_BLOCKED_NOT_PUBLISHED',
+    );
+  }
+}
+
+/**
+ * 422 — a Discarded sample cannot be Retrieved because it is not marked recoverable, or a Returned
+ * sample because nobody has confirmed it is physically back and verified (Sample Search
+ * requirements, 2026-11-06). The way forward is to set the flag (`recoverable` on a Discarded
+ * sample, "returned and verified" on a Returned one) and then Retrieve. Skippable by group "skip
+ * invalid" actions, so the samples that qualify are still processed.
+ */
+export class SampleRetrieveBlockedByFlagException extends InvalidSampleTransitionException {
+  /** @param from the sample's current status (Discarded or Returned) */
+  constructor(from: SampleStatus) {
+    const discarded = from === SampleStatus.DISCARDED;
+    super(
+      'retrieve',
+      from,
+      discarded
+        ? 'This discarded sample is not marked recoverable, so it cannot be retrieved. Mark it recoverable first if the physical sample can still be recovered.'
+        : 'This returned sample has not been confirmed as physically back and verified, so it cannot be retrieved. Mark it as returned and verified first.',
+      discarded
+        ? 'SAMPLE_RETRIEVE_BLOCKED_NOT_RECOVERABLE'
+        : 'SAMPLE_RETRIEVE_BLOCKED_NOT_VERIFIED',
+    );
+  }
+}
+
+/**
+ * 422 — the "recoverable" flag can only be set on a Discarded sample, and the "returned and
+ * verified" confirmation only on a Returned one (and only once).
+ */
+export class SampleFlagNotAllowedException extends InvalidSampleTransitionException {
+  /**
+   * @param action `discard` for the recoverable flag, `return` for the verification
+   * @param from the sample's current status
+   * @param message why it is refused
+   */
+  constructor(
+    action: 'discard' | 'return',
+    from: SampleStatus,
+    message: string,
+  ) {
+    super(action, from, message, 'SAMPLE_FLAG_NOT_ALLOWED');
   }
 }
 
@@ -514,6 +646,42 @@ export class SampleBarcodeLockedException extends InvalidSampleTransitionExcepti
 }
 
 /**
+ * 422 — a barcode typed by hand (Assign / Edit Barcode) is still held for a sample that is waiting for a new tube after a
+ * Repeat took the barcode off. While it waits, Retrieve can still put that number back, so nobody may take it. Once the
+ * sample is collected again (it then holds a new barcode) the old number is free.
+ */
+export class BarcodeReservedByRepeatException extends KaltrosException {
+  constructor(barcode: string) {
+    super(
+      'BARCODE_RESERVED_BY_REPEAT',
+      `Barcode "${barcode}" was taken off a sample by a Repeat and is kept for it until it is collected again. Use another barcode, or leave it empty for a new number.`,
+      { barcode },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the receiving branch can no longer Retrieve a transfer it sent back (as a Repeat, or by rejecting it): the sending
+ * branch has already acted on it (it confirmed the Repeat, or flagged the rejected sample as Error), so its sample left "Sent"
+ * and stepping the transfer back to Received would leave the two branches disagreeing (the receiver could even Accept again and
+ * take the report). Before the sender acts, Retrieve stays allowed. Skippable by group "skip invalid" actions.
+ */
+export class TransferRetrieveAfterSenderConfirmedException extends KaltrosException {
+  /** @param kind what the receiving branch did: `repeat` (Repeat) or `reject` (Reject) */
+  constructor(transferId: string, kind: 'repeat' | 'reject' = 'repeat') {
+    super(
+      'TRANSFER_RETRIEVE_AFTER_SENDER_CONFIRMED',
+      kind === 'repeat'
+        ? 'The sending branch has already confirmed the Repeat, so this transfer can no longer be retrieved.'
+        : 'The sending branch has already flagged the rejected sample as Error, so this transfer can no longer be retrieved.',
+      { id: transferId, action: 'retrieve', kind },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
  * 422 — the manual "outsource status" is only kept for transfers to a third-party
  * lab (kind OUTSOURCE); an internal or external-partner transfer has no such status.
  */
@@ -556,4 +724,23 @@ export class NoActiveLabelTemplateException extends KaltrosException {
 export function refusalMessage(e: KaltrosException): string {
   const body = e.getResponse() as { error?: { message?: string } };
   return body.error?.message ?? e.message;
+}
+
+/**
+ * 422 — a "Re-run with a fresh sample" cannot be done for one or more of the tests asked for (status not allowed, report
+ * locked, sample not Accepted or Outsourced, order cancelled, test removed, ...). Nothing is changed: the request is
+ * all-or-nothing. The message names the first reason; `context.reasons` lists every test and reason (server-side only).
+ */
+export class ReRunFreshNotAllowedException extends KaltrosException {
+  constructor(reasons: { reportId: string; reason: string }[]) {
+    const first = reasons[0]?.reason ?? 'The re-run cannot be done.';
+    const more =
+      reasons.length > 1 ? ` (and ${reasons.length - 1} more test(s))` : '';
+    super(
+      'RERUN_FRESH_NOT_ALLOWED',
+      `${first}${more}`,
+      { reasons },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
 }

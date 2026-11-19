@@ -34,17 +34,35 @@ tests {
 }
 
 docs {
-  Change the caller tenant's Accession **Group Settings** mode
+  Change the Accession **Group Settings** mode that **new orders** take
   (`AccessionGroupingMode`). Business-admin only (`ACC_SETTINGS_UPDATE`).
 
-  The change is **retroactive to the display**:
-  `GET /accession/order-samples/grouped` re-groups existing orders under the new
-  mode immediately (grouping is computed live, not frozen at create). Because the
-  barcodes assigned under the old grouping would no longer match the new groups,
-  a **real** mode change **clears every sample's barcode** (value + rendered
-  image) for the tenant — each regrouped group then shows "No barcode" until a
-  fresh Assign Barcode is run on it (no barcodes are auto-regenerated). A no-op
-  change (same mode) leaves barcodes untouched.
+  **Not retroactive.** Every order carries its **own** mode (`orders.grouping_mode`),
+  decided once, when the order first gets samples, from the tenant mode at that
+  moment, and never changed afterwards (a database rule refuses any change). So
+  this call only affects orders that get their samples later: existing orders keep
+  the grouping their barcodes were made under, and **no barcode is ever cleared,
+  renumbered or regrouped by this call** (barcodes are on printed labels, in
+  transfers and matched by the lab analyzers). An order that has no mode yet
+  (a draft / quote / appointment with no samples) follows the tenant's current
+  mode until its first sample is made.
+
+  One transaction: the tenant row is locked first (so the "old mode" is the true
+  predecessor even when two admins save at once, and an order created at the same
+  moment sees either entirely the old or entirely the new mode), the mode is
+  saved, and the audit row is written in the same transaction. A save of the mode
+  the tenant already has changes and records nothing.
+
+  **Busy (409 `TENANT_GROUPING_MODE_BUSY`).** If another request (an order being
+  created, another admin saving) keeps the tenant row locked for more than 3
+  seconds, this call gives up with a 409 instead of hanging. Nothing was changed
+  and nothing was recorded; the admin can simply save again.
+
+  **Audit:** one `TENANT` / `UPDATE` audit row per real change, with
+  `metadata: { oldMode, newMode }` and a description "Changed the Accession Group
+  Settings grouping mode from X to Y (applies to new orders only)". It is written
+  by the service in the same transaction (not after the response), so a change can
+  never be saved without its record.
 
   `groupingMode` — one of `SAMPLE_NAME` | `ORDER` | `DEPARTMENT` |
   `DEPARTMENT_SAMPLE_NAME`.

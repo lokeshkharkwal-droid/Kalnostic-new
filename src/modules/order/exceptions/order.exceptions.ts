@@ -8,6 +8,51 @@ export class OrderNotFoundException extends KaltrosException {
   }
 }
 
+/**
+ * 409 — a lab test on the order consumes inventory (via a mapped proforma) but
+ * the active branch is short of stock. Blocks order creation with a clear,
+ * per-product message so the operator can top up stock first. The shortage detail
+ * is part of the client message (`context` is never returned).
+ */
+export class OrderInventoryStockException extends KaltrosException {
+  constructor(
+    shortages: Array<{
+      productName: string;
+      requiredQty: number;
+      availableQty: number;
+    }>,
+  ) {
+    const summary = shortages
+      .map(
+        (s) =>
+          `${s.productName} (need ${s.requiredQty}, have ${s.availableQty})`,
+      )
+      .join('; ');
+    super(
+      'ORDER_INVENTORY_STOCK_INSUFFICIENT',
+      `Insufficient inventory stock for this order: ${summary}`,
+      { shortages },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
+ * 502 — the inventory service failed while deducting stock for a confirmed order.
+ * The just-created order is rolled back (cancelled) before this is raised, so the
+ * operator can safely retry once inventory is reachable.
+ */
+export class OrderInventoryConsumeFailedException extends KaltrosException {
+  constructor(message: string) {
+    super(
+      'ORDER_INVENTORY_CONSUME_FAILED',
+      `The order was rolled back: inventory deduction failed (${message}).`,
+      { message },
+      HttpStatus.BAD_GATEWAY,
+    );
+  }
+}
+
 /** 409 — another active order in this tenant already uses this code. */
 export class OrderCodeConflictException extends KaltrosException {
   constructor(orderCode: string) {
@@ -27,6 +72,37 @@ export class OrderPatientNotFoundException extends KaltrosException {
       'ORDER_PATIENT_NOT_FOUND',
       'The referenced patient does not exist in this tenant',
       { patientId },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the patient's age on the order date is outside the allowed range of an
+ * age-restricted lab test (ordered on its own or inside a lab panel). The
+ * allowed range is part of the client message (`context` is never returned).
+ */
+export class OrderTestAgeRestrictedException extends KaltrosException {
+  constructor(message: string, context: Record<string, unknown>) {
+    super(
+      'ORDER_TEST_AGE_RESTRICTED',
+      message,
+      context,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 422 — the order carries an age-restricted lab test (or a panel containing
+ * one) but the patient has neither a date of birth nor an age to check it with.
+ */
+export class OrderPatientAgeRequiredException extends KaltrosException {
+  constructor(patientId: string, testName: string) {
+    super(
+      'ORDER_PATIENT_AGE_REQUIRED',
+      `Patient's age or date of birth is required to order "${testName}", which has an age restriction`,
+      { patientId, testName },
       HttpStatus.UNPROCESSABLE_ENTITY,
     );
   }
@@ -900,6 +976,28 @@ export class TestNotDeletableAfterReportException extends KaltrosException {
       `The test "${testName ?? 'selected test'}" cannot be removed because its report is already filled or generated`,
       { orderItemId, testName },
       HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 409 — the emergency-pricing state the client priced the order with
+ * (`emergencyPricing` in the body) no longer matches the server's decision, e.g.
+ * the branch just closed/opened (Apply Emergency Prices in Non-operating Hours)
+ * or the Emergency Pricing settings changed while the form was open. The client
+ * computes the payment amounts from its displayed prices, so the save is
+ * rejected instead of billing prices the operator never saw; the client should
+ * refresh the emergency-pricing status, re-price the lines and save again.
+ */
+export class EmergencyPricingChangedException extends KaltrosException {
+  constructor(expected: boolean, actual: boolean) {
+    super(
+      'EMERGENCY_PRICING_CHANGED',
+      actual
+        ? 'Emergency prices now apply to this order. Review the updated prices and save again.'
+        : 'Emergency prices no longer apply to this order. Review the updated prices and save again.',
+      { expected, actual },
+      HttpStatus.CONFLICT,
     );
   }
 }

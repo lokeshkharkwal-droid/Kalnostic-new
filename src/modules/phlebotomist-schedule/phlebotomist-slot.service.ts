@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PhlebotomistSlot, PhlebotomistScheduleStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toBranchLocalInstant } from '../../common/utils';
+import { TenantTimeZoneService } from '../tenant/tenant-timezone.service';
 import { BranchService } from '../branch/branch.service';
 import { PhlebotomistDirectoryService } from './phlebotomist-directory.service';
 import {
@@ -58,6 +60,7 @@ export class PhlebotomistSlotService {
     private readonly prisma: PrismaService,
     private readonly directory: PhlebotomistDirectoryService,
     private readonly branchService: BranchService,
+    private readonly tenantTz: TenantTimeZoneService,
   ) {}
 
   /**
@@ -78,6 +81,7 @@ export class PhlebotomistSlotService {
       phlebotomistId,
     );
 
+    const zone = await this.tenantTz.getTimeZone(tenantId);
     const start = toUtcDateOnly(weekStart);
     const end = addDays(start, 7);
     const slots = await this.prisma.phlebotomistSlot.findMany({
@@ -90,14 +94,16 @@ export class PhlebotomistSlotService {
       },
       orderBy: [{ slotDate: 'asc' }, { startTime: 'asc' }],
     });
+    // Pad the visit (true-UTC) window by a day each side so bookings whose UTC
+    // instant lands in an adjacent UTC day still bucket to the right local day.
     const visits = await this.directory.visitTimesInRange(
       tenantId,
       branchId,
       phlebotomistId,
-      start,
-      end,
+      addDays(start, -1),
+      addDays(end, 1),
     );
-    const minutesByDate = this.bucketVisits(visits);
+    const minutesByDate = this.bucketVisits(visits, zone);
 
     // Configured daily cap (drives per-day remaining + the header). `null` when
     // the phlebotomist has no active schedule; `0` means "no cap".
@@ -122,7 +128,9 @@ export class PhlebotomistSlotService {
       byDate.set(key, list);
     }
 
-    const now = new Date();
+    // "now" projected to the business-local wall clock so the Past/elapsed check
+    // compares like-for-like with slotDate + startTime (both locally authored).
+    const now = toBranchLocalInstant(new Date(), zone);
     let totalBookings = 0;
     const days: CalendarDay[] = [];
     for (let i = 0; i < 7; i++) {
@@ -151,6 +159,7 @@ export class PhlebotomistSlotService {
         branchId,
         phlebotomistId,
         person,
+        zone,
       ),
       weekStart: formatDate(start),
       totalBookings,
@@ -173,7 +182,9 @@ export class PhlebotomistSlotService {
       branchId,
       phlebotomistId,
     );
-    const today = startOfUtcDay(new Date());
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    const now = toBranchLocalInstant(new Date(), zone);
+    const today = startOfUtcDay(now);
     const tomorrow = addDays(today, 1);
     const slots = await this.prisma.phlebotomistSlot.findMany({
       where: {
@@ -189,11 +200,10 @@ export class PhlebotomistSlotService {
       tenantId,
       branchId,
       phlebotomistId,
-      today,
-      tomorrow,
+      addDays(today, -1),
+      addDays(tomorrow, 1),
     );
-    const minutesByDate = this.bucketVisits(visits);
-    const now = new Date();
+    const minutesByDate = this.bucketVisits(visits, zone);
     return slots.map((s) => {
       const booked = this.bookedFor(s, minutesByDate);
       return {
@@ -234,7 +244,8 @@ export class PhlebotomistSlotService {
       phlebotomistId,
     );
 
-    const today = startOfUtcDay(new Date());
+    const zone = await this.tenantTz.getTimeZone(tenantId);
+    const today = startOfUtcDay(toBranchLocalInstant(new Date(), zone));
     const start = from ? toUtcDateOnly(from) : today;
     const end = to
       ? toUtcDateOnly(to)
@@ -290,10 +301,10 @@ export class PhlebotomistSlotService {
       tenantId,
       branchId,
       phlebotomistId,
-      start,
-      end,
+      addDays(start, -1),
+      addDays(end, 1),
     );
-    const minutesByDate = this.bucketVisits(visits);
+    const minutesByDate = this.bucketVisits(visits, zone);
 
     const byDate = new Map<string, DerivedSlot[]>();
     for (const slot of slots) {
@@ -303,7 +314,7 @@ export class PhlebotomistSlotService {
       byDate.set(key, list);
     }
 
-    const now = new Date();
+    const now = toBranchLocalInstant(new Date(), zone);
     const days: AvailabilityDay[] = [];
     for (let d = start; d < end; d = addDays(d, 1)) {
       const dateStr = formatDate(d);
@@ -446,6 +457,7 @@ export class PhlebotomistSlotService {
       lastName: string | null;
       phone: string | null;
     },
+    zone: string,
   ): Promise<CalendarPhlebotomistInfo> {
     const schedule = await this.prisma.phlebotomistSchedule.findFirst({
       where: {
@@ -462,7 +474,7 @@ export class PhlebotomistSlotService {
     });
     const branch = await this.branchService.findById(branchId, tenantId);
 
-    const today = startOfUtcDay(new Date());
+    const today = startOfUtcDay(toBranchLocalInstant(new Date(), zone));
     const [assigned, completed, onRoute, tenure] = await Promise.all([
       this.directory.countVisits(
         tenantId,
@@ -505,13 +517,19 @@ export class PhlebotomistSlotService {
     };
   }
 
-  /** Group visit timestamps into minutes-since-midnight, keyed by UTC date. */
-  private bucketVisits(visits: Date[]): Map<string, number[]> {
+  /**
+   * Group visit timestamps into minutes-since-midnight, keyed by the
+   * **business-local** date. Each visit is a true UTC instant, so it is projected
+   * to the tenant zone first (same zone the slot windows are authored in), so a
+   * late-evening / early-morning booking buckets to the correct local day/minute.
+   */
+  private bucketVisits(visits: Date[], zone: string): Map<string, number[]> {
     const byDate = new Map<string, number[]>();
     for (const v of visits) {
-      const key = formatDate(v);
+      const local = toBranchLocalInstant(v, zone);
+      const key = formatDate(local);
       const list = byDate.get(key) ?? [];
-      list.push(utcMinutesOf(v));
+      list.push(utcMinutesOf(local));
       byDate.set(key, list);
     }
     return byDate;

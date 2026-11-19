@@ -24,7 +24,10 @@ vars:pre-request {
 
 docs {
   Step 7 (validation read). The current user's granted permissions at the
-  branch: `{ role, branchModules, modules, allowed }`. Each `modules[]` entry's
+  branch: `{ role, branchModules, defaultModule, modules, allowed }`. `defaultModule`
+  is the user's Default Module at this branch (a module key such as `lab_operations`,
+  saved on the branch assignment), or `null` when none is set; the frontend opens it
+  after login when the module is also visible to the user. Each `modules[]` entry's
   `permissions` is a flat array of the allowed `permissionKey`s (modules with no
   allowed permission are omitted). `branchId` is required (omitting it -> 400).
   The frontend keys off the flat `allowed` array for show/hide.

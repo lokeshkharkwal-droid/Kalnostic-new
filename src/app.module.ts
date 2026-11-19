@@ -67,6 +67,7 @@ import { PtCategoryModule } from './modules/pt-category/pt-category.module';
 import { OrderModule } from './modules/order/order.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { OrderFieldConfigModule } from './modules/order-field-config/order-field-config.module';
+import { UserPreferenceModule } from './modules/user-preference/user-preference.module';
 import { PaymentDetailsModule } from './modules/payment-details/payment-details.module';
 import { BillingSettingsModule } from './modules/billing-settings/billing-settings.module';
 import { ConsoleSettingsModule } from './modules/console-settings/console-settings.module';
@@ -96,6 +97,7 @@ import { FinancePaymentsModule } from './modules/finance-payments/finance-paymen
 import { CommunicationModule } from './modules/communication/communication.module';
 import { EmiModule } from './modules/emi/emi.module';
 import { PublicModule } from './modules/public/public.module';
+import { InventoryIntegrationModule } from './modules/inventory-integration/inventory-integration.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
@@ -191,6 +193,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     SettlementModule,
     PricingModule,
     OrderFieldConfigModule,
+    UserPreferenceModule,
     PaymentDetailsModule,
     FinancePaymentsModule,
     CommunicationModule,
@@ -218,6 +221,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     PermissionsModule,
     EmiModule,
     PublicModule,
+    InventoryIntegrationModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

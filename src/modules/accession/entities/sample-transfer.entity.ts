@@ -30,6 +30,9 @@ export const TRANSFER_INCLUDE = {
           // CANCELLED here tags the row "Order cancelled" and hides the forward steps.
           status: true,
           billId: true,
+          // The grouping mode the order follows: the referral queue groups its transfers
+          // by it, so a transferred copy is grouped exactly like the source order.
+          groupingMode: true,
           patient: true,
           referredByDoctor: true,
           referralPanel: true,
@@ -46,7 +49,9 @@ export type SampleTransferWithRelations = Prisma.SampleTransferGetPayload<{
 
 /**
  * A transfer with its sample enriched with `departmentLabel` (distinct test
- * department names joined with ", "; null when none resolve).
+ * department names joined with ", "; null when none resolve) and `departmentNames`
+ * (the same names as a list, so a client never has to split the text - a name may
+ * itself contain a comma).
  */
 export type SampleTransferDeptRow = Omit<
   SampleTransferWithRelations,
@@ -54,6 +59,7 @@ export type SampleTransferDeptRow = Omit<
 > & {
   sample: SampleTransferWithRelations['sample'] & {
     departmentLabel: string | null;
+    departmentNames: string[];
   };
 };
 
@@ -83,8 +89,8 @@ export type SampleTransferWithFlag = SampleTransferWithRelations & {
 
 /**
  * A referral-queue list row — a center-labelled transfer plus its grouping
- * metadata. `groupKey` is the sample's final-group key under the tenant's
- * current grouping mode (`${orderId}::${barcodeGroupKey}`), so the referral
+ * metadata. `groupKey` is the sample's final-group key under its order's own
+ * grouping mode (`${orderId}::${barcodeGroupKey}`), so the referral
  * queue buckets transfers into the SAME Order → final-group groups the In-House
  * list uses — the one `barcodeGroupKey` rule drives both (no drift).
  * `groupingMode` is echoed as a FE layout hint (as on the in-house grouped

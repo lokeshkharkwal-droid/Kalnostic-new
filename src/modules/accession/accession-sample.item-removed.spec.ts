@@ -81,10 +81,15 @@ describe('findItemRemovedSampleIds', () => {
 });
 
 function makeSampleService() {
-  return new OrderSampleService(
+  const service = new OrderSampleService(
     {} as unknown as PrismaService,
     {} as unknown as AccessionSettingsService,
-    {} as unknown as LabReportService,
+    // Retrieve of a tube that is out looks at its reports (manager's rule): none, so none is past Pending
+    {
+      findReportIdsForSampleTests: jest.fn().mockResolvedValue([]),
+      lockReports: jest.fn().mockResolvedValue(undefined),
+      hasStartedReport: jest.fn().mockResolvedValue(false),
+    } as unknown as LabReportService,
     {} as unknown as PdfReportTemplateService,
     {} as unknown as PdfTemplateConfigService,
     {} as unknown as EventEmitter2,
@@ -93,6 +98,14 @@ function makeSampleService() {
     {} as unknown as UserDepartmentScopeService,
     {} as unknown as AppointmentService,
   );
+  // The Store / Return "all tests published" gate has its own spec (which also covers the removed-test
+  // exemption); here it never blocks.
+  jest.spyOn(service, 'storeReturnGate').mockResolvedValue({
+    gated: true,
+    unpublished: 0,
+    unpublishedSampleIds: [],
+  });
+  return service;
 }
 
 describe('OrderSampleService.transitionInTx - a removed test freezes its sample', () => {
@@ -628,6 +641,8 @@ describe('SampleTransferService - a removed test freezes its transfer', () => {
       orderSampleTest: {
         findMany: jest.fn().mockImplementation(() => Promise.resolve(links)),
       },
+      // the step row a pick up / receive leaves on the sender's sample
+      orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     };
     const prisma = {
       withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) =>

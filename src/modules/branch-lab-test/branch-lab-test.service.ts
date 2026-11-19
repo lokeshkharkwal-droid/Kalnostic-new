@@ -24,6 +24,8 @@ import {
   BranchLabTestNotFoundException,
 } from './exceptions/branch-lab-test.exceptions';
 import {
+  AGE_RESTRICTION_SELECT,
+  BranchLabTestAgeRestriction,
   BranchLabTestConfigSnapshot,
   BranchLabTestImportResult,
   BranchLabTestListRow,
@@ -39,11 +41,20 @@ export interface BranchLabTestBulkEditResult {
   updated: number;
 }
 
-/** A Create-Order lab-test option row (Diagnostic Items table). */
-export interface BranchLabTestOption {
+/**
+ * A Create-Order lab-test option row (Diagnostic Items table). Carries the
+ * test's Age Restriction so Create Order can block it before it is added.
+ */
+export interface BranchLabTestOption extends BranchLabTestAgeRestriction {
   id: string;
   name: string;
   price: number;
+  /**
+   * The list row's Emergency Price (minor units; 0 = not set). Create Order bills
+   * it instead of `price` when emergency pricing applies (Registration Settings
+   * → Emergency Pricing), falling back to `price` when it is 0.
+   */
+  emergencyPrice: number;
   sampleName: string | null;
   sampleType: string | null;
   isFasting: boolean;
@@ -763,6 +774,7 @@ export class BranchLabTestService {
       id: true,
       testName: true,
       listPrice: true,
+      emergencyPrice: true,
       isAllowDiscounts: true,
       isBillOnlyTest: true,
       configSnapshot: true,
@@ -775,13 +787,15 @@ export class BranchLabTestService {
       tatMaxUnit: true,
       usefulFor: true,
       sourceLabTestId: true,
+      ...AGE_RESTRICTION_SELECT,
     } as const;
     const orderBy = { testName: 'asc' } as const;
     const toOption = (
-      r: {
+      r: BranchLabTestAgeRestriction & {
         id: string;
         testName: string;
         listPrice: number;
+        emergencyPrice: number;
         isAllowDiscounts: boolean;
         isBillOnlyTest: boolean;
         configSnapshot: Prisma.JsonValue;
@@ -804,6 +818,7 @@ export class BranchLabTestService {
         id: r.id,
         name: r.testName,
         price: r.listPrice,
+        emergencyPrice: r.emergencyPrice,
         sampleName: sample?.sampleName ?? null,
         sampleType: sample?.sampleType ?? null,
         isFasting: sample?.isFastingRequired ?? false,
@@ -816,6 +831,11 @@ export class BranchLabTestService {
         tatMinUnit: r.tatMinUnit,
         tatMaxValue: r.tatMaxValue,
         tatMaxUnit: r.tatMaxUnit,
+        isAgeRestricted: r.isAgeRestricted,
+        minAgeValue: r.minAgeValue,
+        minAgeUnit: r.minAgeUnit,
+        maxAgeValue: r.maxAgeValue,
+        maxAgeUnit: r.maxAgeUnit,
         ...(filters.includeSampleInfo && {
           usefulFor: r.usefulFor,
           sampleHandlingInstructions: handling?.get(r.id) ?? null,

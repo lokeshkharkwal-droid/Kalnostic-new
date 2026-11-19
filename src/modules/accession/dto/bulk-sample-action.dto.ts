@@ -16,6 +16,7 @@ import { CancelSampleDto } from './cancel-sample.dto';
 import { RepeatSampleDto } from './repeat-sample.dto';
 import { ReturnSampleDto } from './return-sample.dto';
 import { RetrieveSampleDto } from './retrieve-sample.dto';
+import { RawBoolean } from '../../../common/decorators/raw-boolean.decorator';
 
 /**
  * Bulk (multi-select) action payloads (PDF §A.11). Each mirrors its single-item
@@ -39,6 +40,7 @@ export class BulkSampleNoteDto extends SampleNoteDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -48,6 +50,7 @@ export class BulkSampleNoteDto extends SampleNoteDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -71,6 +74,7 @@ export class BulkAssignBarcodeDto extends AssignBarcodeDto {
    * declaring it keeps the payload whitelisted under `forbidNonWhitelisted`.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -79,6 +83,7 @@ export class BulkAssignBarcodeDto extends AssignBarcodeDto {
    * assignment (no transition to override).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -97,6 +102,7 @@ export class BulkCollectDto extends CollectSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -106,6 +112,7 @@ export class BulkCollectDto extends CollectSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -124,6 +131,7 @@ export class BulkAcceptDto extends AcceptSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -133,6 +141,7 @@ export class BulkAcceptDto extends AcceptSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -151,6 +160,7 @@ export class BulkStoreDto extends StoreSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -160,6 +170,7 @@ export class BulkStoreDto extends StoreSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -178,6 +189,7 @@ export class BulkDiscardDto extends DiscardSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -187,6 +199,7 @@ export class BulkDiscardDto extends DiscardSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -205,6 +218,7 @@ export class BulkCancelDto extends CancelSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -214,6 +228,7 @@ export class BulkCancelDto extends CancelSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -232,6 +247,7 @@ export class BulkRepeatDto extends RepeatSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -241,6 +257,7 @@ export class BulkRepeatDto extends RepeatSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -259,6 +276,7 @@ export class BulkReturnDto extends ReturnSampleDto {
    * skipped server-side instead of failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -268,6 +286,7 @@ export class BulkReturnDto extends ReturnSampleDto {
    * validation). Distinct from `skipInvalid` (which skips instead of forcing).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }
@@ -292,6 +311,7 @@ export class BulkRetrieveDto extends RetrieveSampleDto {
    * failing the batch. Omit for strict bulk.
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   skipInvalid?: boolean;
 
@@ -300,6 +320,7 @@ export class BulkRetrieveDto extends RetrieveSampleDto {
    * forced target and always reverts to `previousStatus`).
    */
   @IsOptional()
+  @RawBoolean()
   @IsBoolean()
   force?: boolean;
 }

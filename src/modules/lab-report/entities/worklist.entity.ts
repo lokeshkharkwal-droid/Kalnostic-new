@@ -8,7 +8,7 @@ import {
   SampleStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { AGE_TYPE_SUFFIX, fullName } from './lab-report.entity';
+import { fullName, patientAgeFields } from './lab-report.entity';
 
 /**
  * Relations eager-loaded for every worklist list view (Re-Run, Critical Alert,
@@ -190,12 +190,7 @@ export function toWorklistReportContext(
             patient.middleName,
             patient.lastName,
           ]),
-          age: patient.age,
-          ageType: patient.ageType,
-          ageDisplay:
-            patient.age != null
-              ? `${patient.age}${AGE_TYPE_SUFFIX[patient.ageType ?? 'YEARS']}`
-              : null,
+          ...patientAgeFields(patient),
           gender: patient.gender,
           umId: patient.umId,
           mobile: patient.mobile,

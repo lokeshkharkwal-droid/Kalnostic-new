@@ -17,6 +17,7 @@ import type { Response } from 'express';
 import { OrderSampleService } from './accession-sample.service';
 import { PrintLabelDto, PrintLabelsDto } from './dto/print-label.dto';
 import { ListSamplesDto } from './dto/list-samples.dto';
+import { ListSampleOptionsDto } from './dto/list-sample-options.dto';
 import { SampleNoteDto } from './dto/sample-note.dto';
 import { CollectSampleDto } from './dto/collect-sample.dto';
 import { AcceptSampleDto } from './dto/accept-sample.dto';
@@ -28,6 +29,10 @@ import { ReturnSampleDto } from './dto/return-sample.dto';
 import { RetrieveSampleDto } from './dto/retrieve-sample.dto';
 import { AssignBarcodeDto } from './dto/assign-barcode.dto';
 import { ShareSampleDto } from './dto/share-sample.dto';
+import {
+  BulkMarkReturnedVerifiedDto,
+  BulkSetRecoverableDto,
+} from './dto/bulk-discard-return-flags.dto';
 import {
   BulkAcceptDto,
   BulkAssignBarcodeDto,
@@ -110,6 +115,20 @@ export class AccessionController {
   }
 
   /**
+   * The choices of the Sample Name / Sample Type filter (`?field=name|type`): the
+   * distinct values this branch's samples hold, spelling variants merged, with the
+   * "Not set" count. Searchable + paginated. Declared before `:id`.
+   */
+  @Get('sample-options')
+  sampleOptions(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Query() query: ListSampleOptionsDto,
+  ) {
+    return this.sampleService.sampleOptions(tenantId, profile.branchId, query);
+  }
+
+  /**
    * Grouped in-house list — records grouped + paginated by group (10/page) per
    * the tenant's Grouping Settings (Sample/Order/Department/Department+Sample).
    * Declared before `:id` so `grouped` is never captured as an id.
@@ -143,6 +162,26 @@ export class AccessionController {
     @Param('orderId') orderId: string,
   ) {
     return this.sampleService.findOrderGrouped(tenantId, orderId);
+  }
+
+  /**
+   * The read-only Order Overview of the In-House list: every test of the order this branch's list
+   * shows, with each test's report status and where a sent sample is now. Declared before `:id`
+   * (3 segments - never captured as an id).
+   */
+  @Get('order/:orderId/overview')
+  findOrderOverview(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @CurrentUser('person_id') personId: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.sampleService.findOrderOverview(
+      tenantId,
+      profile.branchId,
+      personId,
+      orderId,
+    );
   }
 
   // ── Print Label (in-house/referral/external-referral orders) — declared
@@ -181,13 +220,15 @@ export class AccessionController {
     @Body() dto: PrintLabelsDto,
     @Res() res: Response,
   ): Promise<void> {
-    const pdf = await this.sampleService.printLabels(
+    const { pdf, skipped } = await this.sampleService.printLabels(
       dto.ids,
       tenantId,
       profile.branchId,
       dto.templateId,
     );
     res.setHeader('Content-Type', 'application/pdf');
+    // How many selected samples had no barcode and were left out (a tube waiting to be collected again).
+    res.setHeader('X-Labels-Skipped', String(skipped));
     res.setHeader('Content-Disposition', 'inline; filename="labels.pdf"');
     res.setHeader('Content-Length', pdf.length);
     res.end(pdf);
@@ -326,6 +367,41 @@ export class AccessionController {
     @Body() dto: BulkDiscardDto,
   ) {
     return this.sampleService.discard(dto.ids, tenantId, personId, dto);
+  }
+
+  /**
+   * Set the "recoverable" flag of Discarded samples (Sample Search popup). Retrieve out of
+   * Discarded needs it. Same permission as Discard.
+   */
+  @Post('bulk/set-recoverable')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_DISCARD)
+  @Audit(auditUpdate('Set the recoverable flag of discarded samples'))
+  bulkSetRecoverable(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkSetRecoverableDto,
+  ) {
+    return this.sampleService.setRecoverable(dto.ids, tenantId, personId, dto);
+  }
+
+  /**
+   * Confirm that Returned samples are physically back and verified (Sample Search popup).
+   * Retrieve out of Returned needs it. Same permission as Return.
+   */
+  @Post('bulk/mark-returned-verified')
+  @RequirePermission(PERMISSION_KEYS.ACC_IH_RETURN)
+  @Audit(auditUpdate('Marked returned samples as verified'))
+  bulkMarkReturnedVerified(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('person_id') personId: string,
+    @Body() dto: BulkMarkReturnedVerifiedDto,
+  ) {
+    return this.sampleService.markReturnedVerified(
+      dto.ids,
+      tenantId,
+      personId,
+      dto,
+    );
   }
 
   /** Bulk Return. */

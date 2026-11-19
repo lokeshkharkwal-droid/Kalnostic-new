@@ -16,12 +16,41 @@ params:query {
   direction: incoming
   ~kind: INTERNAL
   ~status: IN_TRANSIT
-  ~search: ACC-00001
+  ~search: ORD-00717
   ~dateFrom: 2026-07-01
   ~dateTo: 2026-07-31
   ~referredByDoctorId: {{referralDoctorId}}
   ~referralPanelId: {{referralPanelId}}
   ~logisticsType: Courier
+  ~logisticsPerson: ravi
+  ~sampleForm: whole
+  ~orderDateFrom: 2026-07-01
+  ~orderDateTo: 2026-07-31
+  ~originBranchId: {{branchId}}
+  ~destinationBranchId: {{branchId}}
+  ~externalPartnerName: apollo
+  ~outsourceCenterId: {{outsourceCenterId}}
+  ~orderBranchId: {{branchId}}
+  ~orderType: WALK_IN
+  ~createdByUserId: {{userPersonId}}
+  ~reportStatus: SAVED
+  ~orderStatus: PARTIALLY_COMPLETED
+  ~collectionStatus: COLLECTED
+  ~departmentId: {{departmentId}}
+  ~branchLabTestId: {{branchLabTestId}}
+  ~branchLabPanelId: {{branchLabPanelId}}
+  ~categoryId: {{categoryId}}
+  ~subCategoryId: {{subCategoryId}}
+  ~sampleNames: Serum-Plain
+  ~sampleNameNotSet: false
+  ~sampleTypes: Serum
+  ~sampleTypeNotSet: false
+  ~containerTypes: URINE_CONTAINER
+  ~isUrgent: true
+  ~isHomeVisit: true
+  ~isOutsource: true
+  ~sortBy: sendDate
+  ~sortOrder: desc
 }
 
 auth:bearer {
@@ -61,13 +90,46 @@ docs {
   The referral/transfer queues (Internal Part B / External Part C). `direction`
   = `incoming` (default — transfers destined for this branch, the receiving queue)
   or `outgoing` (sent from this branch). `kind` = `INTERNAL` | `EXTERNAL` |
-  `OUTSOURCE`; `status` is the §B.5 tab; `search` matches the linked sample's
-  accession number. Captures `transferId`.
+  `OUTSOURCE`; `status` is the §B.5 tab; `search` matches the linked sample's barcode, its
+  order id (e.g. `ORD-00717`) and the patient's name / UHID / mobile (the accession number is NOT
+  searched). Captures `transferId`.
+
+  ## Sorting
+
+  `sortBy` + `sortOrder` (`asc` default | `desc`) sort the WHOLE matching list before paging; changing the
+  sort should send the user back to page 1. Without `sortBy` the list is newest first. The id is always the
+  final tie-breaker, so paging never repeats or skips a row; rows with no value in the column are always last.
+  Allowed `sortBy`: `orderCode`, `orderDate`, `barcode`, `patientName` (first, then last name), `sendDate`
+  (date, then time), `transferStatus` (lifecycle order: In Transit, Picked Up, Received, Accepted, Repeat,
+  Rejected), `outsourceStatus`, `externalPartnerName`, `logisticsType`, `logisticsPerson`, `sampleForm`, and the
+  name-based `department`, `originBranch`, `destinationBranch`, `outsourceCenter` (the NAME is resolved and sorted
+  alphabetically ignoring capitals; department sorts by the text the column shows). Anything else is a 400.
+  Test Name is not sortable yet (waits for the one-row-per-barcode decision).
+
+  ## Filters (toggle the `~` to enable a query param)
+
+  **About the transfer itself** (each is a condition on the transfer row):
+  - `dateFrom` / `dateTo` — the Send / Forward / Outsource date range (the transfer's own `sendDate`; a day-only `dateTo` covers that whole day).
+  - `logisticsType` (exact), `logisticsPerson` and `sampleForm` (part of the text typed at Send / Forward / Outsource, case-insensitive).
+  - `originBranchId` — "Sent From"; `destinationBranchId` — "Sent To".
+  - `externalPartnerName` — "Forwarded To": part of the partner name, case-insensitive.
+  - `outsourceCenterId` — outsourced to this center.
+
+  **About the linked sample / order** (the SAME filters and rules as request 01, see there):
+  `orderDateFrom` / `orderDateTo` (Order Creation Date, a plain inclusive day range on the order),
+  `orderBranchId` (the branch where the order was created - the Outsourced screen's "Branch"),
+  `orderType`, `createdByUserId` (Billed by), `reportStatus` (one test's report, nine statuses),
+  `orderStatus` (the order's overall progress), `collectionStatus`, `departmentId` / `branchLabTestId` / `branchLabPanelId`, `categoryId` / `subCategoryId`,
+  `sampleNames` / `sampleTypes` (+ `...NotSet`), `containerTypes`, `isUrgent`, `isHomeVisit`, `isOutsource` (only samples that are Outsourced now - the same checkbox as In-House),
+  `referredByDoctorId`, `referralPanelId`.
+  `reportStatus` / `orderStatus` / category read the reports, orders and tests of the samples that have a
+  transfer in THIS queue (direction + kind), whichever branch holds them now.
 
   Each row's `sample` carries `departmentLabel` (the Department column): the
   distinct department names of its non-deleted tests (resolved via
   `orderItem.branchLabTest` / `branchLabPanel` `departmentId`), joined with
-  ", " — `null` when none resolve. `sample.tests` excludes soft-deleted tests,
+  ", " — `null` when none resolve. The same names also come as a list,
+  `departmentNames` (empty when none resolve), so a client never splits the text: a department name may contain a comma. `sample.tests` excludes soft-deleted tests,
   and `sample.order` includes `orderDate`, `orderTime` and `createdAt`.
 
   Each row also carries `outsourceCenterName` — the OUTSOURCE destination's

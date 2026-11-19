@@ -13,7 +13,9 @@ import {
   SampleStatus,
   TatBand,
 } from '@prisma/client';
+import { ageFromDob } from '../../../common/utils/patient-label.util';
 import type { NoteSectionKey } from '../utils/note-sections.util';
+import type { NoteCounts } from '../../../common/utils/lab-report-note.util';
 
 /**
  * Compact Analytical-TAT figure attached to each worklist row (SRS §6.2/§8).
@@ -252,6 +254,28 @@ export const AGE_TYPE_SUFFIX: Record<AgeType, string> = {
   DAYS: 'd',
 };
 
+/**
+ * The age fields of a Technician row's patient. The stored age (and its unit) always wins, exactly as
+ * before. Only a patient with NO stored age but a date of birth - which the patient API allows - used to
+ * show a blank age here; that age is now worked out from the date of birth (the same way the print
+ * documents and the Accession list do), so the row, the Order Overview and Test Entry all show it.
+ */
+export function patientAgeFields(patient: {
+  age: number | null;
+  ageType: AgeType | null;
+  dateOfBirth: Date | null;
+}): { age: number | null; ageType: AgeType | null; ageDisplay: string | null } {
+  const derived = patient.age == null ? ageFromDob(patient.dateOfBirth) : null;
+  const age = patient.age ?? derived?.age ?? null;
+  const ageType = derived ? derived.ageType : patient.ageType;
+  return {
+    age,
+    ageType,
+    ageDisplay:
+      age != null ? `${age}${AGE_TYPE_SUFFIX[ageType ?? 'YEARS']}` : null,
+  };
+}
+
 /** The flat shape the Reporting Worklist table renders — one row per `LabReport`,
  * mirroring the 11 columns of LABORATORY.docx §1.2 that are backend-resolvable
  * today. Built from `LabReportListRow`'s nested include tree by `toWorklistRow`
@@ -428,6 +452,11 @@ export interface LabReportWorklistRow {
     reason: string | null;
   } | null;
 
+  /** Set when the holder branch's sample is OUTSOURCED and the outside lab sent it back (its outsource transfer is closed
+   * as REPEAT / REJECTED): the report is reset and view-only until the sender confirms a Repeat or Retrieves the sample
+   * ("Outsourced – Repeated"). Set by `attachOutsourceSentBack`; false otherwise. */
+  outsourceSentBack?: boolean;
+
   /** Whether this test has been assigned to a multi-step process
    * (LABORATORY.docx §5.7 — Histopathology/Bone Marrow/Cytology/IHC, tracked
    * through Grossing→Sectioning→Staining→Reporting), and if so, which
@@ -440,6 +469,13 @@ export interface LabReportWorklistRow {
    * (e.g. Order Overview) without needing to open the report's own detail. */
   multiStepProcessType: MultiStepProcessType | null;
   multiStepStage: MultiStepStage | null;
+
+  /** Order / Sample / Tech note counts for this row's order (the notes icons
+   * beside the Report Status badge), counted exactly as `GET
+   * /lab-reports/:id/notes` lists them: every live report of the order in the
+   * branch holding this report. Set by `LabReportService.attachNoteCounts`
+   * (worklist list only); absent on the single-report detail. */
+  noteCounts?: NoteCounts;
 }
 
 /** One resolved candidate for the Approve modal's Signatory Authority
@@ -593,12 +629,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
             patient.middleName,
             patient.lastName,
           ]),
-          age: patient.age,
-          ageType: patient.ageType,
-          ageDisplay:
-            patient.age != null
-              ? `${patient.age}${AGE_TYPE_SUFFIX[patient.ageType ?? 'YEARS']}`
-              : null,
+          ...patientAgeFields(patient),
           gender: patient.gender,
           umId: patient.umId,
           mobile: patient.mobile,
@@ -664,6 +695,7 @@ export function toWorklistRow(row: LabReportListRow): LabReportWorklistRow {
     sampleBranchIds: [],
     displayBranch: null,
     returnedByReceiver: null,
+    outsourceSentBack: false,
     tat: null,
 
     multiStepProcessType: null,
@@ -700,8 +732,10 @@ export const LAB_REPORT_ALLOWED_FROM = {
   approve: ['RESULT_DONE'],
   publish: ['APPROVED'],
   errorReported: ['APPROVED', 'PUBLISHED'],
-  // Re-Run is allowed from any status per the spec ("Any status" row) — no
-  // ALLOWED_FROM_STEPS gate is applied to it; see LabReportService.reRun.
+  // Re-Run (manager's rule, 2026-11): only once there is a result to redo that is not signed off —
+  // Result Done, or a result sent back (Result Rejected / Error Reported). From Validation Pending
+  // the technician rejects the result first; from Approved or Published reports an error first.
+  reRun: ['RESULT_DONE', 'RESULT_REJECTED', 'ERROR_REPORTED'],
 } as const satisfies Record<string, readonly LabReportStatus[]>;
 
 export type LabReportTransitionAction = keyof typeof LAB_REPORT_ALLOWED_FROM;

@@ -30,4 +30,10 @@ docs {
   the `branchId = null` row. Same validation as the branch PUT (min/max percent
   pairs, exclusive discount modes). Gated by `registration:settings` (Business
   Admin bypasses). Audited under `AuditModule.REGISTRATION_SETTINGS`.
+
+  Accepts every field of "03 Save Registration Settings", including the two
+  Emergency Pricing toggles (`EmergencyPricing_ApplyEmergencyPricesInNonOperatingHours`,
+  `EmergencyPricing_OverrideEmergencyPrices`). Like every other field, the
+  business row is not read by order pricing today — orders use the active
+  branch's own row.
 }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { SecurityModule } from '../security/security.module';
+import { AuditModule } from '../audit/audit.module';
 import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { BranchModule } from '../branch/branch.module';
 import { LocationModule } from '../location/location.module';
@@ -9,6 +10,7 @@ import { TenantController } from './tenant.controller';
 import { TenantLocaleController } from './tenant-locale.controller';
 import { TenantAccessionSettingsController } from './tenant-accession-settings.controller';
 import { TenantService } from './tenant.service';
+import { TenantTimeZoneModule } from './tenant-timezone.module';
 import { ExchangeTenantIdService } from './exchange-tenant-id.service';
 
 /**
@@ -22,10 +24,12 @@ import { ExchangeTenantIdService } from './exchange-tenant-id.service';
   imports: [
     PrismaModule,
     SecurityModule,
+    AuditModule,
     AuthRoleModule,
     BranchModule,
     LocationModule,
     ExchangeModule,
+    TenantTimeZoneModule,
   ],
   controllers: [
     TenantController,
@@ -33,6 +37,6 @@ import { ExchangeTenantIdService } from './exchange-tenant-id.service';
     TenantAccessionSettingsController,
   ],
   providers: [TenantService, ExchangeTenantIdService],
-  exports: [TenantService, ExchangeTenantIdService],
+  exports: [TenantService, ExchangeTenantIdService, TenantTimeZoneModule],
 })
 export class TenantModule {}

@@ -5,7 +5,8 @@ import { ListSamplesDto } from './dto/list-samples.dto';
 /**
  * Accession → In-House Orders "Global Search": the same matching as Technician →
  * Reporting's search (patient name in any word order, order id, barcode, test name,
- * panel name, referral panel) plus the Accession-only keys (Accession No, UHID, Mobile).
+ * panel name, referral panel) plus the Accession-only keys (UHID, Mobile). The Accession
+ * No is deliberately NOT searched.
  * It is applied by the shared `buildSampleWhere`, so the summary (tabs + TAT cards) and
  * the list follow it identically — asserted here through `summary`.
  */
@@ -58,10 +59,11 @@ describe('OrderSampleService — Global Search', () => {
     }
   });
 
-  it('matches every Technician key and the Accession-only keys', async () => {
+  it('matches every Technician key and the Accession-only keys, but not the Accession No', async () => {
     const text = textOf(await whereFor({ search: 'abc' }));
+    // The Accession No is not a search key
+    expect(text).not.toContain('accessionNo');
     // Accession-only keys
-    expect(text).toContain('"accessionNo":{"contains":"abc"');
     expect(text).toContain('"umId":{"contains":"abc"');
     expect(text).toContain('"mobile":{"contains":"abc"');
     // shared with Technician Reporting

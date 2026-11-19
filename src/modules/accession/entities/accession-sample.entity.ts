@@ -1,6 +1,30 @@
 import { AccessionGroupingMode, Prisma, SampleStatus } from '@prisma/client';
 import { TatStatus } from '../constants/tat.constant';
 import type { CollectionProgress } from '../../../common/utils/collection-progress.util';
+import type { SampleNoteCounts } from '../../../common/utils/lab-report-note.util';
+
+/**
+ * The transfer columns a list row carries - for its latest transfer (`transfers[0]`) and, when a
+ * transfer filter is active, for the transfer that matched it (`matchedTransfer`).
+ */
+export const LIST_TRANSFER_SELECT = {
+  id: true,
+  kind: true,
+  transferStatus: true,
+  destinationBranchId: true,
+  outsourceCenterId: true,
+  // Where / when / how it went, for the list's "Send details" column (the same facts the
+  // Internal Referral / Outsource pages show for the other side).
+  externalPartnerName: true,
+  sendDate: true,
+  sendTime: true,
+  sampleForm: true,
+  logisticsType: true,
+  logisticsPerson: true,
+  createdAt: true,
+  rejectionReason: true,
+  repeatReason: true,
+} satisfies Prisma.SampleTransferSelect;
 
 /**
  * Lightweight relations included on every accession sample list row — mirrors the
@@ -18,24 +42,7 @@ export const SAMPLE_LIST_INCLUDE = {
     where: { deletedAt: null },
     orderBy: { createdAt: 'desc' },
     take: 1,
-    select: {
-      id: true,
-      kind: true,
-      transferStatus: true,
-      destinationBranchId: true,
-      outsourceCenterId: true,
-      // Where / when / how it went, for the list's "Send details" column (the same facts the
-      // Internal Referral / Outsource pages show for the other side).
-      externalPartnerName: true,
-      sendDate: true,
-      sendTime: true,
-      sampleForm: true,
-      logisticsType: true,
-      logisticsPerson: true,
-      createdAt: true,
-      rejectionReason: true,
-      repeatReason: true,
-    },
+    select: LIST_TRANSFER_SELECT,
   },
   order: {
     select: {
@@ -47,6 +54,9 @@ export const SAMPLE_LIST_INCLUDE = {
       // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
       status: true,
       billId: true,
+      // The grouping mode this order follows (NULL until it has samples): grouping uses
+      // it, not the tenant's current mode.
+      groupingMode: true,
       patient: true,
       referredByDoctor: true,
       referralPanel: true,
@@ -95,6 +105,9 @@ export const SAMPLE_INCLUDE = {
       // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
       status: true,
       billId: true,
+      // The grouping mode this order follows (NULL until it has samples): grouping uses
+      // it, not the tenant's current mode.
+      groupingMode: true,
       patient: true,
       referredByDoctor: true,
       referralPanel: true,
@@ -120,6 +133,14 @@ export type ListRowTransfer = OrderSampleListRowRaw['transfers'][number] & {
 /** An accession sample list row with its test links + order/patient context. */
 export type OrderSampleListRow = Omit<OrderSampleListRowRaw, 'transfers'> & {
   transfers: ListRowTransfer[];
+  /**
+   * Set only while a transfer filter (Sent To, Forwarded To, outsource center, send / forward /
+   * outsource date) is active: the latest transfer that MET the filter. It can be an older one -
+   * a sample sent to B on the 28th, rejected, and sent to C on the 30th is found by "B + 28th" and
+   * its `transfers[0]` is the one to C. The row's label, hint and Send details describe this
+   * transfer; the row's ACTIONS keep following `transfers[0]`, the one that is live now.
+   */
+  matchedTransfer?: ListRowTransfer | null;
   /**
    * The Discard Method picked when the sample was discarded (the Discarded tab's column).
    * Not a column on the sample: read from its latest `discard` history entry, only for a
@@ -184,6 +205,11 @@ export interface AccessionSummary {
 /** A list sample enriched with its resolved department name for grouped views. */
 export type GroupedSampleItem = OrderSampleListItem & {
   departmentName: string | null;
+  /**
+   * The sample's Sample / Tech note counts (the In-House Sample Status column's
+   * notes icons); only present with `includeNoteCounts=true`.
+   */
+  noteCounts?: SampleNoteCounts;
 };
 
 /**
@@ -200,7 +226,14 @@ export type GroupedSampleItem = OrderSampleListItem & {
  */
 export interface InHouseSampleGroup {
   groupKey: string;
+  /** The one barcode every member carries, else null (blank, or several values: see `barcodes`). */
   barcode: string | null;
+  /**
+   * Every distinct barcode value among the members (null = a member with no barcode yet). One entry when all agree. Two or
+   * more when part of the group was repeated: the repeated samples have no barcode until they are collected again, then
+   * carry a new one, while their group mates keep the old one.
+   */
+  barcodes: (string | null)[];
   department: { id: string | null; name: string } | null;
   sampleLabel: string | null;
   sampleIds: string[];
@@ -211,7 +244,8 @@ export interface InHouseSampleGroup {
  * One order of the grouped in-house list — the top-level grouping and the
  * group-aware pagination unit. `order` carries the header context (patient,
  * referral); `groups` are the final (barcode) groups within the order;
- * `groupingMode` echoes the tenant's current mode as a layout hint for the FE.
+ * `groupingMode` is the mode THIS order follows (`orders.grouping_mode`; the tenant's current
+ * mode only for an order with no mode yet), echoed as a layout hint for the FE.
  */
 export interface InHouseOrderGroup {
   orderId: string;

@@ -15,7 +15,7 @@ import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ReceiveInvoicePaymentDto } from './dto/receive-invoice-payment.dto';
 import { RevertInvoicePaymentDto } from './dto/revert-invoice-payment.dto';
 import { CancelInvoiceDto } from './dto/cancel-invoice.dto';
-import { ListInvoicesDto } from './dto/list-invoices.dto';
+import { ListInvoicesDto, type InvoiceSortKey } from './dto/list-invoices.dto';
 import { InvoiceSummaryQueryDto } from './dto/invoice-summary-query.dto';
 import {
   INVOICE_DETAIL_INCLUDE,
@@ -282,6 +282,58 @@ export class InvoiceService {
    * @param activeBranchId active branch (from the JWT profile)
    * @param query filters + pagination
    */
+  /**
+   * Build the Prisma `orderBy` for the invoice list from the whitelisted
+   * `sortBy`/`sortOrder` (see {@link INVOICE_SORT_KEYS}). Every key maps to a
+   * stored `Invoice` column (money is stored as whole-rupee integers, so amount
+   * sorts are exact); name/relation-free sorts add a stable `createdAt` tie-break.
+   * Defaults to newest-first (`createdAt desc`). All sorting happens in the DB.
+   */
+  private buildInvoiceOrderBy(
+    sortBy: InvoiceSortKey | undefined,
+    sortOrder: 'asc' | 'desc' | undefined,
+  ):
+    | Prisma.InvoiceOrderByWithRelationInput
+    | Prisma.InvoiceOrderByWithRelationInput[] {
+    const dir: Prisma.SortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+    switch (sortBy) {
+      case 'invoiceId':
+        return { invoiceNo: dir };
+      case 'dateTime':
+        return [{ invoiceDate: dir }, { createdAt: dir }];
+      case 'type':
+        return [{ partyType: dir }, { createdAt: 'desc' }];
+      case 'customerName':
+        return [{ partyName: dir }, { createdAt: 'desc' }];
+      case 'mobile':
+        return [{ partyMobile: dir }, { createdAt: 'desc' }];
+      case 'gross':
+        return [{ grossAmount: dir }, { createdAt: 'desc' }];
+      case 'tdsAmount':
+        return [{ tdsAmount: dir }, { createdAt: 'desc' }];
+      case 'netAmount':
+        return [{ netAmount: dir }, { createdAt: 'desc' }];
+      case 'paidInvoice':
+        return [{ paidInvoice: dir }, { createdAt: 'desc' }];
+      case 'paidTds':
+        return [{ paidTds: dir }, { createdAt: 'desc' }];
+      case 'outstandingInvoice':
+        return [{ outstandingInvoice: dir }, { createdAt: 'desc' }];
+      case 'outstandingTds':
+        return [{ outstandingTds: dir }, { createdAt: 'desc' }];
+      case 'invoiceDue':
+        return [{ invoiceDueDate: dir }, { createdAt: 'desc' }];
+      case 'tdsDue':
+        return [{ tdsDueDate: dir }, { createdAt: 'desc' }];
+      case 'status':
+        return [{ paymentStatus: dir }, { createdAt: 'desc' }];
+      case 'overdue':
+        return [{ dueStatus: dir }, { createdAt: 'desc' }];
+      default:
+        return { createdAt: 'desc' };
+    }
+  }
+
   async list(
     tenantId: string,
     activeBranchId: string | null,
@@ -298,7 +350,7 @@ export class InvoiceService {
         include: INVOICE_LIST_INCLUDE,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: this.buildInvoiceOrderBy(query.sortBy, query.sortOrder),
       }),
       this.prisma.invoice.count({ where }),
     ]);

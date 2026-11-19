@@ -55,6 +55,9 @@ describe('OrderService.create — idempotent submissions', () => {
     undefined as never, // patientService
     undefined as never, // userDepartmentScope
     undefined as never, // config
+    {
+      resolve: jest.fn().mockResolvedValue({ active: false }),
+    } as never, // emergencyPricingService
   );
 
   /** Private collaborators of create() that are not under test here. */
@@ -108,6 +111,7 @@ describe('OrderService.create — idempotent submissions', () => {
       'assertItems',
       'assertReferrals',
       'assertBillingRules',
+      'assertAgeRestrictions',
     ]) {
       spyOn(name).mockResolvedValue(undefined);
     }

@@ -23,7 +23,7 @@ export interface BulkSkippedItem {
   reason: string;
   /**
    * Machine-readable reason: the same error code the strict (non-skipping) call
-   * would answer with for this id, e.g. `SAMPLE_RETRIEVE_BLOCKED_RESULT_DONE`,
+   * would answer with for this id, e.g. `SAMPLE_RETRIEVE_BLOCKED_REPORT_STARTED`,
    * `SAMPLE_RETURN_BLOCKED`, `INVALID_SAMPLE_TRANSITION`. Lets a screen tell the
    * reasons apart without parsing `reason`. Optional: absent when unknown.
    */
