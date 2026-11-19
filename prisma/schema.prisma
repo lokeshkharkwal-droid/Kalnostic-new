@@ -6616,6 +6616,14 @@ model Order {
   // `@@unique([tenantId, idempotencyKey])`; NULL for orders created without a
   // key (Postgres treats NULLs as distinct, so those are never constrained).
   idempotencyKey  String?       @map("idempotency_key")
+  // The Accession grouping mode this order's samples follow (barcode groups, display
+  // groups, action scope). Decided ONCE, when the order first gets samples (taken from
+  // the tenant's mode under the tenant row lock), then never changed - a database rule
+  // (`orders_grouping_mode_immutable`) rejects any later change. NULL = not decided yet
+  // (a draft / quote / appointment with no samples): such an order follows the tenant's
+  // current mode until its first sample or barcode is made. A change of the tenant mode
+  // in Accession Settings therefore only affects orders that have no mode yet.
+  groupingMode    AccessionGroupingMode? @map("grouping_mode")
   status          OrderStatus   @default(DRAFT)
   orderDate       DateTime      @map("order_date") @db.Date
   orderType       OrderType     @map("order_type")

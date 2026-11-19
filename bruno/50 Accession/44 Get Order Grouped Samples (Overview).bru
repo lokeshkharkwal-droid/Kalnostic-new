@@ -35,8 +35,10 @@ tests {
 
 docs {
   Grouped accession samples for a **single order** — the same order-first
-  grouping `40 List Grouped Samples` produces (keyed on the tenant's current
-  grouping mode via `GET/PUT /tenant/accession-settings/grouping-mode`), but
+  grouping `40 List Grouped Samples` produces (keyed on the order's own grouping
+  mode, `orders.grouping_mode`; the tenant's mode from
+  `GET/PUT /tenant/accession-settings/grouping-mode` only for an order with no
+  mode yet), but
   scoped to ONE order id instead of a page of orders. Powers the Product Overview
   modal's grouped Test Details on `/registration/create`, so its groups /
   barcodes / action-scope mirror `/accession/inhouse-orders` exactly.
@@ -49,7 +51,7 @@ docs {
   A single `InHouseOrderGroup` (same shape as one element of `40`'s `data[]`):
 
   - `orderId` + `order` — the order id and its header context (patient, referral).
-  - `groupingMode` — the tenant's current mode (FE layout hint).
+  - `groupingMode` — the mode THIS order follows (FE layout hint).
   - `sampleIds[]` — all sample ids in the order.
   - `groups[]` — the final (barcode) groups within the order; each carries
     `groupKey`, `barcode` (or null → "No barcode"), `department`, `sampleLabel`,

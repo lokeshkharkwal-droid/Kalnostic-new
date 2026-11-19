@@ -1400,9 +1400,10 @@ export class SampleTransferService {
     // both queries — array-form bypasses the per-op RLS extension and returns
     // zero rows under enforced RLS (see PrismaService).
     const [data, total] = await this.prisma.withTenant(tenantId, async (tx) => {
-      // The tenant's live grouping mode — the SAME source the in-house grouped
-      // list reads — so the referral queue buckets transfers into identical
-      // Order → final-group groups (and re-grouping follows a mode change).
+      // The tenant's current grouping mode: only the fallback for an order that has no mode of
+      // its own yet. Each transfer is grouped by its order's mode (see `withGroupKeys`) - the SAME
+      // source the in-house grouped list reads - so the referral queue buckets transfers into
+      // identical Order → final-group groups.
       const tenant = await tx.tenant.findUnique({
         where: { id: tenantId },
         select: { groupingMode: true },
@@ -1881,17 +1882,23 @@ export class SampleTransferService {
    * {@link barcodeGroupKey} rule — the sample carries its own persisted
    * `departmentId` / `sampleGroupLabel`, so no extra query is needed.
    * @param rows the page of center-labelled transfers (incl. `itemRemoved`)
-   * @param mode the tenant's live grouping mode
+   * @param fallbackMode the tenant's current grouping mode, used only for an order that
+   *   has no mode of its own yet (NULL). Normally the mode comes from the transfer's order
+   *   (`sample.order.groupingMode`): a transferred copy belongs to the SAME order as its
+   *   source sample, so both branches group it exactly like the source order.
    */
   private withGroupKeys(
     rows: SampleTransferCenterRow[],
-    mode: AccessionGroupingMode,
+    fallbackMode: AccessionGroupingMode,
   ): SampleTransferListRow[] {
-    return rows.map((row) => ({
-      ...row,
-      groupingMode: mode,
-      groupKey: `${row.sample.orderId}::${barcodeGroupKey(row.sample, mode)}`,
-    }));
+    return rows.map((row) => {
+      const mode = row.sample.order?.groupingMode ?? fallbackMode;
+      return {
+        ...row,
+        groupingMode: mode,
+        groupKey: `${row.sample.orderId}::${barcodeGroupKey(row.sample, mode)}`,
+      };
+    });
   }
 
   /**
