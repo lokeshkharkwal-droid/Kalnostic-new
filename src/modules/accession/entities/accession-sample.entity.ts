@@ -54,6 +54,9 @@ export const SAMPLE_LIST_INCLUDE = {
       // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
       status: true,
       billId: true,
+      // The grouping mode this order follows (NULL until it has samples): grouping uses
+      // it, not the tenant's current mode.
+      groupingMode: true,
       patient: true,
       referredByDoctor: true,
       referralPanel: true,
@@ -102,6 +105,9 @@ export const SAMPLE_INCLUDE = {
       // CANCELLED here freezes the sample: the list shows an "Order cancelled" tag.
       status: true,
       billId: true,
+      // The grouping mode this order follows (NULL until it has samples): grouping uses
+      // it, not the tenant's current mode.
+      groupingMode: true,
       patient: true,
       referredByDoctor: true,
       referralPanel: true,
@@ -238,7 +244,8 @@ export interface InHouseSampleGroup {
  * One order of the grouped in-house list — the top-level grouping and the
  * group-aware pagination unit. `order` carries the header context (patient,
  * referral); `groups` are the final (barcode) groups within the order;
- * `groupingMode` echoes the tenant's current mode as a layout hint for the FE.
+ * `groupingMode` is the mode THIS order follows (`orders.grouping_mode`; the tenant's current
+ * mode only for an order with no mode yet), echoed as a layout hint for the FE.
  */
 export interface InHouseOrderGroup {
   orderId: string;

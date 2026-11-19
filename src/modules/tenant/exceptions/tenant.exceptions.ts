@@ -36,3 +36,18 @@ export class TenantCustomDomainTakenException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 409 - the tenant row is locked by another request (an order being created, another admin saving the
+ * grouping mode) for longer than the wait limit. Nothing was changed; the admin can simply save again.
+ */
+export class TenantGroupingModeBusyException extends KaltrosException {
+  constructor(tenantId: string) {
+    super(
+      'TENANT_GROUPING_MODE_BUSY',
+      'The grouping mode could not be saved right now because the system is busy. Nothing was changed. Please try again in a moment.',
+      { tenantId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}

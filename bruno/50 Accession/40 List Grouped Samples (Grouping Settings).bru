@@ -54,11 +54,13 @@ docs {
   Grouped, **order-paginated** in-house list (10 orders/page) — the same filters
   as `01 List Samples`, but **order-first**: the Order ID is ALWAYS the top-level
   grouping and the pagination unit; groups never cross order boundaries. Within
-  each order, samples are grouped into final groups by the tenant's **current
-  grouping mode** (computed live, not the frozen barcode), so the displayed
-  grouping, the shared barcode and the action scope always follow the live Group
-  Settings — even after the mode is changed. The in-house-orders page renders +
-  scopes actions from this response.
+  each order, samples are grouped into final groups by the **order's own grouping
+  mode** (`orders.grouping_mode`, decided when the order first got samples and never
+  changed), so the displayed grouping, the shared barcode and the action scope of an
+  order stay in step with its barcodes — even after the tenant changes its mode in
+  Group Settings (that only applies to orders created afterwards). An order with no
+  mode yet (no samples so far) uses the tenant's current mode. The in-house-orders
+  page renders + scopes actions from this response.
 
   Grouping mode (`GET/PUT /tenant/accession-settings/grouping-mode`,
   `AccessionGroupingMode`) determines the within-order groups:
@@ -79,7 +81,8 @@ docs {
   ## Each order (top-level) carries
 
   - `orderId` + `order` — the order id and its header context (patient, referral).
-  - `groupingMode` — the tenant's current mode (FE layout hint).
+  - `groupingMode` — the mode THIS order follows (FE layout hint; the tenant's
+    current mode only for an order with no mode yet).
   - `collectionStatus` — order-level collection progress (`PENDING` | `PARTIAL` |
     `COLLECTED`), powering the §A.6 "Collection Status" column.
   - `sampleIds[]` — all sample ids in the order.
@@ -87,10 +90,10 @@ docs {
 
   ## Each final group carries
 
-  - `groupKey` — `${orderId}::${modeKey}` (deterministic from the current mode).
+  - `groupKey` — `${orderId}::${modeKey}` (deterministic from the order's mode).
   - `barcode` — the group's shared barcode, or null when the members carry
-    differing/blank barcodes (e.g. cleared after a mode change → shows
-    "No barcode" until a fresh Assign Barcode).
+    differing/blank barcodes (e.g. not collected yet, or part of the group
+    repeated → shows "No barcode" until a fresh Assign Barcode).
   - `department: { id, name } | null` — the single distinct department, else null.
   - `sampleLabel: string | null` — the single distinct sample name, else null.
   - `samples[]` — the group's list rows (each with `tatStatus` + `departmentName`;
