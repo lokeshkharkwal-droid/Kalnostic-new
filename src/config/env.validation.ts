@@ -78,4 +78,10 @@ export const envValidationSchema = Joi.object({
   COMMUNICATION_WORKER_ENABLED: Joi.boolean().default(false),
   COMMUNICATION_WORKER_BATCH: Joi.number().integer().min(1).default(50),
   COMMUNICATION_MAX_RETRY: Joi.number().integer().min(0).default(3),
+  // Inventory service base URL (e.g. http://localhost:3100/api/v1). Optional:
+  // when unset, order-time inventory consumption is a graceful no-op so order
+  // creation never breaks in environments without the inventory app.
+  INVENTORY_API_BASE_URL: Joi.string().uri().allow('').optional(),
+  // Per-attempt HTTP timeout (ms) for inventory calls. Default 15s.
+  INVENTORY_API_TIMEOUT_MS: Joi.number().integer().min(1000).default(15000),
 });

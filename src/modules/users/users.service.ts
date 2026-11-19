@@ -2149,11 +2149,29 @@ export class UsersService {
       branchRoleMap,
       permGate,
     );
+
+    // Enablement-only modules (no fine-grained permission keys of their own —
+    // e.g. `inventory_app`) that the user can actually reach: assigned to them
+    // AND enabled for the branch. `permGate` already holds exactly that set
+    // (assigned modules ∩ branch-enabled). They mint no permission keys, so they
+    // never appear in `grouped.modules`; we surface them here as allowed groups
+    // with an empty `permissions` list so the frontend's module-visibility gate
+    // (branch-enabled ∩ moduleAllowed) treats them identically to a
+    // permission-bearing module — no client-side special-casing.
+    const enablementOnlyModules: PermissionModuleGroup[] = SYSTEM_MODULES.filter(
+      (m) => m.hasPermissions === false && permGate.has(m.key),
+    ).map((m) => ({
+      moduleKey: m.key,
+      moduleLabel: m.label,
+      moduleAllowed: true,
+      permissions: [],
+    }));
+
     return {
       role,
       branchModules,
       defaultModule: activeProfile?.defaultModuleId ?? null,
-      modules: grouped.modules,
+      modules: [...grouped.modules, ...enablementOnlyModules],
       allowed: grouped.allowed,
     };
   }
