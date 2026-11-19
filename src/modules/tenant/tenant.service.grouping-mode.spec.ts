@@ -75,11 +75,8 @@ function build(
         fn(tx),
       ),
   };
-  const service = Object.create(
-    TenantService.prototype,
-  ) as unknown as TenantService & Record<string, unknown>;
-  service['prisma'] = prisma;
-  service['auditService'] = auditService;
+  const service = Object.create(TenantService.prototype) as TenantService;
+  Object.assign(service, { prisma, auditService });
   return { service, tx, auditService, prisma, calls };
 }
 

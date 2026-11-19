@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
+import { validate, ValidationError } from 'class-validator';
 import { BulkSampleNoteDto } from './bulk-sample-action.dto';
 import { BulkTransferAcceptDto } from './bulk-transfer-action.dto';
 import { TransferDispatchDto } from './transfer-dispatch.dto';
@@ -37,7 +37,10 @@ describe('force / skipInvalid accept only a real boolean', () => {
   };
 
   // Each DTO declares its own flags: the bulk transfer DTO has `skipInvalid` only.
-  const cases: Array<[string, typeof bulkSample, string[]]> = [
+  type Run = (
+    extra: Record<string, unknown>,
+  ) => Promise<{ dto: object; errors: ValidationError[] }>;
+  const cases: Array<[string, Run, string[]]> = [
     ['bulk sample action', bulkSample, ['force', 'skipInvalid']],
     ['bulk transfer action', bulkTransfer, ['skipInvalid']],
     ['transfer dispatch', dispatch, ['force', 'skipInvalid']],
