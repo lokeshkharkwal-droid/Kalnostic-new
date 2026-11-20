@@ -58,13 +58,32 @@ export async function publicOrderQrCode(
   branchId: string | null | undefined,
   orderId: string,
 ): Promise<string> {
+  const url = publicOrderUrl(frontendUrl, tenantId, branchId, orderId);
+  return url ? qrCodeDataUri(url) : '';
+}
+
+/**
+ * The public, no-login patient-report page URL for an order —
+ * `{frontendUrl}/public/patient-report/{tenantId}/{branchId}/{orderId}`. Shared
+ * by the printed `{public_order_qr_code}` and the `{short_link}` /
+ * `{publish_report_url}` notification tags so both always point at the same
+ * page. Returns `''` when the frontend base URL or the branch id is unknown.
+ * @param frontendUrl the tenant-facing frontend base (`exchange.frontendUrl`)
+ * @param tenantId the order's tenant
+ * @param branchId the order's branch (public URLs are branch-scoped)
+ * @param orderId the order's id
+ */
+export function publicOrderUrl(
+  frontendUrl: string | null | undefined,
+  tenantId: string,
+  branchId: string | null | undefined,
+  orderId: string,
+): string {
   if (!frontendUrl || !branchId) {
     return '';
   }
   const base = frontendUrl.replace(/\/+$/, '');
-  return qrCodeDataUri(
-    `${base}/public/patient-report/${tenantId}/${branchId}/${orderId}`,
-  );
+  return `${base}/public/patient-report/${tenantId}/${branchId}/${orderId}`;
 }
 
 /**
