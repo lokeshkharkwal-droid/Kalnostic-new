@@ -446,12 +446,9 @@ export class ClinicalEventListener {
           verb: kind === 'error' ? 'sample_error' : 'sample_repeat',
           subject: `Sample ${kind} for order ${orderCode}`.trim(),
           context: { orderId: e.orderId },
-          // Addressed to the panel, but `{patient_name}` keeps naming the
-          // order's patient (as before).
-          variables: {
-            referring_panel_name: panel.name ?? '',
-            patient_name: patientName,
-          },
+          // Addressed to the panel: `{patient_name}` is the recipient (the
+          // panel); the order's patient is `{pfn}` and the panel name is
+          // `{referring_panel_name}` — all global tags resolved from the order.
           fallbackHtml: (name) =>
             `<p>Dear ${name},</p><p>For order <strong>${orderCode}</strong>${patientName ? ` (${patientName})` : ''}, ${label}. Please take the necessary action.</p>`,
         },

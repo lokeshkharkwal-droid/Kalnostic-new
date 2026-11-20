@@ -440,7 +440,7 @@ const SHARE_KINDS: Record<ShareKind, ShareKindConfig> = {
     dateIsAppointment: true,
     variables: (c) => ({
       order_code: c.orderCode ?? '',
-      appointment_code: c.appointmentCode ?? '',
+      // `{appointment_code}` is a global tag (resolved from the order).
       patient_name: c.patientName,
       patient: c.patientName,
     }),
@@ -3389,8 +3389,8 @@ export class OrderService {
   /**
    * Order + patient/panel contacts + IAM-target ids for any share, or throws if
    * the order isn't in the tenant. A dedicated lean select — the `whatsappNumber`,
-   * panel accounts-person contacts and appointment code the shares need aren't all
-   * on `ORDER_INCLUDE`.
+   * panel accounts-person contacts and appointment slot the shares need aren't
+   * all on `ORDER_INCLUDE`.
    */
   private async loadOrderForShareCtx(orderId: string, tenantId: string) {
     const order = await this.prisma.order.findFirst({
@@ -3420,7 +3420,6 @@ export class OrderService {
           },
         },
         internalReferral: { select: { id: true, employeeId: true } },
-        appointment: { select: { code: true } },
         appointmentAt: true,
       },
     });
@@ -3433,7 +3432,6 @@ export class OrderService {
       .trim();
     return {
       ...order,
-      appointmentCode: order.appointment?.code ?? null,
       patientName,
     };
   }

@@ -66,6 +66,8 @@ const fullOrder = {
     lastName: 'Singh',
     hospitalName: 'City Care Clinic',
   },
+  appointment: { code: 'APT-00045' },
+  referralPanel: { name: 'Sunrise Hospital' },
 };
 
 function build(opts: {
@@ -129,7 +131,7 @@ describe('NotificationTagsService.resolve', () => {
       NOTIFICATION_TAG_KEYS.length,
     );
     expect(NOTIFICATION_TAG_KEYS).not.toContain('pn');
-    expect(NOTIFICATION_TAG_KEYS).toHaveLength(33);
+    expect(NOTIFICATION_TAG_KEYS).toHaveLength(35);
   });
 
   it('resolves all tags for a home-visit order with phlebotomist, OPD doctor and referrer', async () => {
@@ -179,9 +181,11 @@ describe('NotificationTagsService.resolve', () => {
       // Appointment & collection
       date: '20/11/2026',
       time: '10:00 AM',
+      appointment_code: 'APT-00045',
       location: 'Flat 4, Sea View, Bandra',
       doctor_name: 'Meera Kapoor',
       doctor_business_name: 'City Care Clinic',
+      referring_panel_name: 'Sunrise Hospital',
       phlebotomist_name: 'Ravi Kumar',
       phlebo_detail: 'Ravi Kumar (9876500000)',
       // Staff
@@ -204,10 +208,14 @@ describe('NotificationTagsService.resolve', () => {
           phlebotomist: null,
         },
         opd: null,
+        appointment: null,
+        referralPanel: null,
       },
       patient: patientRow,
     });
     const out = await service.resolve({ tenantId: TENANT, orderId: ORDER });
+    expect(out.appointment_code).toBe(''); // walk-in: no appointment
+    expect(out.referring_panel_name).toBe(''); // walk-in: no B2B panel
     expect(out.doctor_name).toBe('Arun Singh');
     expect(out.doctor_business_name).toBe('City Care Clinic');
     expect(out.location).toBe('Andheri Branch, 12 Link Road, Mumbai');
@@ -245,6 +253,8 @@ describe('NotificationTagsService.resolve', () => {
       'condition_name',
       'updated_by',
       'location',
+      'appointment_code',
+      'referring_panel_name',
     ]) {
       expect(out[k]).toBe('');
     }

@@ -269,6 +269,8 @@ export class NotificationTagsService {
                   hospitalName: true,
                 },
               },
+              appointment: { select: { code: true } },
+              referralPanel: { select: { name: true } },
             },
           })
         : null;
@@ -377,6 +379,8 @@ export class NotificationTagsService {
     out.gross_amount = gross.toFixed(2);
     out.net_amount = net.toFixed(2);
     out.balance_amount = (net - paid).toFixed(2);
+    out.appointment_code = order.appointment?.code ?? '';
+    out.referring_panel_name = order.referralPanel?.name ?? '';
 
     // ── Doctor & phlebotomist ──
     const consultant = order.opd?.doctor;

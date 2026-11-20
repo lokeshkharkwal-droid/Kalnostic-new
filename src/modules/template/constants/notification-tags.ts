@@ -169,6 +169,12 @@ export const NOTIFICATION_TAGS_GROUPED: NotificationTagGroup[] = [
           'Time of the event, in the business time format — the appointment / sample-collection time on appointment messages.',
       },
       {
+        key: 'appointment_code',
+        label: 'Appointment ID',
+        description:
+          "The order's appointment ID (e.g. APT-00045); blank when the order has no appointment.",
+      },
+      {
         key: 'location',
         label: 'Location',
         description:
@@ -184,6 +190,12 @@ export const NOTIFICATION_TAGS_GROUPED: NotificationTagGroup[] = [
         key: 'doctor_business_name',
         label: 'Doctor hospital / clinic',
         description: "The referring doctor's hospital or clinic name.",
+      },
+      {
+        key: 'referring_panel_name',
+        label: 'Referring panel',
+        description:
+          "Name of the order's referring (B2B) panel; blank for walk-in orders.",
       },
       {
         key: 'phlebotomist_name',
