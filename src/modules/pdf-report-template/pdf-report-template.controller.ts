@@ -16,17 +16,25 @@ import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.con
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
 import { PdfReportTemplateService } from './pdf-report-template.service';
+import { PdfTemplateConfigService } from './pdf-template-config.service';
 import { CreatePdfReportTemplateDto } from './dto/create-pdf-report-template.dto';
 import { UpdatePdfReportTemplateDto } from './dto/update-pdf-report-template.dto';
 import { ListPdfReportTemplateQueryDto } from './dto/list-pdf-report-template-query.dto';
 import { GeneratePdfDto } from './dto/generate-pdf.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import {
   PDF_REPORT_TEMPLATE_TYPES,
   PDF_REPORT_TEMPLATE_TYPE_LABELS,
   PdfReportTemplateType,
+  isPdfReportTemplateType,
 } from './constants/pdf-report-template-types.constant';
+import {
+  InvalidPdfReportTemplateTypeException,
+  PdfReportTemplateNotFoundException,
+} from './exceptions/pdf-report-template.exceptions';
 
 /**
  * PDF report template endpoints (business-authenticated; tenant comes from the
@@ -37,7 +45,52 @@ import {
 @Controller('pdf-report-templates')
 @UseGuards(PermissionGuard)
 export class PdfReportTemplateController {
-  constructor(private readonly service: PdfReportTemplateService) {}
+  constructor(
+    private readonly service: PdfReportTemplateService,
+    private readonly configService: PdfTemplateConfigService,
+  ) {}
+
+  /**
+   * Render the template mapped to `:type` and stream the PDF back. Resolves the
+   * tenant's Configuration default for the type (honoring the active branch),
+   * falling back to the first active template of that type; 404 if none exists.
+   * Used by the separate inventory monorepo (`inventory_invoice` /
+   * `inventory_delivery`), which forwards the business JWT. Streams a raw PDF via
+   * a library-specific response (no envelope).
+   */
+  @Post('render-by-type/:type')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.OTHER,
+    description: 'Rendered a PDF from the template mapped to a type',
+  })
+  async renderByType(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('type') type: string,
+    @Body() dto: GeneratePdfDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!isPdfReportTemplateType(type)) {
+      throw new InvalidPdfReportTemplateTypeException(type);
+    }
+    const id =
+      (await this.configService.resolveConfiguredTemplateId(
+        tenantId,
+        profile.branchId,
+        type,
+      )) ?? (await this.service.findDefaultTemplateIdByType(tenantId, type));
+    if (!id) throw new PdfReportTemplateNotFoundException(type);
+
+    const pdf = await this.service.generatePdf(id, tenantId, dto);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${type}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
+  }
 
   /**
    * Create a PDF report template in the caller's tenant.
