@@ -9,8 +9,10 @@ import {
 } from './constants/pdf-template-config-slots.constant';
 import {
   InvalidPdfTemplateConfigSlotException,
+  NoPdfReportTemplateForTypeException,
   PdfTemplateConfigTypeMismatchException,
 } from './exceptions/pdf-report-template.exceptions';
+import { PdfReportTemplateType } from './constants/pdf-report-template-types.constant';
 
 /** Current slot → template map: `{ [slotKey]: templateId | null }`. */
 export type PdfTemplateConfigMap = Record<string, string | null>;
@@ -78,6 +80,45 @@ export class PdfTemplateConfigService {
       }
     }
     return null;
+  }
+
+  /**
+   * Resolve the template id to render for a document `type`: the Configuration
+   * default for the caller's scope (branch → tenant fallback) if set, otherwise
+   * the first active template of that type. Used by generic render-by-type flows
+   * (e.g. the inventory sales invoice) so a document can be rendered by type
+   * without the caller knowing a specific template id.
+   * @param tenantId tenant scope
+   * @param branchId active branch (preferred), or null for tenant-wide only
+   * @param type the document type / config slot key (a `PDF_REPORT_TEMPLATE_TYPES` key)
+   * @returns an active template id for that type
+   * @throws NoPdfReportTemplateForTypeException when neither a configured default
+   *   nor any active template of that type exists
+   */
+  async resolveTemplateIdForType(
+    tenantId: string,
+    branchId: string | null,
+    type: PdfReportTemplateType,
+  ): Promise<string> {
+    const configured = await this.resolveConfiguredTemplateId(
+      tenantId,
+      branchId,
+      type,
+    );
+    if (configured) {
+      return configured;
+    }
+    const firstActive = await this.templateService.findAllForTenant(
+      tenantId,
+      1,
+      1,
+      { type, status: 'ACTIVE' },
+    );
+    const template = firstActive.data[0];
+    if (!template) {
+      throw new NoPdfReportTemplateForTypeException(type);
+    }
+    return template.id;
   }
 
   /** True when `templateId` is an active, non-deleted template of the tenant. */

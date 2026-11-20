@@ -1,0 +1,33 @@
+meta {
+  name: 03 Load Test Adjustment
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/inventory/test-adjustment?orderId={{adjOrderId}}&labReportId={{adjLabReportId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a TEST-scope view", function () {
+    const d = res.getBody().data;
+    expect(d.scope).to.equal("TEST");
+    expect(d.products).to.be.an("array");
+  });
+}
+
+docs {
+  Test-level adjustment view for ONE of the order's lab tests (identified by the
+  lab report id): the products of that test's proforma, with planned /
+  previously-deducted / current-stock quantities. Combined-method products count
+  once for the test. The order's branch is resolved server-side.
+}

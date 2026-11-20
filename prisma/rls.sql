@@ -2233,3 +2233,15 @@ CREATE POLICY branch_list_sync_jobs_tenant_isolation ON branch_list_sync_jobs
 -- sync may run together; two of the same kind on one branch may not).
 CREATE UNIQUE INDEX IF NOT EXISTS branch_list_sync_jobs_one_running_per_branch_kind
   ON branch_list_sync_jobs (tenant_id, branch_id, kind) WHERE status = 'RUNNING';
+
+-- ── business_inventory_settings ───────────────────────────────────────────────
+-- Business Settings › Inventory Settings. Tenant-scoped + tenant-level: one row
+-- per tenant. Plain tenant isolation. (Named `business_inventory_settings`, not
+-- `inventory_settings`, because the inventory app shares this DB + public schema
+-- and already owns `inventory_settings`.)
+ALTER TABLE business_inventory_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_inventory_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_inventory_settings_tenant_isolation ON business_inventory_settings;
+CREATE POLICY business_inventory_settings_tenant_isolation ON business_inventory_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());

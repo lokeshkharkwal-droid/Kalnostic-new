@@ -1,0 +1,28 @@
+meta {
+  name: 79 Inventory Adjustment
+  seq: 79
+}
+
+docs {
+  # Inventory Adjustment (Technician Reporting)
+
+  Manual inventory adjustment from `/technician/reporting`. Kalnostics passes these
+  through to the inventory app's `/proforma-consumption/adjustment/*` endpoints,
+  forwarding the caller's JWT and resolving the order's branch + lab-test source ids
+  server-side (the client never supplies a branchId).
+
+  Two scopes, chosen by the tenant's `manualAdjustmentMode` (Inventory Settings):
+  - **Order Type** → one adjustment for the whole order (`order-adjustment`).
+  - **Test Type** → one adjustment per lab test (`test-adjustment`, keyed on the
+    lab report id).
+
+  Each load returns, per product: `plannedQty`, `previouslyDeductedQty`,
+  `currentStock`, `finalQtySuggestion`. Each save sets the final deducted quantity
+  per product and applies only the DIFFERENCE to stock (idempotent; re-saving the
+  same values is a no-op). When automatic reduction is OFF, the first save performs
+  the initial deduction. Insufficient stock → 409 `INSUFFICIENT_INVENTORY_STOCK`.
+
+  Set `{{adjOrderId}}` (an `Order.id`) and `{{adjLabReportId}}` (an order
+  item's lab report id) to try these. Requires the inventory app running and
+  `INVENTORY_API_BASE_URL` set; otherwise loads return an empty view.
+}

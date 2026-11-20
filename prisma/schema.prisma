@@ -313,6 +313,7 @@ enum AuditModule {
   REGISTRATION_SETTINGS
   TECHNICIAN_SETTINGS
   QR_CODE_SCAN_SETTINGS // Branch Settings: what a patient may open/print from a bill/report QR code
+  INVENTORY_SETTINGS // Business Settings: automatic inventory reduction + manual adjustment mode
   COMMUNICATION // Outbound messaging (Email/SMS/WhatsApp) + in-app notifications
   LAB_TEST_FIELD_PERMISSIONS
   OVERALL_RESULT_TEMPLATE
@@ -9153,6 +9154,44 @@ model QrCodeScanSetting {
   @@index([tenantId])
   @@index([branchId])
   @@map("qr_code_scan_settings")
+}
+
+/// How a technician may manually adjust inventory from Technician Reporting.
+/// ORDER_TYPE = one adjustment for the whole order; TEST_TYPE = one adjustment
+/// per individual lab test. Drives both which adjustment action the UI shows and
+/// the granularity at which auto-consumption records its deduction ledger.
+enum InventoryManualAdjustmentMode {
+  ORDER_TYPE
+  TEST_TYPE
+}
+
+/// Business Settings › Inventory Settings. Tenant-scoped, tenant-level (no
+/// branch — CLAUDE.md §4.6): one row per tenant, created on first read. Controls
+/// whether inventory is auto-deducted when an order is created and where manual
+/// inventory adjustment is offered in Technician Reporting.
+model InventorySetting {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+
+  /// When true, inventory is automatically deducted at order creation (the
+  /// existing proforma-consumption flow). When false, no automatic deduction
+  /// happens; stock is managed manually through Technician Reporting.
+  isAutomaticInventoryReductionEnabled Boolean @default(false) @map("is_automatic_inventory_reduction_enabled")
+
+  /// Where manual inventory adjustment is offered: once per order (ORDER_TYPE)
+  /// or once per lab test (TEST_TYPE).
+  manualAdjustmentMode InventoryManualAdjustmentMode @default(ORDER_TYPE) @map("manual_adjustment_mode")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // NOTE: table is `business_inventory_settings`, NOT `inventory_settings`. The
+  // inventory app shares this database + public schema and already owns its own
+  // `inventory_settings` table (currency/prefixes/etc.); this is the kalnostics
+  // business-level toggle and must not collide with it.
+  @@index([tenantId])
+  @@map("business_inventory_settings")
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

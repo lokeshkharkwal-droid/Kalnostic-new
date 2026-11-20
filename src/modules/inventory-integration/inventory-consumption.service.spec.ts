@@ -1,9 +1,25 @@
 import { InventoryConsumptionService } from './inventory-consumption.service';
 import type { PrismaService } from '../../prisma/prisma.service';
+import type { InventorySettingsService } from '../inventory-settings/inventory-settings.service';
 import type {
   InventoryConsumptionClient,
   InventoryValidateResult,
 } from './inventory-consumption.client';
+
+/** A fake Inventory Settings service (auto reduction on, order mode by default). */
+function makeSettings(
+  auto = true,
+  mode: 'ORDER_TYPE' | 'TEST_TYPE' = 'ORDER_TYPE',
+) {
+  return {
+    getForTenant: jest.fn(() =>
+      Promise.resolve({
+        isAutomaticInventoryReductionEnabled: auto,
+        manualAdjustmentMode: mode,
+      }),
+    ),
+  } as unknown as InventorySettingsService;
+}
 
 /** A fake inventory client with toggleable enablement + spyable calls. */
 function makeClient(enabled: boolean) {
@@ -25,9 +41,7 @@ function makeClient(enabled: boolean) {
       saleId: 'sale1',
     }),
   );
-  const info = jest.fn(() =>
-    Promise.resolve({ mapped: true, proformas: [] }),
-  );
+  const info = jest.fn(() => Promise.resolve({ mapped: true, proformas: [] }));
   return {
     client: {
       get isEnabled() {
@@ -57,7 +71,11 @@ function makePrisma(map: Record<string, string | null>) {
     },
     patient: {
       findFirst: jest.fn(() =>
-        Promise.resolve({ firstName: 'Jane', middleName: null, lastName: 'Doe' }),
+        Promise.resolve({
+          firstName: 'Jane',
+          middleName: null,
+          lastName: 'Doe',
+        }),
       ),
     },
   } as unknown as PrismaService;
@@ -67,10 +85,12 @@ describe('InventoryConsumptionService', () => {
   it('is a no-op when the integration is disabled', async () => {
     const { client, validate } = makeClient(false);
     const prisma = makePrisma({ blt1: 'lt1' });
-    const svc = new InventoryConsumptionService(prisma, client);
+    const svc = new InventoryConsumptionService(prisma, client, makeSettings());
 
     expect(svc.isEnabled).toBe(false);
-    const res = await svc.validateForOrder('t1', 'b1', [{ branchLabTestId: 'blt1' }]);
+    const res = await svc.validateForOrder('t1', 'b1', [
+      { branchLabTestId: 'blt1' },
+    ]);
     expect(res).toBeNull();
     expect(validate).not.toHaveBeenCalled();
   });
@@ -78,7 +98,7 @@ describe('InventoryConsumptionService', () => {
   it('resolves branch lab tests to source ids and validates', async () => {
     const { client, validate } = makeClient(true);
     const prisma = makePrisma({ blt1: 'lt1', blt2: 'lt2' });
-    const svc = new InventoryConsumptionService(prisma, client);
+    const svc = new InventoryConsumptionService(prisma, client, makeSettings());
 
     await svc.validateForOrder('t1', 'b1', [
       { branchLabTestId: 'blt1' },
@@ -93,9 +113,11 @@ describe('InventoryConsumptionService', () => {
   it('returns null (skips the call) when no item has a resolvable source id', async () => {
     const { client, validate } = makeClient(true);
     const prisma = makePrisma({ blt1: null }); // branch-only test, no master source
-    const svc = new InventoryConsumptionService(prisma, client);
+    const svc = new InventoryConsumptionService(prisma, client, makeSettings());
 
-    const res = await svc.validateForOrder('t1', 'b1', [{ branchLabTestId: 'blt1' }]);
+    const res = await svc.validateForOrder('t1', 'b1', [
+      { branchLabTestId: 'blt1' },
+    ]);
     expect(res).toBeNull();
     expect(validate).not.toHaveBeenCalled();
   });
@@ -103,7 +125,7 @@ describe('InventoryConsumptionService', () => {
   it('consumes for an order, forwarding order id/code + patient name', async () => {
     const { client, consume } = makeClient(true);
     const prisma = makePrisma({ blt1: 'lt1' });
-    const svc = new InventoryConsumptionService(prisma, client);
+    const svc = new InventoryConsumptionService(prisma, client, makeSettings());
 
     await svc.consumeForOrder('t1', 'b1', {
       id: 'order1',
@@ -127,7 +149,7 @@ describe('InventoryConsumptionService', () => {
   it('proformaInfo returns mapped=false when disabled or no branch', async () => {
     const { client } = makeClient(false);
     const prisma = makePrisma({ blt1: 'lt1' });
-    const svc = new InventoryConsumptionService(prisma, client);
+    const svc = new InventoryConsumptionService(prisma, client, makeSettings());
     const res = await svc.proformaInfo('t1', 'b1', 'blt1');
     expect(res).toEqual({ mapped: false, proformas: [] });
   });
