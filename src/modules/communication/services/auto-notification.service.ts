@@ -9,6 +9,10 @@ import { CommunicationService } from '../communication.service';
 import { NotificationService } from '../notification.service';
 import { TemplateService } from '../../template/template.service';
 import { NotificationEnablementService } from './notification-enablement.service';
+import {
+  NotificationTagContext,
+  NotificationTagsService,
+} from './notification-tags.service';
 
 /** A recipient's pre-resolved contact for an automatic notification. */
 export interface RecipientContact {
@@ -35,8 +39,20 @@ export interface AutoNotificationSpec {
   verb: string;
   /** Email subject / in-app subject. */
   subject: string;
-  /** `{placeholder}` → value map for template substitution (WITHOUT braces). */
+  /**
+   * Event-specific `{placeholder}` → value overrides (WITHOUT braces), applied
+   * on top of the GLOBAL tags resolved from {@link context}.
+   */
   variables?: Record<string, string>;
+  /**
+   * What the notification is about — the GLOBAL tag catalogue (order, patient,
+   * doctor, amounts, links…) is resolved from it, so every tag works in this
+   * feature's templates. `at` = the moment `{date}`/`{time}` describe.
+   */
+  context?: Pick<
+    NotificationTagContext,
+    'orderId' | 'patientId' | 'actorId' | 'at'
+  >;
   /**
    * Body used for the in-app alert and for Email when no `Template` is
    * configured for that channel — so notifications keep working before any
@@ -87,6 +103,7 @@ export class AutoNotificationService {
     private readonly notifications: NotificationService,
     private readonly templates: TemplateService,
     private readonly enablement: NotificationEnablementService,
+    private readonly tags: NotificationTagsService,
   ) {}
 
   /**
@@ -142,8 +159,21 @@ export class AutoNotificationService {
   ): Promise<void> {
     try {
       const name = recipient.name || 'there';
+      // Global tags (resolved once, shared by the IAM + every channel), then the
+      // recipient name, then the event's own overrides.
+      const isPatient = recipient.recipientType === RecipientType.PATIENT;
+      const globals = await this.tags.resolve({
+        tenantId,
+        branchId,
+        ...(spec.context ?? {}),
+        patientId:
+          spec.context?.patientId ??
+          (isPatient ? (recipient.recipientId ?? null) : null),
+        recipientName: name,
+        recipientEmail: recipient.email ?? null,
+      });
       const variables: Record<string, string> = {
-        pn: name,
+        ...globals,
         patient_name: name,
         ...(spec.variables ?? {}),
       };
@@ -293,6 +323,7 @@ export class AutoNotificationService {
             variables,
           },
           'system',
+          { resolved: variables },
         );
       } else if (emailFallbackBody !== null) {
         await this.communication.enqueue(
@@ -306,6 +337,7 @@ export class AutoNotificationService {
             recipients,
           },
           'system',
+          { resolved: variables },
         );
       }
       // else: no template for SMS/WhatsApp → skip silently.

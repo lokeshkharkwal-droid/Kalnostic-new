@@ -48,6 +48,7 @@ import { CommunicationRecipientNotAllowedException } from '../referral-credit/re
 import {
   ShareService,
   type ShareRecipient,
+  type ShareTagContext,
 } from '../communication/services/share.service';
 import {
   ShareOrderReportDto,
@@ -6519,16 +6520,10 @@ export class LabReportService {
       .filter(Boolean)
       .join(' ')
       .trim();
-    // Business name + timezone drive the share template's {web_title}/{user_name}
-    // and {date}/{time} variables. Tenant is platform-level (no RLS scope).
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { name: true, settings: true },
-    });
-    const settings = (tenant?.settings as { timezone?: string } | null) ?? null;
-    const businessName = tenant?.name ?? '';
-    const timezone = settings?.timezone ?? null;
-    return { order, patient, patientName, businessName, timezone };
+    // Template tags ({pfn}/{order_number}/{user_name}/{date}/{time}/
+    // {web_title}…) are the GLOBAL catalogue, resolved by ShareService from the
+    // order (`shareTagContext`).
+    return { order, patient, patientName };
   }
 
   /**
@@ -6572,52 +6567,16 @@ export class LabReportService {
   }
 
   /**
-   * Template `{variables}` shared across a lab-report share's channels. Includes
-   * the approved WhatsApp `send_report_as_attachment` variables
-   * (`pfn`/`order_number`/`user_name`/`date`/`time`/`web_title`) — whose order in
-   * the template body drives the positional `template_params` — alongside the
-   * legacy `pn`/`patient_name`/`order_code` aliases used by other channel bodies.
+   * What a lab-report share is about — the order. Every template tag
+   * (`pfn`/`order_number`/`user_name`/`date`/`time`/`web_title`, …) is resolved
+   * from it by the GLOBAL tag catalogue (`NotificationTagsService`), so the
+   * WhatsApp `send_report_as_attachment` params and the Email/SMS/IAM bodies all
+   * read the same values as every other notification.
    */
-  private shareVariables(
+  private shareTagContext(
     ctx: Awaited<ReturnType<LabReportService['loadOrderForShare']>>,
-  ): Record<string, string> {
-    const { order, patientName, businessName, timezone } = ctx;
-    const orderCode = order.orderCode ?? '';
-    const now = new Date();
-    const business = businessName || 'Lab';
-    return {
-      // WhatsApp `send_report_as_attachment` variables (order mirrors the body).
-      pfn: patientName || 'Patient',
-      order_number: orderCode,
-      user_name: business,
-      date: this.formatDate(now, timezone),
-      time: this.formatTime(now, timezone),
-      web_title: business,
-      // Legacy aliases used by Email/SMS/IAM template bodies.
-      pn: patientName,
-      patient_name: patientName,
-      order_code: orderCode,
-    };
-  }
-
-  /** Format a date as `DD Mon YYYY` in the business timezone (UTC if null). */
-  private formatDate(d: Date, timezone: string | null): string {
-    return new Intl.DateTimeFormat('en-GB', {
-      timeZone: timezone ?? undefined,
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    }).format(d);
-  }
-
-  /** Format a time as `hh:mm AM/PM` in the business timezone (UTC if null). */
-  private formatTime(d: Date, timezone: string | null): string {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone ?? undefined,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }).format(d);
+  ): ShareTagContext {
+    return { orderId: ctx.order.id };
   }
 
   /**
@@ -6644,8 +6603,9 @@ export class LabReportService {
       toAddressOverride,
       actorId,
       getPdf,
-      this.shareVariables(ctx),
+      {},
       `lab-report-${ctx.order.orderCode ?? ctx.order.id}.pdf`,
+      this.shareTagContext(ctx),
     );
   }
 
@@ -6673,12 +6633,13 @@ export class LabReportService {
       LabReportService.SHARE_FEATURE,
       recipientIds.map((id) => ({ entityId: id, entityType: 'STAFF' })),
       actorId,
-      this.shareVariables(ctx),
+      {},
       {
         verb: 'lab_report_shared',
         subject: 'Lab report shared',
         actorEntityType: 'STAFF',
       },
+      this.shareTagContext(ctx),
     );
   }
 
