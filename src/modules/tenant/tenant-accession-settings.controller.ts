@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
-import { AuditAction, AuditModule } from '@prisma/client';
+import { Body, Controller, Get, Put, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { TenantService } from './tenant.service';
 import { UpdateGroupingModeDto } from './dto/update-grouping-mode.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
-import { Audit } from '../../common/decorators/audit.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/types/jwt-payload.type';
+import { extractClientIp } from '../../common/utils/client-ip.util';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
 import { RequirePermission } from '../permissions/decorators/require-permission.decorator';
 import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.constant';
@@ -33,21 +35,30 @@ export class TenantAccessionSettingsController {
   }
 
   /**
-   * Change the caller tenant's Group Settings grouping mode. Requires the
-   * "Update accession settings" permission. Not retroactive — see
-   * `TenantService.updateGroupingMode`.
+   * Change the grouping mode NEW orders take. Requires the "Update accession
+   * settings" permission. Existing orders keep their own mode and no barcode is
+   * touched - see `TenantService.updateGroupingMode`. The audit row (old and new
+   * mode) is written by the service in the same transaction, so this route has no
+   * `@Audit` decorator (it would add a second, after-the-fact row and one for a
+   * save that changed nothing).
    */
   @Put('grouping-mode')
   @RequirePermission(PERMISSION_KEYS.ACC_SETTINGS_UPDATE)
-  @Audit({
-    module: AuditModule.TENANT,
-    action: AuditAction.UPDATE,
-    description: 'Updated the Accession Group Settings grouping mode',
-  })
   updateGroupingMode(
     @CurrentTenant() tenantId: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
     @Body() dto: UpdateGroupingModeDto,
   ) {
-    return this.tenantService.updateGroupingMode(tenantId, dto.groupingMode);
+    const roleLabel =
+      user.profiles?.find((p) => p.profile_key === user.active_profile_key)
+        ?.profile_label ?? null;
+    return this.tenantService.updateGroupingMode(tenantId, dto.groupingMode, {
+      personId: user.person_id,
+      branchId: user.active_branch_id ?? null,
+      roleKey: user.active_profile_key ?? null,
+      roleLabel,
+      ipAddress: extractClientIp(req),
+    });
   }
 }

@@ -52,13 +52,26 @@ function build(all: Row[], collecting: string[]) {
         ),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    // Each order carries its own grouping mode (decided when it first got samples); here it is already set,
+    // so the tenant row is never touched.
+    order: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 'o1',
+          groupingMode: AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME,
+        },
+      ]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({
+      update: jest.fn().mockResolvedValue({
         groupingMode: AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME,
       }),
     },
     // The tenant's sample counter row: locked before the sibling lookup (see the concurrency test below).
-    tenantBarcodeCounter: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    tenantBarcodeCounter: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     orderSampleStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
   let n = 20000;
@@ -90,7 +103,10 @@ function build(all: Row[], collecting: string[]) {
       tx.orderSample.updateMany.mock.calls as [
         { where: { id: { in: string[] } }; data: { barcode: string } },
       ][]
-    ).map((c) => ({ ids: [...c[0].where.id.in].sort(), barcode: c[0].data.barcode }));
+    ).map((c) => ({
+      ids: [...c[0].where.id.in].sort(),
+      barcode: c[0].data.barcode,
+    }));
   return { tx, barcodeService, run, writes };
 }
 
@@ -221,9 +237,7 @@ describe('Retrieve out of Repeat puts the old barcode back', () => {
     };
     const service = Object.create(OrderSampleService.prototype) as {
       barcodeService: unknown;
-      restoreBarcodeAfterRepeatUndoInTx: (
-        ...a: unknown[]
-      ) => Promise<unknown>;
+      restoreBarcodeAfterRepeatUndoInTx: (...a: unknown[]) => Promise<unknown>;
     };
     service.barcodeService = barcodeService;
     (service as unknown as { logger: unknown }).logger = { warn: jest.fn() };
@@ -292,7 +306,10 @@ describe('Retrieve out of Repeat puts the old barcode back', () => {
   });
 
   it('the number is now used by a sample of ANOTHER order and the sample still holds a barcode: it keeps it, the audit line says why', async () => {
-    const { tx, out, lines } = await run(REMOVED, { clash: true, current: '10846' });
+    const { tx, out, lines } = await run(REMOVED, {
+      clash: true,
+      current: '10846',
+    });
     expect(out).toBeNull();
     expect(tx.orderSample.update).not.toHaveBeenCalled();
     expect(lines).toEqual([
@@ -305,12 +322,27 @@ describe('Retrieve out of Repeat puts the old barcode back', () => {
   });
 
   it('the number is used by ANOTHER order and the sample holds none (the usual case right after a Repeat): it is given a NEW barcode and the line says so', async () => {
-    const { tx, out, lines, barcodeService } = await run(REMOVED, { clash: true });
-    expect(barcodeService.allocateNumberInTx).toHaveBeenCalledWith(tx, 't1', 'b1');
-    expect(out).toEqual({ barcode: '10500', orderIdBarcode: 'https://img/10001', repeatBatchId: null });
+    const { tx, out, lines, barcodeService } = await run(REMOVED, {
+      clash: true,
+    });
+    expect(barcodeService.allocateNumberInTx).toHaveBeenCalledWith(
+      tx,
+      't1',
+      'b1',
+    );
+    expect(out).toEqual({
+      barcode: '10500',
+      orderIdBarcode: 'https://img/10001',
+      repeatBatchId: null,
+    });
     expect(tx.orderSample.update).toHaveBeenCalledWith({
       where: { id: 's1' },
-      data: { barcode: '10500', orderIdBarcode: 'https://img/10001', repeatBatchId: null, updatedBy: 'p1' },
+      data: {
+        barcode: '10500',
+        orderIdBarcode: 'https://img/10001',
+        repeatBatchId: null,
+        updatedBy: 'p1',
+      },
     });
     expect(lines).toEqual([
       expect.objectContaining({
@@ -322,21 +354,28 @@ describe('Retrieve out of Repeat puts the old barcode back', () => {
   });
 
   it('the number is used by ANOTHER order and the sample has no branch (no counter): nothing is made, the line says why', async () => {
-    const { tx, out, barcodeService } = await run(REMOVED, { clash: true, branchId: null });
+    const { tx, out, barcodeService } = await run(REMOVED, {
+      clash: true,
+      branchId: null,
+    });
     expect(out).toBeNull();
     expect(barcodeService.allocateNumberInTx).not.toHaveBeenCalled();
     expect(tx.orderSample.update).not.toHaveBeenCalled();
   });
 
-  it('the history says WHICH Repeat is undone: that Repeat\'s barcode is restored, not the latest line (a sample repeated twice gets its barcodes back one by one)', async () => {
+  it("the history says WHICH Repeat is undone: that Repeat's barcode is restored, not the latest line (a sample repeated twice gets its barcodes back one by one)", async () => {
     // the latest "barcode removed" line names 10999 (the newer Repeat), but the Repeat being undone took 10001 off
-    const { tx, out } = await run(barcodeRemovedNote('10999'), { paired: { known: true, barcode: '10001' } });
+    const { tx, out } = await run(barcodeRemovedNote('10999'), {
+      paired: { known: true, barcode: '10001' },
+    });
     expect(out).toMatchObject({ barcode: '10001' });
     expect(tx.orderSampleStatusHistory.findFirst).not.toHaveBeenCalled();
   });
 
   it('the Repeat being undone took off NO barcode (history says so): nothing is restored, an older line is NOT used', async () => {
-    const { tx, out, lines } = await run(REMOVED, { paired: { known: true, barcode: null } });
+    const { tx, out, lines } = await run(REMOVED, {
+      paired: { known: true, barcode: null },
+    });
     expect(out).toBeNull();
     expect(tx.orderSample.update).not.toHaveBeenCalled();
     expect(lines).toEqual([]);
@@ -359,10 +398,19 @@ describe('Retrieve out of Repeat puts the old barcode back', () => {
 
   it('the file storage is down: the barcode STILL comes back (the picture is made when the label is printed), and the audit line says so', async () => {
     const { tx, out, lines } = await run(REMOVED, { storageDown: true });
-    expect(out).toEqual({ barcode: '10001', orderIdBarcode: null, repeatBatchId: null });
+    expect(out).toEqual({
+      barcode: '10001',
+      orderIdBarcode: null,
+      repeatBatchId: null,
+    });
     expect(tx.orderSample.update).toHaveBeenCalledWith({
       where: { id: 's1' },
-      data: { barcode: '10001', orderIdBarcode: null, repeatBatchId: null, updatedBy: 'p1' },
+      data: {
+        barcode: '10001',
+        orderIdBarcode: null,
+        repeatBatchId: null,
+        updatedBy: 'p1',
+      },
     });
     expect(lines[0]!.notes).toContain('image could not be made now');
   });

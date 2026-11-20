@@ -481,6 +481,14 @@ export class OrderSampleService {
       // `direct` free-text items resolve no LabTestSample and are skipped.
     }
 
+    // The order enters accession here: decide its grouping mode now (a no-op when it already
+    // has one, e.g. items added to an accessioned order) - the tenant's current mode, read under
+    // the tenant row lock, then fixed on the order for good. Done before the first sample so
+    // the auto-collect barcodes below and every later screen use the same mode.
+    if (units.some((u) => u.sample)) {
+      await this.resolveOrderGroupingModesInTx(tx, tenantId, [orderId]);
+    }
+
     // Sample-Flow-No samples are auto-collected + auto-accepted below; collect their
     // ids so their grouping-aware barcodes are assigned in one batch after the loop.
     const autoCollectedIds: string[] = [];
@@ -637,8 +645,62 @@ export class OrderSampleService {
   }
 
   /**
+   * The grouping mode each of the given orders follows. An order carries its own mode
+   * (`orders.grouping_mode`), decided once when it first gets samples and never changed (a
+   * database rule refuses a change), so changing the tenant's mode in Accession Settings
+   * never regroups an order whose barcodes are already out on tubes, in transfers or in the
+   * analyzer.
+   *
+   * An order with NO mode yet (it has no samples, or it predates the column and was missed by
+   * the backfill) is decided here: the tenant row is locked and its CURRENT mode is read in the
+   * same statement, then stored on the order with a conditional update (`WHERE grouping_mode IS
+   * NULL`) and re-read, so two transactions deciding the same order at the same moment end up
+   * with the one value that won, never two different ones. The tenant row lock is also what
+   * serialises this against a settings change: the reader sees either entirely the old mode or
+   * entirely the new one.
+   * @param tx active Prisma transaction client (already tenant-scoped)
+   * @param tenantId tenant scope
+   * @param orderIds the orders whose mode is needed
+   * @returns order id -> mode (an order that does not exist is simply absent)
+   */
+  private async resolveOrderGroupingModesInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    orderIds: string[],
+  ): Promise<Map<string, AccessionGroupingMode>> {
+    const modes = new Map<string, AccessionGroupingMode>();
+    const unique = [...new Set(orderIds)];
+    if (unique.length === 0) return modes;
+    const read = (ids: string[]) =>
+      tx.order.findMany({
+        where: { id: { in: ids }, tenantId },
+        select: { id: true, groupingMode: true },
+      });
+    const undecided: string[] = [];
+    for (const o of await read(unique)) {
+      if (o.groupingMode) modes.set(o.id, o.groupingMode);
+      else undecided.push(o.id);
+    }
+    if (undecided.length === 0) return modes;
+
+    const tenant = await tx.tenant.update({
+      where: { id: tenantId },
+      data: { updatedAt: new Date() },
+      select: { groupingMode: true },
+    });
+    await tx.order.updateMany({
+      where: { id: { in: undecided }, tenantId, groupingMode: null },
+      data: { groupingMode: tenant.groupingMode },
+    });
+    for (const o of await read(undecided)) {
+      modes.set(o.id, o.groupingMode ?? tenant.groupingMode);
+    }
+    return modes;
+  }
+
+  /**
    * Assign a proper sequential sample barcode to each just-collected sample that
-   * lacks one, bucketed by the tenant's live grouping mode — the collect-time
+   * lacks one, bucketed by each order's own grouping mode — the collect-time
    * counterpart of the former creation-time auto-assignment. Samples in the same
    * bucket (same {@link barcodeGroupKey}, scoped to one order) share one barcode:
    * an existing group barcode — from a sibling already collected in the same
@@ -680,6 +742,20 @@ export class OrderSampleService {
     });
     if (targets.length === 0) return;
 
+    // The grouping mode of each order, decided BEFORE the counter lock below. An order carries its own
+    // mode (never the tenant's live one), so a settings change can never regroup an order that already
+    // has barcodes. Only an order with no mode yet (see `resolveOrderGroupingModesInTx`) touches the
+    // tenant row here, which keeps the lock order tenant row -> barcode counter, the same as order
+    // creation, so the two can never wait on each other.
+    const orderIds = [...new Set(targets.map((t) => t.orderId))];
+    const modeByOrder = await this.resolveOrderGroupingModesInTx(
+      tx,
+      tenantId,
+      orderIds,
+    );
+    const modeOf = (orderId: string): AccessionGroupingMode =>
+      modeByOrder.get(orderId) ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
+
     // Queue concurrent collects of this tenant BEFORE the sibling lookup below. Without this, two
     // collects of tests of one barcode group that run at the same moment both find "no sibling has
     // a barcode yet" and each allocates its own, splitting the group over two barcodes. Taking the
@@ -693,13 +769,6 @@ export class OrderSampleService {
       data: { updatedAt: new Date() },
     });
 
-    const tenant = await tx.tenant.findUnique({
-      where: { id: tenantId },
-      select: { groupingMode: true },
-    });
-    const mode =
-      tenant?.groupingMode ?? AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME;
-
     // Who shares a barcode: the same order, the same group AND the same repeat batch. The batch
     // (`repeatBatchId`, set when a sample is sent back for a fresh collection) does not change the group
     // or its actions; it only keeps the repeated samples apart from the group mates that were not
@@ -711,11 +780,11 @@ export class OrderSampleService {
       sampleGroupLabel: string | null;
       id: string;
       repeatBatchId: string | null;
-    }) => `${s.orderId}::${barcodeGroupKey(s, mode)}::${s.repeatBatchId ?? ''}`;
+    }) =>
+      `${s.orderId}::${barcodeGroupKey(s, modeOf(s.orderId))}::${s.repeatBatchId ?? ''}`;
 
     // Existing group barcodes across the affected orders, so a sibling already
     // collected in the same order + group lends its barcode (partial collection).
-    const orderIds = [...new Set(targets.map((t) => t.orderId))];
     const barcoded = await tx.orderSample.findMany({
       where: {
         orderId: { in: orderIds },
@@ -1405,13 +1474,14 @@ export class OrderSampleService {
    * Grouped in-house list — the same filters as `findAll`, but **order-first**:
    * the Order ID is always the top-level grouping and the pagination unit (10
    * orders/page), never crossing order boundaries (Critical Rule #1). Within each
-   * order, samples are grouped into **final groups by the tenant's current
+   * order, samples are grouped into **final groups by the order's own
    * `groupingMode`** (via `barcodeGroupKey`) — Sample/Order/Department/
    * Department+Sample — so the displayed grouping, the shared barcode and the
-   * action scope always follow the live Group Settings, even after the mode is
-   * changed. Each final group carries the flat `sampleIds` its action button
+   * action scope of an order stay in step with its barcodes, even after the
+   * tenant changes its mode in Group Settings (that only applies to new orders).
+   * Each final group carries the flat `sampleIds` its action button
    * targets — a status change cascades to every sample in the group (Rule #3).
-   * The tenant's current `groupingMode` is echoed as a FE layout hint.
+   * The order's `groupingMode` is echoed as a FE layout hint.
    * Reuses `buildSampleWhere` + `deriveTatStatus`.
    * @param tenantId tenant scope (from JWT)
    * @param branchId active branch (from JWT profile)
@@ -1587,8 +1657,8 @@ export class OrderSampleService {
 
   /**
    * Grouped samples for a **single order** — the same order-first grouping the
-   * in-house list produces (via {@link buildOrderGroup} keyed on the tenant's
-   * current `groupingMode`), but scoped to one order id rather than a page of
+   * in-house list produces (via {@link buildOrderGroup} keyed on the order's own
+   * `groupingMode`), but scoped to one order id rather than a page of
    * orders. Powers the Product Overview modal's grouped Test Details, so its
    * groups/barcodes/action-scope match `/accession/inhouse-orders` exactly.
    * Scoped by tenant + order id only (no branch filter): the modal always
@@ -1751,26 +1821,30 @@ export class OrderSampleService {
   /**
    * Assemble a single order's {@link InHouseOrderGroup}: enrich each raw sample
    * row with its derived TAT band + department name, then bucket the order's
-   * samples into **final groups** by the tenant's LIVE grouping mode
+   * samples into **final groups** by the ORDER'S OWN grouping mode
    * (Sample-wise = per sample; Order-wise = the whole order; Department-wise =
    * per department; Dept+Sample = per department + sample name) — the very same
-   * `barcodeGroupKey` used at barcode-assignment time. Grouping keys off the
-   * current mode (not the frozen barcode), so the displayed grouping, the
-   * barcode grouping and the action scope always agree with the tenant's current
-   * Group Settings — even after the mode is changed, a sample is missing a
-   * barcode, or a barcode was edited. Shared by {@link findAllGrouped} (list)
+   * `barcodeGroupKey` used at barcode-assignment time. The order carries its mode
+   * (`orders.grouping_mode`, decided when it first got samples and never changed),
+   * so the displayed grouping, the barcode grouping and the action scope of an order
+   * stay in step with the barcodes it already has, even after the tenant changes
+   * its mode in Group Settings (that only applies to orders created afterwards). An
+   * order with no mode yet (NULL: no samples so far) falls back to `fallbackMode`,
+   * the tenant's current mode. Shared by {@link findAllGrouped} (list)
    * and {@link findOrderGrouped} (single order). `itemRemovedIds` are the samples
    * whose test was removed from the order (each row's `itemRemoved` flag).
    */
   private buildOrderGroup(
     orderId: string,
     orderRows: OrderSampleListRow[],
-    mode: AccessionGroupingMode,
+    fallbackMode: AccessionGroupingMode,
     deptNameById: Map<string, string>,
     tat: TatThresholds,
     nowMs: number,
     itemRemovedIds: ReadonlySet<string> = new Set(),
   ): InHouseOrderGroup {
+    // All rows of one order carry the same `order` object, so the first row has the mode.
+    const mode = orderRows[0]?.order?.groupingMode ?? fallbackMode;
     const toItem = (row: OrderSampleListRow): GroupedSampleItem => ({
       ...row,
       tatStatus: deriveTatStatus(row.createdAt, row.status, tat, nowMs),
@@ -1804,8 +1878,8 @@ export class OrderSampleService {
           samples.map((s) => s.sampleGroupLabel ?? null),
         );
         // One shared barcode per group when the members agree; `null` (→ the
-        // FE's "No barcode") when they carry differing/blank values — e.g.
-        // left stale after a mode change (which nulls them) — flagging the
+        // FE's "No barcode") when they carry differing/blank values — e.g. a
+        // group not collected yet, or part of it repeated — flagging the
         // group for a fresh Assign Barcode.
         const barcode = distinctOrNull(samples.map((s) => s.barcode ?? null));
         // Part of a group can carry another barcode (a repeated sample has a new one, or none yet): list them all.
@@ -6127,26 +6201,63 @@ export class OrderSampleService {
       // Judged on the SAMPLE's own (stamped) department, not on the ordered test.
       const sampleDepartmentId =
         query.departmentId === NO_DEPARTMENT_FILTER ? null : query.departmentId;
-      if (filterCtx.groupingMode === AccessionGroupingMode.ORDER) {
-        // ORDER grouping: the order qualifies when at least one of its samples is in
-        // the department, and the whole order is then shown.
-        orderAnd.push({
-          orderSamples: {
-            some: {
-              deletedAt: null,
-              branchId,
-              departmentId: sampleDepartmentId,
-              // only samples the caller may see count, so a restricted user cannot
-              // learn (or filter on) a department outside their scope
-              AND: [this.departmentScopeForSamples(scopeIds)],
+      // Each ORDER has its own grouping mode, so one list can mix the two rules:
+      //  - an order in ORDER mode qualifies when at least one of its samples is in the
+      //    department, and the whole order is then shown;
+      //  - an order in any other mode matches on the sample's own department: a group's
+      //    samples share one department (or are a single sample), so matching the sample
+      //    keeps each qualifying group whole.
+      // An order with no mode yet (NULL: no samples so far) follows the tenant's current
+      // mode (`filterCtx.groupingMode`).
+      const tenantIsOrder =
+        filterCtx.groupingMode === AccessionGroupingMode.ORDER;
+      const otherModes = [
+        AccessionGroupingMode.DEPARTMENT,
+        AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME,
+        AccessionGroupingMode.SAMPLE_NAME,
+      ];
+      const orderModeIsOrder: Prisma.OrderWhereInput = tenantIsOrder
+        ? {
+            OR: [
+              { groupingMode: AccessionGroupingMode.ORDER },
+              { groupingMode: null },
+            ],
+          }
+        : { groupingMode: AccessionGroupingMode.ORDER };
+      const orderModeIsOther: Prisma.OrderWhereInput = tenantIsOrder
+        ? { groupingMode: { in: otherModes } }
+        : {
+            OR: [{ groupingMode: { in: otherModes } }, { groupingMode: null }],
+          };
+      and.push({
+        OR: [
+          {
+            order: {
+              is: {
+                AND: [
+                  orderModeIsOrder,
+                  {
+                    orderSamples: {
+                      some: {
+                        deletedAt: null,
+                        branchId,
+                        departmentId: sampleDepartmentId,
+                        // only samples the caller may see count, so a restricted user
+                        // cannot learn (or filter on) a department outside their scope
+                        AND: [this.departmentScopeForSamples(scopeIds)],
+                      },
+                    },
+                  },
+                ],
+              },
             },
           },
-        });
-      } else {
-        // Every other grouping: a group's samples share one department (or are a
-        // single sample), so matching the sample keeps each qualifying group whole.
-        where.departmentId = sampleDepartmentId;
-      }
+          {
+            departmentId: sampleDepartmentId,
+            order: { is: orderModeIsOther },
+          },
+        ],
+      });
     }
     if (query.branchLabTestId) {
       // Ordered directly - in ANY price list's copy of the test (the dropdown shows only

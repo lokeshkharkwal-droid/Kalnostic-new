@@ -92,27 +92,54 @@ describe('OrderSampleService — Department / Lab Test / Lab Panel filters', () 
   });
 
   describe('Department', () => {
-    it('ORDER grouping: the order qualifies when ONE of its samples is in the department', async () => {
+    const OTHER_MODES = ['DEPARTMENT', 'DEPARTMENT_SAMPLE_NAME', 'SAMPLE_NAME'];
+    /** One branch of the department clause (an order filter, or a sample filter with an order condition). */
+    interface DeptBranch {
+      departmentId?: string | null;
+      order: { is: Record<string, unknown> & { AND?: unknown[] } };
+    }
+    /** The one department clause: an OR of "whole-order mode" and "per-sample mode", each decided by the ORDER's own mode. */
+    const deptClause = (w: Prisma.OrderSampleWhereInput) =>
+      ((w.AND ?? []) as Prisma.OrderSampleWhereInput[]).find(
+        (c) => Array.isArray(c.OR) && text(c).includes('"orderSamples"'),
+      ) as unknown as { OR: [DeptBranch, DeptBranch] };
+    const wholeOrderBranch = (c: ReturnType<typeof deptClause>) =>
+      c.OR[0].order.is.AND as [unknown, Record<string, unknown>];
+    const perSampleBranch = (c: ReturnType<typeof deptClause>) => c.OR[1];
+
+    it('a department filter is judged per ORDER: whole-order mode orders qualify when ONE sample is in the department', async () => {
       const w = await whereFor({ departmentId: DEPT });
-      expect(w.departmentId).toBeUndefined(); // samples of the order are not narrowed
-      expect(orderAnd(w)).toEqual([
-        {
-          orderSamples: {
-            some: {
-              deletedAt: null,
-              branchId: 'b1',
-              departmentId: DEPT,
-              AND: [{}], // unrestricted user: no scope narrowing
-            },
+      expect(w.departmentId).toBeUndefined(); // never narrowed on the sample directly any more
+      expect(orderAnd(w)).toEqual([]); // and nothing is put on the order-level AND
+      const [mode, some] = wholeOrderBranch(deptClause(w));
+      expect(mode).toEqual({
+        OR: [{ groupingMode: 'ORDER' }, { groupingMode: null }],
+      }); // tenant mode is ORDER here: an order with no mode of its own follows it
+      expect(some).toEqual({
+        orderSamples: {
+          some: {
+            deletedAt: null,
+            branchId: 'b1',
+            departmentId: DEPT,
+            AND: [{}], // unrestricted user: no scope narrowing
           },
         },
-      ]);
+      });
     });
 
-    it('ORDER grouping: a restricted user only counts samples they may see', async () => {
+    it('orders in any other mode match on the sample itself (their group shares one department)', async () => {
+      const w = await whereFor({ departmentId: DEPT });
+      const branch = perSampleBranch(deptClause(w));
+      expect(branch.departmentId).toBe(DEPT);
+      expect(branch.order.is).toEqual({
+        groupingMode: { in: OTHER_MODES },
+      }); // tenant mode is ORDER: NULL-mode orders belong to the other branch
+    });
+
+    it('a restricted user only counts samples they may see', async () => {
       resolveScope.mockResolvedValue(['dept-a', 'dept-b']);
       const w = await whereFor({ departmentId: DEPT });
-      expect(text(orderAnd(w))).toContain(
+      expect(text(deptClause(w))).toContain(
         '"AND":[{"OR":[{"departmentId":null},{"departmentId":{"in":["dept-a","dept-b"]}}]}]',
       );
       // and the row-level scope is still applied on top
@@ -125,22 +152,26 @@ describe('OrderSampleService — Department / Lab Test / Lab Panel filters', () 
       AccessionGroupingMode.DEPARTMENT,
       AccessionGroupingMode.DEPARTMENT_SAMPLE_NAME,
       AccessionGroupingMode.SAMPLE_NAME,
-    ])('%s grouping: matches the sample itself', async (mode) => {
-      tenantFind.mockResolvedValue({ groupingMode: mode });
-      const w = await whereFor({ departmentId: DEPT });
-      expect(w.departmentId).toBe(DEPT);
-      expect(orderAnd(w)).toEqual([]);
-    });
+    ])(
+      'tenant mode %s: only an order whose own mode is ORDER is matched as a whole; a NULL-mode order is matched per sample',
+      async (mode) => {
+        tenantFind.mockResolvedValue({ groupingMode: mode });
+        const w = await whereFor({ departmentId: DEPT });
+        const c = deptClause(w);
+        expect(w.departmentId).toBeUndefined();
+        expect(wholeOrderBranch(c)[0]).toEqual({ groupingMode: 'ORDER' });
+        expect(perSampleBranch(c).departmentId).toBe(DEPT);
+        expect(perSampleBranch(c).order.is).toEqual({
+          OR: [{ groupingMode: { in: OTHER_MODES } }, { groupingMode: null }],
+        });
+      },
+    );
 
-    it('"No Department" means samples with no department (ORDER and the other modes)', async () => {
-      const order = await whereFor({ departmentId: 'none' });
-      expect(text(orderAnd(order))).toContain('"departmentId":null');
-      groupBy.mockClear();
-      tenantFind.mockResolvedValue({
-        groupingMode: AccessionGroupingMode.DEPARTMENT,
-      });
-      const other = await whereFor({ departmentId: 'none' });
-      expect(other.departmentId).toBeNull();
+    it('"No Department" means samples with no department, in both branches', async () => {
+      const w = await whereFor({ departmentId: 'none' });
+      const c = deptClause(w);
+      expect(text(wholeOrderBranch(c)[1])).toContain('"departmentId":null');
+      expect(perSampleBranch(c).departmentId).toBeNull();
     });
 
     it('no longer reads the ordered test or its department', async () => {
@@ -275,7 +306,9 @@ describe('OrderSampleService — Department / Lab Test / Lab Panel filters', () 
         branchLabTestId: TEST,
         branchLabPanelId: PANEL,
       });
-      expect(orderAnd(w)).toHaveLength(3);
+      // Lab Test + Lab Panel stay on the order-level AND; the Department clause is its own OR on the sample AND
+      expect(orderAnd(w)).toHaveLength(2);
+      expect(text(w.AND)).toContain('"orderSamples"');
     });
 
     it('keeps Collection Status in the same AND list', async () => {
@@ -283,7 +316,9 @@ describe('OrderSampleService — Department / Lab Test / Lab Panel filters', () 
         departmentId: DEPT,
         collectionStatus: 'PARTIAL',
       });
-      expect(orderAnd(w)).toHaveLength(2);
+      // Collection Status stays on the order-level AND; the Department clause is its own OR on the sample AND
+      expect(orderAnd(w)).toHaveLength(1);
+      expect(text(w.AND)).toContain('"orderSamples"');
     });
   });
 });

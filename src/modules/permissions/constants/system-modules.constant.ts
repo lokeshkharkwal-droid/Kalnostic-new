@@ -68,6 +68,19 @@ export const SYSTEM_MODULES: SystemModule[] = [
   },
   { key: 'radiology', label: 'Radiology', order: 13, hasPermissions: false },
   { key: 'pharmacy', label: 'Pharmacy', order: 14, hasPermissions: false },
+  // ── External companion app (enablement-only launcher) ──
+  // The separate Inventory application (its own deployment, surfaced behind the
+  // same nginx front door at /inventory-app/). It has no in-app pages or
+  // fine-grained permissions of its own here — it is a per-branch-toggleable,
+  // per-user-assignable launcher. It is gated exactly like any module (branch
+  // enabled ∩ assigned to the user), so it never mints permission keys but is
+  // surfaced as an "allowed" module in GET /users/manage/me/permissions.
+  {
+    key: 'inventory_app',
+    label: 'Inventory App',
+    order: 15,
+    hasPermissions: false,
+  },
 ];
 
 /** All valid module keys, in spec order. */

@@ -30,6 +30,9 @@ export const TRANSFER_INCLUDE = {
           // CANCELLED here tags the row "Order cancelled" and hides the forward steps.
           status: true,
           billId: true,
+          // The grouping mode the order follows: the referral queue groups its transfers
+          // by it, so a transferred copy is grouped exactly like the source order.
+          groupingMode: true,
           patient: true,
           referredByDoctor: true,
           referralPanel: true,
@@ -86,8 +89,8 @@ export type SampleTransferWithFlag = SampleTransferWithRelations & {
 
 /**
  * A referral-queue list row — a center-labelled transfer plus its grouping
- * metadata. `groupKey` is the sample's final-group key under the tenant's
- * current grouping mode (`${orderId}::${barcodeGroupKey}`), so the referral
+ * metadata. `groupKey` is the sample's final-group key under its order's own
+ * grouping mode (`${orderId}::${barcodeGroupKey}`), so the referral
  * queue buckets transfers into the SAME Order → final-group groups the In-House
  * list uses — the one `barcodeGroupKey` rule drives both (no drift).
  * `groupingMode` is echoed as a FE layout hint (as on the in-house grouped

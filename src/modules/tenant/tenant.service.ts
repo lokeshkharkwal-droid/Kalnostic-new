@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   AccessionGroupingMode,
+  AuditAction,
+  AuditModule,
   Prisma,
   StaffStatus,
   SubscriptionStatus,
@@ -13,6 +15,7 @@ import {
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PasswordService } from '../security/password.service';
+import { AuditService } from '../audit/audit.service';
 import { AuthRoleService } from '../auth-role/auth-role.service';
 import { BranchService } from '../branch/branch.service';
 import { CountryService } from '../location/country.service';
@@ -43,9 +46,36 @@ import {
 } from './dto/tenant-settings.dto';
 import {
   TenantCustomDomainTakenException,
+  TenantGroupingModeBusyException,
   TenantNotFoundException,
   TenantSlugTakenException,
 } from './exceptions/tenant.exceptions';
+
+/** How long a grouping-mode change waits for the tenant-row lock (ms, as the text `set_config` takes). */
+const GROUPING_MODE_LOCK_WAIT_MS = '3000';
+
+/**
+ * True when Postgres gave up waiting for a lock (SQLSTATE 55P03, "canceling statement due to lock timeout").
+ * Prisma reports it with different error classes depending on the call, so look at the code and the message.
+ */
+function isLockTimeout(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const err = e as { code?: unknown; message?: unknown; meta?: unknown };
+  const text = `${typeof err.message === 'string' ? err.message : ''} ${JSON.stringify(err.meta ?? {})}`;
+  return err.code === '55P03' || /55P03|lock timeout/i.test(text);
+}
+
+/**
+ * Who is changing the Accession grouping mode, taken from the JWT and the request. The audit
+ * row of the change is written in the same transaction (see `updateGroupingMode`).
+ */
+export interface GroupingModeActor {
+  personId: string;
+  branchId: string | null;
+  roleKey: string | null;
+  roleLabel: string | null;
+  ipAddress: string | null;
+}
 
 /** Platform defaults applied to every new tenant's `settings`. */
 const DEFAULT_SETTINGS: TenantSettings = {
@@ -84,6 +114,7 @@ export class TenantService {
     private readonly areaService: AreaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly exchangeTenantIdService: ExchangeTenantIdService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -441,42 +472,78 @@ export class TenantService {
 
   /**
    * Update the caller tenant's Accession Group Settings mode. Business-admin
-   * only (route-gated). The change is **retroactive to the display**:
-   * `/accession/in-house-orders` re-groups existing orders under the new mode
-   * immediately (grouping is computed live, not frozen). Because the barcodes
-   * assigned under the old grouping would no longer match the new groups, a mode
-   * change **clears every sample's barcode** (value + rendered image) for the
-   * tenant; each regrouped group then shows "No barcode" until a fresh Assign
-   * Barcode is run on it (no barcodes are auto-regenerated). A no-op change (same
-   * mode) leaves barcodes untouched.
+   * only (route-gated). The new mode is the mode **new orders** take: every order
+   * carries its own mode (`orders.grouping_mode`, decided when it first gets
+   * samples and never changed), so existing orders keep the grouping their
+   * barcodes were made under. **No barcode is ever touched** - barcodes are on
+   * printed labels, in transfers to other branches and matched by the lab
+   * analyzers. Only an order that has no mode yet (no samples so far) follows the
+   * new mode.
+   *
+   * One transaction: the tenant row is locked FIRST (so the "old mode" read is the
+   * true predecessor even when two admins save at once, and so an order being
+   * created at the same moment sees either entirely the old mode or entirely the
+   * new one), then the mode is saved and - when `actor` is given - the audit row,
+   * with the old and the new mode, is written in the same transaction (it can never
+   * be saved without its record). A save of the mode the tenant already has changes
+   * and records nothing.
+   * @param actor who is making the change (from the JWT); omit to skip the audit row
    * @throws TenantNotFoundException if missing or soft-deleted
    */
   async updateGroupingMode(
     tenantId: string,
     groupingMode: AccessionGroupingMode,
+    actor?: GroupingModeActor,
   ): Promise<{ groupingMode: AccessionGroupingMode }> {
-    const current = await this.findById(tenantId);
-    if (current.groupingMode === groupingMode) {
-      return { groupingMode: current.groupingMode };
-    }
+    return this.prisma
+      .withTenant(tenantId, async (tx) => {
+        const exists = await tx.tenant.findFirst({
+          where: { id: tenantId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!exists) throw new TenantNotFoundException(tenantId);
 
-    const tenant = await this.prisma.tenant.update({
-      where: { id: tenantId },
-      data: { groupingMode },
-      select: { groupingMode: true },
-    });
+        // Do not wait on the tenant-row lock for ever: another request (an order being created, another admin
+        // saving) may hold it. Give up after a few seconds - before Prisma's own 5 s transaction timeout, which
+        // would turn into an unexplained 500 - and answer with a clear "busy, try again" instead.
+        await tx.$executeRaw`SELECT set_config('lock_timeout', ${GROUPING_MODE_LOCK_WAIT_MS}, true)`;
 
-    // Clear now-stale barcodes for every one of the tenant's samples. RLS-scoped
-    // via withTenant (order_samples is tenant-scoped); the Assign Barcode action
-    // re-issues a fresh shared barcode per regrouped group on demand.
-    await this.prisma.withTenant(tenantId, (tx) =>
-      tx.orderSample.updateMany({
-        where: { tenantId, deletedAt: null, NOT: { barcode: null } },
-        data: { barcode: null, orderIdBarcode: null },
-      }),
-    );
+        // Lock the row, then read the mode it holds: nobody can change it until we commit.
+        const locked = await tx.tenant.update({
+          where: { id: tenantId },
+          data: { updatedAt: new Date() },
+          select: { groupingMode: true },
+        });
+        const oldMode = locked.groupingMode;
+        if (oldMode === groupingMode) return { groupingMode: oldMode };
 
-    return { groupingMode: tenant.groupingMode };
+        await tx.tenant.update({
+          where: { id: tenantId },
+          data: { groupingMode },
+          select: { id: true },
+        });
+        if (actor) {
+          await this.auditService.recordInTx(tx, {
+            tenantId,
+            branchId: actor.branchId,
+            module: AuditModule.TENANT,
+            action: AuditAction.UPDATE,
+            description: `Changed the Accession Group Settings grouping mode from ${oldMode} to ${groupingMode} (applies to new orders only)`,
+            actorPersonId: actor.personId,
+            actorRoleKey: actor.roleKey,
+            actorRoleLabel: actor.roleLabel,
+            ipAddress: actor.ipAddress,
+            resourceId: tenantId,
+            metadata: { oldMode, newMode: groupingMode },
+          });
+        }
+        return { groupingMode };
+      })
+      .catch((e: unknown) => {
+        if (isLockTimeout(e))
+          throw new TenantGroupingModeBusyException(tenantId);
+        throw e;
+      });
   }
 
   /**
