@@ -258,6 +258,25 @@ export class PdfReportTemplateService {
    * @throws PdfReportTemplateNotFoundException if missing/soft-deleted
    * @throws PdfGenerationFailedException if rendering fails
    */
+  /**
+   * The id of the first active (non-deleted) template of `type` in the tenant,
+   * used as the fallback when no Configuration default is mapped for the type.
+   * Returns null when the tenant has no active template of that type.
+   * @param tenantId tenant scope
+   * @param type a `PDF_REPORT_TEMPLATE_TYPES` key
+   */
+  async findDefaultTemplateIdByType(
+    tenantId: string,
+    type: string,
+  ): Promise<string | null> {
+    const template = await this.prisma.pdfReportTemplate.findFirst({
+      where: { tenantId, type, isActive: true, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    return template?.id ?? null;
+  }
+
   async generatePdf(
     id: string,
     tenantId: string,

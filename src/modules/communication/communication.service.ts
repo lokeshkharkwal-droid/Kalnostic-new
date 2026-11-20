@@ -26,6 +26,7 @@ import {
   CommunicationLogNotFoundException,
   InvalidComposePayloadException,
   TemplateResolutionFailedException,
+  TenantNotRegisteredWithExchangeException,
 } from './exceptions/communication.exceptions';
 
 /** Channels the Exchange gateway can actually deliver. */
@@ -116,6 +117,20 @@ export class CommunicationService {
       throw new InvalidComposePayloadException(
         `Channel ${dto.channel} is not deliverable via the messaging gateway; use in-app notifications instead`,
       );
+    }
+    // Every deliverable send (manual share AND automatic notification) funnels
+    // through here, so this is the single gate for the Exchange-registration
+    // restriction: a tenant that isn't registered with the external Exchange may
+    // not queue any Email/SMS/WhatsApp. Automatic callers swallow this throw
+    // (fire-and-forget) → silent skip; manual callers surface it as a 403 so the
+    // frontend can show "This tenant is not registered with the exchange."
+    // `tenants` is platform-level (no RLS) → a plain findUnique is correct.
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { exchangeRegisteredAt: true },
+    });
+    if (!tenant?.exchangeRegisteredAt) {
+      throw new TenantNotRegisteredWithExchangeException(tenantId);
     }
     if (scopeBranchId !== null) {
       await this.branchService.findById(scopeBranchId, tenantId);
@@ -289,6 +304,24 @@ export class CommunicationService {
       throw new CommunicationLogNotFoundException(id);
     }
     return row;
+  }
+
+  /**
+   * Whether the caller's tenant is registered with the external Exchange gateway
+   * (`exchangeRegisteredAt` is set). The business frontend reads this to pre-empt
+   * every manual send with a snackbar when the tenant can't deliver — the
+   * authoritative block still lives in `enqueue`. `tenants` is platform-level
+   * (no RLS), so a plain findUnique is correct.
+   * @param tenantId tenant scope (from JWT)
+   */
+  async getExchangeStatus(
+    tenantId: string,
+  ): Promise<{ isRegistered: boolean }> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { exchangeRegisteredAt: true },
+    });
+    return { isRegistered: tenant?.exchangeRegisteredAt != null };
   }
 
   /**

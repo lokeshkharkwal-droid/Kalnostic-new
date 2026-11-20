@@ -80,6 +80,10 @@ describe('CommunicationService.enqueue — global notification tags', () => {
           shortName: 'KAL',
           settings: {},
         }),
+        // enqueue's Exchange-registration gate reads this; default = registered.
+        findUnique: jest.fn().mockResolvedValue({
+          exchangeRegisteredAt: new Date('2026-01-01T00:00:00.000Z'),
+        }),
       },
       person: { findMany: jest.fn().mockResolvedValue([]) },
       withTenant: jest.fn((_t: string, cb: (c: typeof tx) => unknown) =>
