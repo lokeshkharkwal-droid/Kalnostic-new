@@ -19,6 +19,7 @@ import { SITE_ADMIN_PERM } from '../siteadmin/constants/siteadmin-permissions.co
 import { Public } from '../auth/decorators/public.decorator';
 import { AuditAction, AuditModule } from '@prisma/client';
 import { Audit } from '../../common/decorators/audit.decorator';
+import { NOTIFICATION_TAGS_GROUPED } from './constants/notification-tags';
 
 /**
  * SiteAdmin global **messaging template** management (`/siteadmin/templates`).
@@ -49,6 +50,17 @@ export class SiteAdminTemplateController {
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_WRITE)
   create(@Body() dto: CreateTemplateDto) {
     return this.templateService.createGlobal(dto);
+  }
+
+  /**
+   * The GLOBAL notification tag catalogue (grouped) for the template editor —
+   * every tag works in every template. Declared before `:id` so the literal
+   * `tags` segment is not captured as a template id.
+   */
+  @Get('tags')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.MASTER_DATA_READ)
+  tags() {
+    return NOTIFICATION_TAGS_GROUPED;
   }
 
   /**

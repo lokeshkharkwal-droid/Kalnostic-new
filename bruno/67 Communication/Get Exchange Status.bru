@@ -1,0 +1,27 @@
+meta {
+  name: Get Exchange Status
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/communications/exchange-status
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+docs {
+  Whether the caller's tenant is registered with the external Exchange gateway.
+  Returns `{ isRegistered: boolean }` (`true` once SiteAdmin → Business → Exchange
+  has registered the tenant, i.e. `tenants.exchange_registered_at` is set).
+
+  The business frontend reads this to pre-empt every manual Share/Send with a
+  snackbar ("This tenant is not registered with the exchange.") when the tenant
+  can't deliver. The authoritative block lives server-side in
+  `CommunicationService.enqueue` (see Send Message / Share endpoints → 403
+  `TENANT_NOT_REGISTERED_WITH_EXCHANGE`).
+}

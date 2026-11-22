@@ -4,6 +4,7 @@ import {
   CommunicationStatus,
   MessagingChannel,
   Prisma,
+  RecipientType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
@@ -17,9 +18,15 @@ import {
 import { SendMessageDto } from './dto/send-message.dto';
 import { ListCommunicationQueryDto } from './dto/list-communication-query.dto';
 import {
+  NotificationTagContext,
+  NotificationTagsService,
+  PatientTagValues,
+} from './services/notification-tags.service';
+import {
   CommunicationLogNotFoundException,
   InvalidComposePayloadException,
   TemplateResolutionFailedException,
+  TenantNotRegisteredWithExchangeException,
 } from './exceptions/communication.exceptions';
 
 /** Channels the Exchange gateway can actually deliver. */
@@ -36,6 +43,17 @@ interface ExchangeMeta {
   smsType?: string | null;
   templateCategory?: string | null;
   messageType?: string | null;
+}
+
+/**
+ * How `enqueue` gets the GLOBAL notification tags (see
+ * `NotificationTagsService`): `resolved` = the caller already resolved them
+ * (used as-is); otherwise they are resolved from the tenant + scope branch +
+ * `context` (order / patient / actor / appointment moment / recipient email).
+ */
+export interface EnqueueTagOptions {
+  context?: Omit<NotificationTagContext, 'tenantId'>;
+  resolved?: Record<string, string>;
 }
 
 /** Shape of the `payload` JSON column on a communication_logs row. */
@@ -64,19 +82,25 @@ export class CommunicationService {
     private readonly exchange: ExchangeClient,
     private readonly templateService: TemplateService,
     private readonly branchService: BranchService,
+    private readonly notificationTags: NotificationTagsService,
   ) {}
 
   /**
    * Resolve + enqueue a compose/send request as one PENDING queue row per
    * recipient. The body is taken from `body` (free text), else the `templateId`,
    * else resolved from `feature` + channel; placeholders are substituted with the
-   * supplied `variables` (plus `{pn}`/`{patient_name}` from each recipient name).
-   * The background worker performs actual delivery.
+   * GLOBAL notification tags (every catalogue tag, so any tag works in any
+   * template — see `NotificationTagsService`), overridden by the supplied
+   * `variables`, plus `{patient_name}` from each recipient name. A
+   * PATIENT recipient also gets its own patient tags when the send carries no
+   * order/patient context (manual compose). The background worker performs
+   * actual delivery.
    *
    * @param tenantId owning tenant (from JWT)
    * @param scopeBranchId active branch (branch-admin) or null (business-admin)
    * @param dto validated compose payload (no tenant/branch ids)
    * @param actorId person id of the sender (audit trail)
+   * @param tags pre-resolved global tags, or the context to resolve them from
    * @returns the created queue rows
    * @throws InvalidComposePayloadException if neither body nor template/feature given,
    *   or the channel is not deliverable via Exchange
@@ -87,11 +111,26 @@ export class CommunicationService {
     scopeBranchId: string | null,
     dto: SendMessageDto,
     actorId?: string,
+    tags?: EnqueueTagOptions,
   ): Promise<CommunicationLog[]> {
     if (!DELIVERABLE_CHANNELS.includes(dto.channel)) {
       throw new InvalidComposePayloadException(
         `Channel ${dto.channel} is not deliverable via the messaging gateway; use in-app notifications instead`,
       );
+    }
+    // Every deliverable send (manual share AND automatic notification) funnels
+    // through here, so this is the single gate for the Exchange-registration
+    // restriction: a tenant that isn't registered with the external Exchange may
+    // not queue any Email/SMS/WhatsApp. Automatic callers swallow this throw
+    // (fire-and-forget) → silent skip; manual callers surface it as a 403 so the
+    // frontend can show "This tenant is not registered with the exchange."
+    // `tenants` is platform-level (no RLS) → a plain findUnique is correct.
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { exchangeRegisteredAt: true },
+    });
+    if (!tenant?.exchangeRegisteredAt) {
+      throw new TenantNotRegisteredWithExchangeException(tenantId);
     }
     if (scopeBranchId !== null) {
       await this.branchService.findById(scopeBranchId, tenantId);
@@ -108,15 +147,50 @@ export class CommunicationService {
     const scheduledAt = dto.schedule ? new Date(dto.schedule) : null;
     const expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : null;
 
+    // Global tags: as resolved by the caller, else from tenant + scope branch +
+    // the caller's context. Without an order/patient context (manual compose),
+    // each PATIENT recipient gets its own patient tags (one batched lookup).
+    const globals =
+      tags?.resolved ??
+      (await this.notificationTags.resolve({
+        tenantId,
+        branchId: scopeBranchId,
+        ...(tags?.context ?? {}),
+      }));
+    const hasSubject =
+      !!tags?.resolved ||
+      !!tags?.context?.orderId ||
+      !!tags?.context?.patientId;
+    const patientTags: Map<string, PatientTagValues> = hasSubject
+      ? new Map<string, PatientTagValues>()
+      : await this.notificationTags.resolvePatientTags(
+          tenantId,
+          dto.recipients
+            .filter((r) => r.recipientType === RecipientType.PATIENT)
+            .map((r) => r.recipientId),
+        );
+
     return this.prisma.withTenant(tenantId, (tx) =>
       Promise.all(
         dto.recipients.map((r) => {
+          const ownPatient = r.recipientId
+            ? patientTags.get(r.recipientId)
+            : undefined;
           const mergedVars: Record<string, string> = {
+            ...globals,
+            ...(ownPatient ?? {}),
             ...(dto.variables ?? {}),
-            pn: r.recipientName ?? dto.variables?.['pn'] ?? '',
             patient_name:
-              r.recipientName ?? dto.variables?.['patient_name'] ?? '',
+              r.recipientName ??
+              dto.variables?.['patient_name'] ??
+              globals.patient_name ??
+              '',
           };
+          // `{email}` = the recipient's email; on an Email send that is the
+          // address it goes to when nothing else supplied one.
+          if (!mergedVars.email && dto.channel === MessagingChannel.EMAIL) {
+            mergedVars.email = r.toAddress;
+          }
           const body = this.fillTemplate(rawBody, mergedVars);
           // WhatsApp templates render at Meta from the APPROVED template + a
           // POSITIONAL `template_params` array — the free-text body we send is
@@ -149,7 +223,8 @@ export class CommunicationService {
               recipientId: r.recipientId ?? null,
               recipientName: r.recipientName ?? null,
               toAddress: r.toAddress,
-              subject: subject ?? null,
+              // Tags work in the Email subject too (same values as the body).
+              subject: subject ? this.fillTemplate(subject, mergedVars) : null,
               body,
               payload: (payload as Prisma.InputJsonValue) ?? Prisma.JsonNull,
               campaign: dto.campaign ?? null,
@@ -229,6 +304,24 @@ export class CommunicationService {
       throw new CommunicationLogNotFoundException(id);
     }
     return row;
+  }
+
+  /**
+   * Whether the caller's tenant is registered with the external Exchange gateway
+   * (`exchangeRegisteredAt` is set). The business frontend reads this to pre-empt
+   * every manual send with a snackbar when the tenant can't deliver — the
+   * authoritative block still lives in `enqueue`. `tenants` is platform-level
+   * (no RLS), so a plain findUnique is correct.
+   * @param tenantId tenant scope (from JWT)
+   */
+  async getExchangeStatus(
+    tenantId: string,
+  ): Promise<{ isRegistered: boolean }> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { exchangeRegisteredAt: true },
+    });
+    return { isRegistered: tenant?.exchangeRegisteredAt != null };
   }
 
   /**

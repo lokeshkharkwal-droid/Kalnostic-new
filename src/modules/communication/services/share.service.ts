@@ -9,6 +9,10 @@ import { CommunicationService } from '../communication.service';
 import { NotificationService } from '../notification.service';
 import { TemplateService } from '../../template/template.service';
 import {
+  NotificationTagContext,
+  NotificationTagsService,
+} from './notification-tags.service';
+import {
   ShareTemplateNotActivatedException,
   ShareTemplateNotConfiguredException,
   ShareRecipientMissingException,
@@ -55,6 +59,16 @@ export interface ShareChannelResult {
   logId?: string;
 }
 
+/**
+ * What a share is about — the GLOBAL notification tags (order, patient,
+ * branch, amounts, links…) are resolved from it so every catalogue tag works in
+ * the shared template. `at` = the moment `{date}`/`{time}` describe.
+ */
+export type ShareTagContext = Pick<
+  NotificationTagContext,
+  'orderId' | 'patientId' | 'at'
+>;
+
 /** Per-channel availability + default recipient for a Share popup preload. */
 export interface ShareChannelInfo {
   channel: MessagingChannel;
@@ -82,12 +96,15 @@ export class ShareService {
     private readonly communicationService: CommunicationService,
     private readonly notificationService: NotificationService,
     private readonly templateService: TemplateService,
+    private readonly notificationTags: NotificationTagsService,
   ) {}
 
   /**
    * Resolve + enqueue a single deliverable-channel (Email/SMS/WhatsApp) share,
    * using the tenant's ACTIVATED `feature` template for `channel`. Email/WhatsApp
-   * carry the rendered PDF (from `getPdf`); SMS is text-only.
+   * carry the rendered PDF (from `getPdf`); SMS is text-only. `variables` are
+   * the kind-specific overrides; the GLOBAL tags are resolved (by `enqueue`)
+   * from `tagContext` + the caller's branch + the recipient.
    *
    * @throws ShareTemplateNotActivatedException if the channel has no activated template
    * @throws ShareTemplateNotConfiguredException if the template lacks SMS/WhatsApp carrier ids
@@ -104,6 +121,7 @@ export class ShareService {
     getPdf?: () => Promise<string>,
     variables: Record<string, string> = {},
     attachmentName = 'document.pdf',
+    tagContext?: ShareTagContext,
   ): Promise<CommunicationLog[]> {
     // 1. Only a tenant-ACTIVATED template for this channel may be used.
     const template = await this.templateService.resolveActivatedTemplate(
@@ -182,6 +200,18 @@ export class ShareService {
         variables,
       },
       actorId,
+      {
+        context: {
+          branchId,
+          ...(tagContext ?? {}),
+          // The recipient may be the patient or a referral panel — `{email}` is
+          // theirs (only a PATIENT recipient falls back to the patient's email).
+          recipientEmail:
+            recipient.type === RecipientType.PATIENT
+              ? (recipient.email ?? undefined)
+              : (recipient.email ?? null),
+        },
+      },
     );
   }
 
@@ -190,6 +220,8 @@ export class ShareService {
    * template for the body (placeholders substituted). Unlike the deliverable
    * channels this doesn't go through the Exchange queue — it creates an in-app
    * notification addressed to `targets` (their notification bell / inbox).
+   * The GLOBAL tags are resolved from `tagContext`, under the caller's
+   * kind-specific `variables`.
    *
    * @returns the created notification id
    * @throws ShareTemplateNotActivatedException if no activated IAM template
@@ -203,6 +235,7 @@ export class ShareService {
     actorId: string,
     variables: Record<string, string>,
     iamConfig: ShareIamConfig,
+    tagContext?: ShareTagContext,
   ): Promise<string> {
     const template = await this.templateService.resolveActivatedTemplate(
       tenantId,
@@ -217,7 +250,15 @@ export class ShareService {
       throw new ShareRecipientMissingException(MessagingChannel.IAM);
     }
 
-    const body = this.fillTemplate(template.template, variables);
+    const globals = await this.notificationTags.resolve({
+      tenantId,
+      branchId,
+      ...(tagContext ?? {}),
+    });
+    const body = this.fillTemplate(template.template, {
+      ...globals,
+      ...variables,
+    });
     const notification = await this.notificationService.create(
       tenantId,
       branchId,
