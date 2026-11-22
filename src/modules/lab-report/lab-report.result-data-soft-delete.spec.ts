@@ -100,6 +100,8 @@ describe('LabReportService readers', () => {
   interface ReaderPrismaMock {
     labReportNote: { findMany: jest.Mock };
     labReportOverallResult: { findUnique: jest.Mock; upsert: jest.Mock };
+    labReport: { findFirst: jest.Mock };
+    withTenant: jest.Mock;
   }
 
   function build() {
@@ -111,13 +113,25 @@ describe('LabReportService readers', () => {
           .fn()
           .mockResolvedValue({ templateId: null, content: 'new text' }),
       },
+      // the Overall Result is written under the report lock, with the status read again
+      labReport: {
+        findFirst: jest.fn().mockResolvedValue({ status: 'SAVED' }),
+      },
+      withTenant: jest.fn(
+        (_tenantId: string, fn: (tx: unknown) => Promise<unknown>) =>
+          fn(prisma),
+      ),
     };
     const service = Object.create(
       LabReportService.prototype,
     ) as LabReportService;
     const internals = service as unknown as Internals;
     internals.prisma = prisma;
-    internals.requireReport = jest.fn().mockResolvedValue({ id: 'r1' });
+    internals.requireReport = jest
+      .fn()
+      .mockResolvedValue({ id: 'r1', status: 'SAVED' });
+    (internals as unknown as Record<string, jest.Mock>).lockReportForWrite =
+      jest.fn().mockResolvedValue(undefined);
     internals.siblingReportIds = jest.fn().mockResolvedValue(['r1']);
     internals.assertResultParamBelongsToReport = jest
       .fn()

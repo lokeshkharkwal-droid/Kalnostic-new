@@ -51,12 +51,21 @@ docs {
       `sent` / `forwarded` / `outsourced` (`{ date, time }`).
     - `sections`: one per status within the barcode (usually one). Each has `kind` (`SAMPLE` or
       `TRANSFER`), `status`, `sampleType`, `container`, `sampleIds`, `transferIds`, `rows` (one test per
-      row: `testName`, `department`, `category`, `subcategory`, `reportStatus`, `itemRemoved`, and in a Discarded
+      row: `testName`, `department`, `category`, `subcategory`, `reportStatus`, `itemRemoved`, `routing` (see below), and in a Discarded
       / Returned section `recoverable` / `returnedVerified` of THAT row), `actions`
       (the buttons to show, already narrowed by what the server allows), `hiddenActionReasons`
       (why Store / Return / Retrieve is missing), `flags` (`recoverable` for Discarded,
       `returnedVerified` for Returned: true only when EVERY row has it; `mixed` is true when the rows differ, then
       read the rows) and `orderCancelled`.
+
+  **`routing` of each row** (the "Send / Forward / Outsource Details" column): `{ kind, to, when: { date, time } }`.
+  - `IN_HOUSE` menu follows the sample's CURRENT status: `SEND` (status Sent, `to` = destination branch), `FORWARD`
+    (Forwarded, `to` = partner business) or `OUTSOURCE` (Outsourced, `to` = outsource center) with the hand-off's send
+    date / time; every other status is `IN_HOUSE` with no destination, even when an older hand-off still exists (a Retrieve
+    or Repeat brought the sample back), so an old destination is never shown.
+  - `INTERNAL` menu: `INTERNAL_REFERRAL`, `to` = the receiving branch of the row's transfer. `EXTERNAL` menu:
+    `EXTERNAL_REFERRAL`, `to` = the partner name. Both carry the transfer's send date / time.
+  - `to` is `null` when none was assigned. The page-level `fields` stay for older clients.
 
   **Buttons.** In-House follows the requirements table per sample status; Internal / External Referral
   follow the transfer status. Store and Return on an Accepted sample appear only when every test on its

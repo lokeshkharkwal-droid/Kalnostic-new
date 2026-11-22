@@ -15,7 +15,7 @@ import {
   Prisma,
   RecipientType,
   ReRunSampleMode,
-  ResultType,
+  ResultFlagOption,
   ResultValueSource,
   SampleStatus,
 } from '@prisma/client';
@@ -24,6 +24,12 @@ import { calendarDayIn, exactBirthDate } from '../../common/utils/age-dob.util';
 import { PaginatedResult, paginated } from '../../common/dto/response.dto';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { ValidationException } from '../../common/exceptions/kaltros.exception';
+import {
+  ABNORMAL_FLAG_LABELS,
+  baseStyleOf,
+  HIGHLIGHT_FALLBACK_STYLE,
+  isHighLowStyle,
+} from '../../common/utils/abnormal-flag.util';
 import { getReferralPanelId } from '../../prisma/tenant-context';
 import {
   genderLabel,
@@ -143,6 +149,7 @@ import {
   LabReportSampleMissingException,
   LabReportResultsRequiredException,
   LabReportResultsNotEditableException,
+  LabReportOverallResultNotEditableException,
   LabReportParameterNoteNotEditableException,
   LabReportNotesRequiredException,
   LabReportNotFoundException,
@@ -154,9 +161,11 @@ import {
   NoActivePrintTemplateException,
   OrderReportsNotFoundException,
   ReportingWindowClosedException,
+  AbnormalStyleChangeNotAllowedException,
 } from './exceptions/lab-report.exceptions';
 import {
   abnormalFlagStyle,
+  resolvePrintStyle,
   candidateAgeMatch,
   candidateAgeRank,
   compareRangeCandidates,
@@ -164,11 +173,14 @@ import {
   type ExactAge,
   genderMatches,
   isExactAgeMatch,
-  isObservedAbnormal,
   rangeAgeMatch,
-  reportHighlightStyle,
   sortRangesByAgeSpecificity,
 } from './utils/reference-range.util';
+import {
+  buildResultPrintSnapshot,
+  parseResultPrintSnapshot,
+  ResultPrintSnapshot,
+} from './utils/print-snapshot.util';
 import { pickDisplayBranchId } from './utils/display-branch.util';
 import { findReceiverReturns } from '../accession/utils/returned-by-receiver.util';
 import { escapeLike } from '../accession/utils/like-escape.util';
@@ -326,6 +338,38 @@ export function assertLabReportPanelOwnership(
   if (panelId && report.orderItem.order.referralPanelId !== panelId) {
     throw new ReferralPanelAccessDeniedException('lab-report', report.id);
   }
+}
+
+/**
+ * A result row when a report is reopened or reset: the technician's choice starts over (Default, no
+ * Highlight style) and the frozen print decision is dropped, so the next validate freezes it afresh
+ * under the rules of that day.
+ */
+const FRESH_FLAG_CHOICE = {
+  flagOption: ResultFlagOption.DEFAULT,
+  highlightLogic: null,
+  printSnapshot: Prisma.DbNull,
+} as const;
+
+/**
+ * The columns that store the technician's Default / Highlight / Not Highlight choice for
+ * one value, or nothing at all when the client sent no choice (the stored choice then stays
+ * as it is). An explicit `null` counts as "no choice" too: the DTO lets `null` through (`@IsOptional`),
+ * and the column is NOT NULL, so passing it on would be a database error (500) on an existing row.
+ * The Highlight style is kept only under HIGHLIGHT and is null otherwise.
+ */
+function flagChoiceData(value: {
+  flagOption?: ResultFlagOption | null;
+  highlightLogic?: AbnormalFlag | null;
+}): { flagOption?: ResultFlagOption; highlightLogic?: AbnormalFlag | null } {
+  if (value.flagOption === undefined || value.flagOption === null) return {};
+  return {
+    flagOption: value.flagOption,
+    highlightLogic:
+      value.flagOption === ResultFlagOption.HIGHLIGHT
+        ? (value.highlightLogic ?? null)
+        : null,
+  };
 }
 
 @Injectable()
@@ -676,7 +720,10 @@ export class LabReportService {
     const byReport = { labReportId: { in: reportIds }, deletedAt: null };
     await tx.labReportResultValue.updateMany({
       where: byReport,
-      data: { deletedAt: now },
+      // The row is only soft-deleted, and a later save (or an analyzer result) revives the very same
+      // row, so the technician's Default / Highlight / Not Highlight choice must start over too —
+      // otherwise a Not Highlight chosen before the reset would hide the next abnormal value.
+      data: { deletedAt: now, ...FRESH_FLAG_CHOICE },
     });
     await tx.reRunRequest.updateMany({
       where: byReport,
@@ -2415,7 +2462,8 @@ export class LabReportService {
       if (outsourced.length === 0) return row;
       // Not locked: a validated result or Error Reported keeps its way forward (Error Reported -> Re-run), the same rule as
       // `isReportAwaitingSample`.
-      if (OUTSOURCE_SENT_BACK_UNLOCKED_STATUSES.includes(row.status)) return row;
+      if (OUTSOURCE_SENT_BACK_UNLOCKED_STATUSES.includes(row.status))
+        return row;
       const allWaiting = heldIdsOf(row).every((id) => {
         const i = row.sampleIds.indexOf(id);
         const status = row.sampleStatuses[i]!;
@@ -3556,6 +3604,9 @@ export class LabReportService {
       };
     }
 
+    // Locked once the result is validated: the Overall Result prints, and a finished report must not change.
+    this.assertOverallResultEditable(id, report.status);
+
     if (dto.templateId === undefined && dto.content === undefined) {
       throw new ValidationException(
         'Either templateId (to apply a template) or content (to edit) is required',
@@ -3584,20 +3635,30 @@ export class LabReportService {
       content = dto.content;
     }
 
-    const updated = await this.prisma.labReportOverallResult.upsert({
-      where: {
-        labReportId_resultParamId: { labReportId: report.id, resultParamId },
-      },
-      create: {
-        tenantId,
-        labReportId: report.id,
-        resultParamId,
-        templateId,
-        content,
-      },
-      // `deletedAt: null` revives a row a repeat soft-deleted.
-      update: { templateId, content, deletedAt: null },
-      select: { templateId: true, content: true },
+    // Written under the report's row lock with the status read AGAIN: a Submit + Validate that commits between the
+    // check above and this write must not be followed by a change to a report whose print is already frozen.
+    const updated = await this.prisma.withTenant(tenantId, async (tx) => {
+      await this.lockReportForWrite(tx, tenantId, id);
+      const fresh = await tx.labReport.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.assertOverallResultEditable(id, fresh?.status ?? report.status);
+      return tx.labReportOverallResult.upsert({
+        where: {
+          labReportId_resultParamId: { labReportId: report.id, resultParamId },
+        },
+        create: {
+          tenantId,
+          labReportId: report.id,
+          resultParamId,
+          templateId,
+          content,
+        },
+        // `deletedAt: null` revives a row a repeat soft-deleted.
+        update: { templateId, content, deletedAt: null },
+        select: { templateId: true, content: true },
+      });
     });
     return {
       resultParamId,
@@ -3656,6 +3717,15 @@ export class LabReportService {
       });
     });
     return { resultParamId, content: dto.content };
+  }
+
+  /** Refuses an Overall Result write unless the report is still Pending, Partial Pending or Saved. */
+  private assertOverallResultEditable(id: string, status: string): void {
+    if (
+      !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(status)
+    ) {
+      throw new LabReportOverallResultNotEditableException(id, status);
+    }
   }
 
   /**
@@ -3755,6 +3825,8 @@ export class LabReportService {
         defaultValue: true,
         groupName: true,
         overallResultGroups: true,
+        // The parameter's Abnormal Flag Logic (v1.3): the Technician's Highlight dropdown starts on it.
+        abnormalFlagLogic: true,
         // The configured Note: the default the Notes icon shows (and prints) until
         // the technician writes their own for this report.
         notes: true,
@@ -4021,12 +4093,25 @@ export class LabReportService {
 
   // ── Test Entry: result values + reference-range resolution ────────────────
 
+  /**
+   * Save the technician's entered values (and, per value, their Default / Highlight /
+   * Not Highlight choice) for a report that is still editable.
+   *
+   * @param options.canChangeAbnormalStyle whether the caller holds the "Change abnormal
+   *   style" permission. Without it a Highlight may only use the style derived from the
+   *   parameter's own style; any other style is refused (403).
+   * @throws AbnormalStyleChangeNotAllowedException a Highlight style the caller may not pick
+   * @throws ValidationException a "…and High Low" style sent as a Highlight style
+   */
   async upsertResultValues(
     id: string,
     tenantId: string,
     branchId: string | null,
     dto: UpsertResultValuesDto,
     actorId: string,
+    options: { canChangeAbnormalStyle: boolean } = {
+      canChangeAbnormalStyle: false,
+    },
   ) {
     const activeBranchId = this.requireBranch(branchId);
     const report = await this.requireReport(id, tenantId, activeBranchId);
@@ -4063,12 +4148,84 @@ export class LabReportService {
       }
     }
 
+    // A Highlight may only use a BASIC style (a "…and High Low" style is Quantitative-only and
+    // set on the parameter, never chosen here); and without the "Change abnormal style"
+    // permission the only styles allowed are the one derived from the parameter's own style
+    // (what the locked dropdown shows) and the one ALREADY saved on that row (a colleague with
+    // the permission chose it; re-saving the row must not be refused). Checked for every value
+    // before anything is written.
+    const paramStyleById = new Map(
+      resultParams.map((p) => [p.id, p.abnormalFlagLogic]),
+    );
+    const styleCandidates: { resultParamId: string; style: AbnormalFlag }[] =
+      [];
+    for (const value of dto.values) {
+      // No style sent — undefined or an explicit null (the DTO lets null through) — means "use the
+      // parameter's own style", which anyone may do, so there is nothing to check.
+      if (
+        value.flagOption !== ResultFlagOption.HIGHLIGHT ||
+        !value.highlightLogic
+      ) {
+        continue;
+      }
+      if (isHighLowStyle(value.highlightLogic)) {
+        throw new ValidationException(
+          `"${ABNORMAL_FLAG_LABELS[value.highlightLogic]}" cannot be used to highlight a result`,
+          { resultParamId: value.resultParamId },
+        );
+      }
+      const derived = baseStyleOf(
+        paramStyleById.get(value.resultParamId) ?? HIGHLIGHT_FALLBACK_STYLE,
+      );
+      if (!options.canChangeAbnormalStyle && value.highlightLogic !== derived) {
+        styleCandidates.push({
+          resultParamId: value.resultParamId,
+          style: value.highlightLogic,
+        });
+      }
+    }
+    if (styleCandidates.length > 0) {
+      const alreadySaved = await this.prisma.labReportResultValue.findMany({
+        where: {
+          labReportId: id,
+          tenantId,
+          deletedAt: null,
+          resultParamId: { in: styleCandidates.map((c) => c.resultParamId) },
+          flagOption: ResultFlagOption.HIGHLIGHT,
+        },
+        select: { resultParamId: true, highlightLogic: true },
+      });
+      const unchanged = new Set(
+        alreadySaved.map((s) => `${s.resultParamId}:${s.highlightLogic}`),
+      );
+      const styleNotAllowed = styleCandidates
+        .filter((c) => !unchanged.has(`${c.resultParamId}:${c.style}`))
+        .map((c) => c.resultParamId);
+      if (styleNotAllowed.length > 0) {
+        throw new AbnormalStyleChangeNotAllowedException(styleNotAllowed);
+      }
+    }
+
     // The lab's time zone, to write "when the analyzer sent it" in the Audit Trail. Read here,
     // outside the transaction below: a query made from inside it would not carry the tenant.
     const timezone = await this.labTimezone(tenantId);
 
     await this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      // The status above was read BEFORE the lock. A Submit + Validate may have committed in between, and a value
+      // written now would change a report whose print is already frozen: look again under the lock.
+      const fresh = await tx.labReport.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      const statusNow = fresh?.status ?? report.status;
+      if (
+        !(LAB_REPORT_RESULT_EDIT_STATUSES as readonly string[]).includes(
+          statusNow,
+        )
+      ) {
+        throw new LabReportResultsNotEditableException(id, statusNow);
+      }
       const now = new Date();
 
       // What is stored today for these parameters (deleted rows included: the unique key
@@ -4106,6 +4263,9 @@ export class LabReportService {
           // the unit only when the analyzer sent none). When the technician changed the
           // number, the new number, unit and range are stored and the change (who, when, old
           // and new value) is written to the Audit Trail below.
+          // The technician's Default / Highlight / Not Highlight choice is theirs, not part of
+          // the analyzer's record, so it is saved on both paths (before, a Highlight chosen
+          // on a machine's value was silently dropped here).
           const data =
             mode === 'overwrite-analyzer'
               ? {
@@ -4115,12 +4275,14 @@ export class LabReportService {
                   methodology: value.methodology,
                   referenceRangeId: value.referenceRangeId,
                   referenceDisplay: value.referenceDisplay,
+                  ...flagChoiceData(value),
                 }
               : {
                   methodology: value.methodology,
                   referenceRangeId: value.referenceRangeId,
                   referenceDisplay: value.referenceDisplay,
                   ...(stored?.unit == null ? { unit: value.unit } : {}),
+                  ...flagChoiceData(value),
                 };
           if (Object.values(data).some((v) => v !== undefined)) {
             await tx.labReportResultValue.update({
@@ -4152,11 +4314,13 @@ export class LabReportService {
             methodology: value.methodology,
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
-            // Per-parameter report highlighting (QUALITATIVE / SEMI_QUANTITATIVE
-            // only; the print builder ignores it for quantitative values). When
-            // the client omits it default to "off" with no styling.
-            highlightInReport: value.highlightInReport ?? false,
-            highlightLogic: value.highlightLogic ?? null,
+            // The technician's Default / Highlight / Not Highlight choice (all result
+            // types); a row created without one starts on DEFAULT.
+            flagOption: value.flagOption ?? ResultFlagOption.DEFAULT,
+            highlightLogic:
+              value.flagOption === ResultFlagOption.HIGHLIGHT
+                ? (value.highlightLogic ?? null)
+                : null,
             source: ResultValueSource.MANUAL,
             enteredAt: now,
             enteredBy: actorId,
@@ -4168,8 +4332,8 @@ export class LabReportService {
             methodology: value.methodology,
             referenceRangeId: value.referenceRangeId,
             referenceDisplay: value.referenceDisplay,
-            highlightInReport: value.highlightInReport ?? false,
-            highlightLogic: value.highlightLogic ?? null,
+            // Omitted = leave the stored choice as it is.
+            ...flagChoiceData(value),
             source: ResultValueSource.MANUAL,
             enteredAt: now,
             enteredBy: actorId,
@@ -5106,6 +5270,7 @@ export class LabReportService {
               sortOrder: true,
               notes: true,
               resultType: true,
+              abnormalFlagLogic: true,
             },
           });
     const paramNameById = new Map(
@@ -5116,6 +5281,11 @@ export class LabReportService {
     // lower/upper limit to compare against.
     const resultTypeByParamId = new Map(
       resultParams.map((p) => [p.id, p.resultType]),
+    );
+    // Each parameter's Abnormal Flag Logic (v1.3): the style an out-of-range Quantitative value
+    // prints in under Default, and the starting style of a Technician's Highlight.
+    const paramStyleByParamId = new Map(
+      resultParams.map((p) => [p.id, p.abnormalFlagLogic]),
     );
     const groupNameByParamId = new Map(
       resultParams.map((p) => [p.id, p.groupName ?? '']),
@@ -5180,94 +5350,116 @@ export class LabReportService {
               id: true,
               lowerLimit: true,
               upperLimit: true,
-              abnormalFlagLogic: true,
             },
           });
     const rangeById = new Map(referenceRanges.map((r) => [r.id, r]));
 
-    // Classify one observed reading: is it out of its resolved reference range
-    // (QUANTITATIVE only), and what is the display HTML? `abnormal` is the
-    // single source of truth for both the `{is_observed_*_abnormal}` tags and
-    // the styling — `html` is the escaped value, wrapped in the configured
-    // abnormal-flag markup only when abnormal, so `observed1`/`observed2` render
-    // as rich text downstream (see `RICH_TEXT_KEYS` in `template-render.service`
-    // and `buildTestBodyHtml`). `observed1` and `observed2` are classified
-    // independently against the same range — unlike the trend chart
-    // (`findTrend`), which flags `observed1` only.
+    // Classify one observed reading: how does it print? All the Abnormal Flag Logic v1.3
+    // rules live in `resolvePrintStyle` (blank / Not Highlight / Highlight / Default, per result
+    // type); this only turns its decision into markup. `abnormal` stays true only when the system
+    // itself judged a Quantitative value out of range (Default) — it drives the
+    // `{is_observed_*_abnormal}` tags, so a technician's Highlight or Not Highlight never flips
+    // them. `html` is the escaped value, wrapped in the style's markup (plus the word Low/High
+    // for a "…and High Low" style) only when styled, so `observed1`/`observed2` render as rich
+    // text downstream (see `RICH_TEXT_KEYS` in `template-render.service` and
+    // `buildTestBodyHtml`). `observed1` and `observed2` are classified independently against the
+    // same range and share the one per-parameter option — unlike the trend chart (`findTrend`),
+    // which flags `observed1` only.
+    // `renderMark` turns a decision into markup; the decision itself comes either from the live
+    // rules (`classifyObserved`) or, once the report is finished, from the frozen snapshot.
+    const renderMark = (
+      raw: string,
+      decision: {
+        style: AbnormalFlag | null;
+        label: 'Low' | 'High' | null;
+        abnormal: boolean;
+      },
+    ): { html: string; abnormal: boolean } => {
+      // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
+      const safe = observedValueHtml(raw);
+      if (!decision.style) return { html: safe, abnormal: false };
+      const text = decision.label ? `${safe} ${decision.label}` : safe;
+      return {
+        html: `<span style="${abnormalFlagStyle(decision.style)}">${text}</span>`,
+        abnormal: decision.abnormal,
+      };
+    };
     const classifyObserved = (
       raw: string,
       resultParamId: string,
       referenceRangeId: string | null,
-      highlight: { on: boolean; logic: AbnormalFlag | null },
-    ): { html: string; abnormal: boolean } => {
-      // Escaped, and a value written over several lines (or with spaces / tabs) keeps its whitespace exactly as typed.
-      const safe = observedValueHtml(raw);
-      const resultType = resultTypeByParamId.get(resultParamId);
-      const range = referenceRangeId
-        ? rangeById.get(referenceRangeId)
-        : undefined;
-      const abnormal = isObservedAbnormal(raw, resultType, range);
-      if (abnormal) {
-        return {
-          html: `<span style="${abnormalFlagStyle(range!.abnormalFlagLogic)}">${safe}</span>`,
-          abnormal: true,
-        };
+      choice: { option: ResultFlagOption; style: AbnormalFlag | null },
+    ): { html: string; abnormal: boolean } =>
+      renderMark(
+        raw,
+        resolvePrintStyle({
+          resultType: resultTypeByParamId.get(resultParamId),
+          paramStyle: paramStyleByParamId.get(resultParamId) ?? null,
+          flagOption: choice.option,
+          selectedStyle: choice.style,
+          observed: raw,
+          range: referenceRangeId ? rangeById.get(referenceRangeId) : undefined,
+        }),
+      );
+
+    // A finished (printable) report prints from the decision frozen when it was validated, so a
+    // later Master Data edit or branch sync cannot change it. A finished report with no usable
+    // snapshot (finished before the freeze existed and not backfilled yet) follows the live rules.
+    const frozenPrint = isReportPrintable(report.status);
+    const snapshotByValueId = new Map<string, ResultPrintSnapshot>();
+    if (frozenPrint && !hideResults) {
+      let unfrozen = 0;
+      for (const v of report.resultValues) {
+        const snap = parseResultPrintSnapshot(v.printSnapshot);
+        if (snap) snapshotByValueId.set(v.id, snap);
+        else unfrozen++;
       }
-      // Technician-chosen per-parameter highlighting. Scoped to QUALITATIVE /
-      // SEMI_QUANTITATIVE values only (quantitative values are flagged above
-      // from their numeric range, never from this manual control) and never
-      // applied to a blank reading. `abnormal` stays false — this styling is a
-      // deliberate report-presentation choice, not an out-of-range signal, so
-      // the `{is_observed_*_abnormal}` tags are unaffected.
-      if (
-        highlight.on &&
-        resultType !== ResultType.QUANTITATIVE &&
-        raw.trim() !== ''
-      ) {
-        return {
-          // `reportHighlightStyle` (not `abnormalFlagStyle`): the manual
-          // highlight uses a calmer semibold/deep-red treatment, kept distinct
-          // from the brighter out-of-range abnormal styling above.
-          html: `<span style="${reportHighlightStyle(highlight.logic ?? AbnormalFlag.BOLD_AND_RED)}">${safe}</span>`,
-          abnormal: false,
-        };
+      if (unfrozen > 0) {
+        this.logger.warn(
+          `Report ${id} (${report.status}): ${unfrozen} reading(s) have no frozen print, printed with the live rules`,
+        );
       }
-      return { html: safe, abnormal: false };
-    };
+    }
 
     // `resultValues` (the include on `LAB_REPORT_DETAIL_INCLUDE`) carries no
     // `orderBy` — rows come back in whatever order Postgres returns them,
     // not necessarily insertion or entry order. A multi-parameter test (e.g.
     // CBC) must print in the catalogue's configured `sortOrder`, not
     // arbitrary DB order.
+    const sortOf = (v: { id: string; resultParamId: string }): number =>
+      snapshotByValueId.get(v.id)?.order ??
+      sortOrderByParamId.get(v.resultParamId) ??
+      0;
     const sortedResultValues = [...report.resultValues].sort(
-      (a, b) =>
-        (sortOrderByParamId.get(a.resultParamId) ?? 0) -
-        (sortOrderByParamId.get(b.resultParamId) ?? 0),
+      (a, b) => sortOf(a) - sortOf(b),
     );
 
     const realResults = sortedResultValues.map((v) => {
-      // Both observed values share the one per-parameter highlight choice the
-      // technician set on the result-entry row (applied to Observed 1 and
-      // Observed 2 alike).
+      // Both observed values share the one per-parameter choice (Default / Highlight / Not
+      // Highlight + the Highlight style) the technician set on the result-entry row.
       const highlight = {
-        on: v.highlightInReport,
-        logic: v.highlightLogic,
+        option: v.flagOption,
+        style: v.highlightLogic,
       };
-      const o1 = classifyObserved(
-        v.observed1 ?? '',
-        v.resultParamId,
-        v.referenceRangeId,
-        highlight,
-      );
-      const o2 = classifyObserved(
-        v.observed2 ?? '',
-        v.resultParamId,
-        v.referenceRangeId,
-        highlight,
-      );
+      const snap = snapshotByValueId.get(v.id);
+      const o1 = snap
+        ? renderMark(v.observed1 ?? '', snap.o1)
+        : classifyObserved(
+            v.observed1 ?? '',
+            v.resultParamId,
+            v.referenceRangeId,
+            highlight,
+          );
+      const o2 = snap
+        ? renderMark(v.observed2 ?? '', snap.o2)
+        : classifyObserved(
+            v.observed2 ?? '',
+            v.resultParamId,
+            v.referenceRangeId,
+            highlight,
+          );
       return {
-        parameter_name: paramNameById.get(v.resultParamId) ?? '',
+        parameter_name: snap?.name ?? paramNameById.get(v.resultParamId) ?? '',
         // `observed1`/`observed2` are rich HTML (escaped, optionally wrapped in
         // the configured abnormal-flag styling when out of range) so the
         // `{observed1}`/`{observed2}` tags carry styling automatically.
@@ -5288,8 +5480,15 @@ export class LabReportService {
         // templates authored against that tag don't need to be re-authored.
         method_name: v.methodology ?? '',
         reference_display: v.referenceDisplay ?? '',
-        group_name: groupNameByParamId.get(v.resultParamId) ?? '',
-        result_note: notesByParamId.get(v.resultParamId) ?? '',
+        group_name:
+          snap?.group ?? groupNameByParamId.get(v.resultParamId) ?? '',
+        // The technician's own text for this report is live; the configured Note is the frozen one.
+        result_note: snap
+          ? effectiveParameterNoteHtml(
+              noteOverrideByParamId.get(v.resultParamId),
+              snap.note,
+            )
+          : (notesByParamId.get(v.resultParamId) ?? ''),
         overall_result: overallResultByParamId.get(v.resultParamId) ?? '',
       };
     });
@@ -6885,6 +7084,16 @@ export class LabReportService {
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      // The status was read before the lock: look again, so two validates (or a validate racing an
+      // Edit Report) cannot both freeze and finish the same report.
+      const locked = await tx.labReport.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (locked) this.assertTransition('validate', locked.status);
+      // The report becomes printable here, so this is the moment its print is frozen: the same
+      // transaction as the status change, so there is never a printable report without its snapshot.
+      await this.freezeReportPrint(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: {
@@ -6919,6 +7128,107 @@ export class LabReportService {
     });
   }
 
+  /**
+   * Freeze how every reading of a report prints (see `print-snapshot.util.ts`). Called by `validate()`
+   * inside its transaction; it overwrites any earlier snapshot, so a report that was reopened and is
+   * validated again adopts the rules of that day. A reading whose parameter no longer exists is left
+   * unfrozen (the print then follows the live rules and logs a warning).
+   *
+   * `updated_at` is left untouched: freezing is bookkeeping, not an edit of the reading.
+   */
+  private async freezeReportPrint(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    const values = await tx.labReportResultValue.findMany({
+      where: { labReportId: reportId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        resultParamId: true,
+        observed1: true,
+        observed2: true,
+        flagOption: true,
+        highlightLogic: true,
+        referenceRangeId: true,
+      },
+    });
+    if (values.length === 0) return;
+    const params = await tx.labTestResultParam.findMany({
+      where: { id: { in: [...new Set(values.map((v) => v.resultParamId))] } },
+      select: {
+        id: true,
+        parameterName: true,
+        groupName: true,
+        sortOrder: true,
+        resultType: true,
+        abnormalFlagLogic: true,
+        notes: true,
+      },
+    });
+    const paramById = new Map(params.map((p) => [p.id, p]));
+    const rangeIds = [
+      ...new Set(
+        values
+          .map((v) => v.referenceRangeId)
+          .filter((r): r is string => r != null),
+      ),
+    ];
+    const ranges =
+      rangeIds.length === 0
+        ? []
+        : await tx.labTestReferenceRange.findMany({
+            where: { id: { in: rangeIds } },
+            select: { id: true, lowerLimit: true, upperLimit: true },
+          });
+    const rangeById = new Map(ranges.map((r) => [r.id, r]));
+    const ids: string[] = [];
+    const snapshots: string[] = [];
+    for (const v of values) {
+      const param = paramById.get(v.resultParamId);
+      if (!param) {
+        this.logger.warn(
+          `Report ${reportId}: parameter ${v.resultParamId} no longer exists, its reading was not frozen`,
+        );
+        continue;
+      }
+      ids.push(v.id);
+      snapshots.push(
+        JSON.stringify(
+          buildResultPrintSnapshot(
+            param,
+            v,
+            v.referenceRangeId ? rangeById.get(v.referenceRangeId) : undefined,
+          ),
+        ),
+      );
+    }
+    if (ids.length === 0) return;
+    // ONE statement for every reading: a report can have hundreds of parameters, and one round trip each
+    // inside this transaction (5 s limit) would make a Validate fail on a slow or remote database. A raw UPDATE
+    // does not touch `updated_at`, so freezing stays bookkeeping and not an edit of the reading.
+    await tx.$executeRaw`UPDATE lab_report_result_values AS v
+      SET print_snapshot = d.snap::jsonb
+      FROM unnest(${ids}::text[], ${snapshots}::text[]) AS d(id, snap)
+      WHERE v.id = d.id AND v.tenant_id = ${tenantId}`;
+  }
+
+  /** Drop the frozen print of a report (it is reopened); the next validate freezes it afresh. */
+  private async clearReportPrintFreeze(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    reportId: string,
+  ): Promise<void> {
+    await tx.labReportResultValue.updateMany({
+      where: {
+        labReportId: reportId,
+        tenantId,
+        printSnapshot: { not: Prisma.DbNull },
+      },
+      data: { printSnapshot: Prisma.DbNull },
+    });
+  }
+
   /** Validation Pending | Result Done | Approved -> Saved (send back for correction). */
   async editReport(
     id: string,
@@ -6932,6 +7242,7 @@ export class LabReportService {
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      await this.clearReportPrintFreeze(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: { status: LabReportStatus.SAVED },
@@ -7391,6 +7702,7 @@ export class LabReportService {
 
     return this.prisma.withTenant(tenantId, async (tx) => {
       await this.lockReportForWrite(tx, tenantId, id);
+      await this.clearReportPrintFreeze(tx, tenantId, id);
       const updated = await tx.labReport.update({
         where: { id },
         data: { status: LabReportStatus.ERROR_REPORTED },
@@ -7431,7 +7743,7 @@ export class LabReportService {
    * performs the report-side reset.
    *
    * A re-run starts the notes over too, like a fresh report: the technician's
-   * parameter Notes are soft-deleted and the five Notes-section texts are cleared,
+   * parameter Notes and the Overall Result are soft-deleted and the five Notes-section texts are cleared,
    * so the configured (Master Data) notes show again; the Print choice goes back
    * to the branch's default (every section ticked or none, per the setting). The
    * text that was cleared is NOT kept.
@@ -7465,10 +7777,18 @@ export class LabReportService {
       const now = new Date();
       await tx.labReportResultValue.updateMany({
         where: { labReportId: id, deletedAt: null },
-        data: { deletedAt: now },
+        // Same reason as in `resetReportsForReturn`: the soft-deleted row is revived by the next
+        // save or analyzer result, so the Default / Highlight / Not Highlight choice starts over.
+        data: { deletedAt: now, ...FRESH_FLAG_CHOICE },
       });
       // The technician's own parameter Notes: the configured Note shows again.
       await tx.labReportParameterNote.updateMany({
+        where: { labReportId: id, deletedAt: null },
+        data: { deletedAt: now },
+      });
+      // The Overall Result belongs to the result that is being redone: left in place, the old comment would print
+      // next to the new values. Cleared like on a sample return (`resetReportsForReturn`); a later save revives the row.
+      await tx.labReportOverallResult.updateMany({
         where: { labReportId: id, deletedAt: null },
         data: { deletedAt: now },
       });

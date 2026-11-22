@@ -277,6 +277,7 @@ describe('department flow - the controller: the two dropdowns need no user', () 
       undefined as never,
       undefined as never,
       undefined as never,
+      undefined as never,
     );
     return { controller, labReportService };
   }

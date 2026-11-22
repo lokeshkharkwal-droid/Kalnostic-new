@@ -31,6 +31,19 @@ docs {
   Status still becomes RESULT_DONE either way — see "13 Approve", which
   enforces the deferral.
 
+  **Freezes the print.** In the same transaction as the status change, every
+  reading's print decision (how Observed 1 and Observed 2 are styled, the High/Low
+  word, the abnormal tag) and the parameter's name, group, order, result type and
+  configured Note are stored on the reading (`printSnapshot`). From then on the
+  printed report, Print All and the shared/public report read that snapshot while
+  the report is Result Done / Approved / Published, so a later Master Data edit or
+  branch sync never changes a finished report. Validating again after a reopen
+  (Edit Report, Re-run, return, Error Reported) overwrites the snapshot with the
+  rules of that day. The technician's own parameter Note for the report stays live.
+  The status is re-checked under the report's row lock, so a racing second
+  validate or Edit Report gets 409 `INVALID_LAB_REPORT_TRANSITION` with nothing
+  written.
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
   `INVALID_LAB_REPORT_TRANSITION` if the report isn't Validation Pending.
 }

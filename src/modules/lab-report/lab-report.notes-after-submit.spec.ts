@@ -1,4 +1,4 @@
-import { LabReportStatus } from '@prisma/client';
+import { LabReportStatus, Prisma } from '@prisma/client';
 import { LabReportService } from './lab-report.service';
 import { LabReportParameterNoteNotEditableException } from './exceptions/lab-report.exceptions';
 import { assertReportWritable } from './utils/sent-out-report.util';
@@ -186,6 +186,7 @@ describe('LabReportService.resetForRerun starts the notes over', () => {
     const tx = {
       labReportResultValue: { updateMany: jest.fn().mockResolvedValue({}) },
       labReportParameterNote: { updateMany: jest.fn().mockResolvedValue({}) },
+      labReportOverallResult: { updateMany: jest.fn().mockResolvedValue({}) },
       labReport: {
         findFirst: jest
           .fn()
@@ -217,7 +218,13 @@ describe('LabReportService.resetForRerun starts the notes over', () => {
     await svc.resetForRerun('r1', 't1', 'A', 'p1');
     expect(tx.labReportResultValue.updateMany).toHaveBeenCalledWith({
       where: { labReportId: 'r1', deletedAt: null },
-      data: { deletedAt: expect.any(Date) as Date },
+      // Re-run also starts the abnormal choice over (Default, no style).
+      data: {
+        deletedAt: expect.any(Date) as Date,
+        flagOption: 'DEFAULT',
+        highlightLogic: null,
+        printSnapshot: Prisma.DbNull,
+      },
     });
     expect(tx.labReportParameterNote.updateMany).toHaveBeenCalledWith({
       where: { labReportId: 'r1', deletedAt: null },

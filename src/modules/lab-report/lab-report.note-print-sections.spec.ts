@@ -94,6 +94,9 @@ function makeService(
 ): LabReportService {
   const svc = Object.create(LabReportService.prototype) as LabReportService;
   Object.assign(svc, {
+    // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+    config: { get: jest.fn() },
+    logger: { warn: jest.fn(), log: jest.fn() },
     loadReportDetail: jest.fn().mockResolvedValue(rep),
     findById: jest.fn().mockResolvedValue(rep),
     resolveStoredSignatories: jest.fn().mockResolvedValue([]),
@@ -275,6 +278,9 @@ describe('updateNotePrintSections', () => {
     const update = jest.fn().mockResolvedValue({});
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
+      // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+      config: { get: jest.fn() },
+      logger: { warn: jest.fn(), log: jest.fn() },
       requireBranch: (b: string) => b,
       requireReport: jest.fn().mockResolvedValue({
         id: 'r1',

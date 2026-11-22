@@ -72,6 +72,9 @@ function report(kind: Kind, member: string | null = 'm1') {
 function makeService(rep: ReturnType<typeof report>): LabReportService {
   const svc = Object.create(LabReportService.prototype) as LabReportService;
   Object.assign(svc, {
+    // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+    config: { get: jest.fn() },
+    logger: { warn: jest.fn(), log: jest.fn() },
     loadReportDetail: jest.fn().mockResolvedValue(rep),
     findById: jest.fn().mockResolvedValue(rep),
     resolveStoredSignatories: jest.fn().mockResolvedValue([]),

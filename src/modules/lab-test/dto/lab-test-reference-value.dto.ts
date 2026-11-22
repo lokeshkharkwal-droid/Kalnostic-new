@@ -1,4 +1,4 @@
-import { AbnormalFlag, AgeUnit, ReferenceGender } from '@prisma/client';
+import { AgeUnit, ReferenceGender } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
@@ -51,10 +51,6 @@ export class LabTestReferenceValueDto {
   @IsOptional()
   @MaxLength(255)
   displayOfReferenceRange?: string;
-
-  @IsEnum(AbnormalFlag)
-  @IsOptional()
-  abnormalFlagLogic?: AbnormalFlag;
 
   /**
    * Position of this row in the test's whole Reference Value list (the

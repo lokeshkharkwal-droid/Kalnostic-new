@@ -1,4 +1,5 @@
 import {
+  AbnormalFlag,
   ParameterType,
   ResultEntryMode,
   ResultGroupLayout,
@@ -140,6 +141,19 @@ export class LabTestResultParamDto {
   @IsString()
   @IsOptional()
   defaultValue?: string;
+
+  /**
+   * How an abnormal result of this parameter is styled in the printed report
+   * (Abnormal Flag Logic v1.3 — moved up from the reference range / value).
+   * OPTIONAL (manager decision 2026-11-22). On create, omitted or `null` = saved with no style.
+   * On update, omitted = leave it as it is; `null` = clear it; a value = set it. A parameter with
+   * no style is never styled automatically; the Technician's Highlight then starts on Bold and
+   * Red. A "…_HIGH_LOW" style is only valid when `resultType` is QUANTITATIVE;
+   * `LabTestService.assertParam` rejects it otherwise.
+   */
+  @IsEnum(AbnormalFlag)
+  @IsOptional()
+  abnormalFlagLogic?: AbnormalFlag | null;
 
   @IsInt()
   @Min(0)

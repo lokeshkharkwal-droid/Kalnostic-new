@@ -5,6 +5,7 @@ import {
   LabReportStatus,
   MultiStepProcessType,
   MultiStepStage,
+  AbnormalFlag,
   ParameterType,
   OrderStatus,
   PaymentStatus,
@@ -183,6 +184,12 @@ export interface LabReportResultParam {
    * .findAll`'s `groupName`/`groupNames` filter). Empty array = this
    * parameter isn't tagged into any Overall Result group. */
   overallResultGroups: string[];
+  /** The parameter's Abnormal Flag Logic (Master Data > Edit Result Group): the style an
+   * out-of-range Quantitative value prints in, and the style the Technician's Highlight
+   * dropdown starts on (its basic style when this is a "…and High Low" style). NULL = the
+   * parameter has no style (optional): Default readings are never styled and Highlight
+   * starts on Bold and Red. */
+  abnormalFlagLogic: AbnormalFlag | null;
   /** The parameter's configured Note (Master Data > Add Test > Add Result >
    * Notes), PLAIN text, or null when it has none. It is only the default: the
    * technician's own text for this report (`LabReportParameterNote`) replaces it
