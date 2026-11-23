@@ -70,6 +70,8 @@ export const PDF_REPORT_TEMPLATE_TYPES = [
   'pharmacy_sales_invoice_print',
   // ── Inventory ──
   'inventory_invoice',
+  'inventory_requisition',
+  'inventory_transfer',
   // ── Original Kalnostics keys (kept for existing templates) ──
   'invoice',
   'prescription',
@@ -144,6 +146,8 @@ export const PDF_REPORT_TEMPLATE_TYPE_LABELS: Record<
   pharmacy_sales_invoice_print: 'Pharmacy Sales Invoice',
   // Inventory
   inventory_invoice: 'Inventory Sales Invoice',
+  inventory_requisition: 'Inventory Requisition',
+  inventory_transfer: 'Inventory Transfer Note',
   // Original Kalnostics keys
   invoice: 'Invoice / Receipt',
   prescription: 'Prescription',

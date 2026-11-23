@@ -19,6 +19,9 @@ import type { AdvanceContextType, AdvanceDocument } from './types';
  */
 export function toAdvanceContextType(type: string): AdvanceContextType {
   if (type === 'invoice') return 'order_invoice';
+  // Inventory documents (invoice / requisition / transfer) are all line-item +
+  // totals shaped, so they preview against the invoice fixture.
+  if (type.startsWith('inventory_')) return 'order_invoice';
   return 'lab_report';
 }
 
