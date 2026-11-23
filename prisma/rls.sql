@@ -480,6 +480,17 @@ ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_decimals
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_critical_minmax;
 ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_critical_minmax
   CHECK (critical_min IS NULL OR critical_max IS NULL OR critical_min <= critical_max);
+-- Abnormal Flag Logic v1.3: a "...and High Low" style is Quantitative-only (defence in
+-- depth; the API rejects it first). Mirrors migration 20261119120100.
+ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_high_low_quantitative;
+ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_high_low_quantitative
+  CHECK (
+    abnormal_flag_logic NOT IN (
+      'RED_HIGH_LOW', 'BOLD_HIGH_LOW', 'ITALIC_HIGH_LOW', 'BOLD_AND_ITALIC_HIGH_LOW',
+      'BOLD_AND_RED_HIGH_LOW', 'ITALIC_AND_RED_HIGH_LOW', 'BOLD_ITALIC_AND_RED_HIGH_LOW'
+    )
+    OR result_type = 'QUANTITATIVE'
+  );
 
 -- ── lab_test_reference_ranges ─────────────────────────────────────────────────────
 ALTER TABLE lab_test_reference_ranges ENABLE ROW LEVEL SECURITY;

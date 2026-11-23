@@ -59,4 +59,10 @@ docs {
   - `attachments[]`: `{ data (base64), name, type }`.
   - `schedule` / `expiryDate`: ISO datetimes (defer / drop-after).
   - `campaign`, `userTimezone`: optional.
+
+  ## Errors
+  - `403 TENANT_NOT_REGISTERED_WITH_EXCHANGE` — the tenant is not registered with
+    the external Exchange (`exchange_registered_at` is null). Every deliverable
+    send (this endpoint and all Share endpoints) is blocked until SiteAdmin
+    registers the tenant (Business → Exchange). See Get Exchange Status.
 }

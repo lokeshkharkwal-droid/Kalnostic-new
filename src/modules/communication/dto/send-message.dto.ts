@@ -80,7 +80,7 @@ export class SendMessageDto {
   @Type(() => RecipientDto)
   recipients!: RecipientDto[];
 
-  /** Placeholder values ({pn}, {branch_name}, …) substituted into the body. */
+  /** Placeholder values ({patient_name}, {user_name}, …) substituted into the body. */
   @IsOptional()
   @IsObject()
   variables?: Record<string, string>;

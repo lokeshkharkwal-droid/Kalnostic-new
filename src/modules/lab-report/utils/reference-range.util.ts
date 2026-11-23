@@ -4,8 +4,14 @@ import {
   AgeUnit,
   Gender,
   ReferenceGender,
+  ResultFlagOption,
   ResultType,
 } from '@prisma/client';
+import {
+  baseStyleOf,
+  isHighLowStyle,
+  HIGHLIGHT_FALLBACK_STYLE,
+} from '../../../common/utils/abnormal-flag.util';
 import {
   classifyAgeMatch,
   type AgeMatch,
@@ -41,28 +47,56 @@ export function genderMatches(
 export type TrendFlag = 'Low' | 'Normal' | 'High';
 
 /**
- * Classify one trend point's primary observed value against its already-resolved
- * reference range bounds. Narrow, quantitative-only, no critical tier (product
- * decision — see `LabReportService.findTrend`'s own doc comment for why this is
- * NOT the deferred system-wide range-classification feature). Returns `null`
- * whenever the inputs don't actually support a real answer — no range was
- * resolved for this value, or the bound(s) needed are themselves null, or
- * `observed1` isn't a finite number (always true for qualitative results,
- * which never carry a numeric reference range at all) — never guessed.
+ * What a reading must look like to be compared with a reference range: an optional
+ * sign, digits and at most one decimal point (`135`, `-2.1`, `+5`, `.5`, `5.`).
+ * Anything else — an operator (`<5`, `>600`), letters (`Hemolysed`), a thousands separator
+ * (`1,200`), an exponent or hex form (`1e3`, `0x1F`) — is NOT comparable.
  *
- * A blank reading (`null`, `''`, or whitespace only) is treated as "no numeric
- * value" (→ `null`), NOT as `0`: `Number('')` is `0` in JS, which would wrongly
- * flag an empty result as out-of-range for any range whose lower limit is above
- * zero (the common case) — e.g. an unfilled Observed 2.
+ * `Number()` alone is not used because it also accepts `1e3` and `0x1F`, which a
+ * technician could type by accident and would then be compared as 1000 or 31.
+ */
+// Written without overlapping alternatives (`\d+(?:\.\d*)?`, not `\d+\.?\d*`) so a long run of digits followed by a
+// letter fails in linear time instead of backtracking quadratically.
+const COMPARABLE_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+/**
+ * Read a reading as a number the system can compare with a reference range, or `null`
+ * when it cannot (blank, or not a plain number — see {@link COMPARABLE_NUMBER}). A blank
+ * reading is never `0`: `Number('')` is `0` in JS, which would wrongly flag an unfilled
+ * result as out-of-range for any range whose lower limit is above zero.
+ *
+ * One shared rule for the printed report, the trend chart and (mirrored in
+ * `range-highlight.ts`) the Technician entry grid.
+ *
+ * @param value the reading as typed / received
+ * @returns the number, or `null` when the reading is not comparable
+ */
+export function parseComparableNumber(
+  value: string | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = value.trim();
+  if (!COMPARABLE_NUMBER.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Classify one reading against its already-resolved reference range bounds. Narrow,
+ * quantitative-only, no critical tier (product decision — see
+ * `LabReportService.findTrend`'s own doc comment). Returns `null` whenever the inputs
+ * don't actually support a real answer — no range was resolved for this value, or both
+ * bounds are null, or the reading is not a comparable number (see
+ * {@link parseComparableNumber}; always true for qualitative results, which never carry a
+ * numeric reference range) — never guessed.
  */
 export function computeTrendFlag(
   observed1: string | null,
   range: { lowerLimit: unknown; upperLimit: unknown } | undefined,
 ): TrendFlag | null {
   if (!range) return null;
-  const trimmed = observed1 === null ? '' : observed1.trim();
-  const value = trimmed === '' ? NaN : Number(trimmed);
-  if (!Number.isFinite(value)) return null;
+  const value = parseComparableNumber(observed1);
+  if (value === null) return null;
 
   const lower =
     range.lowerLimit === null || range.lowerLimit === undefined
@@ -82,23 +116,11 @@ export function computeTrendFlag(
 }
 
 /**
- * The inline CSS that renders one {@link AbnormalFlag} choice in a printed
- * report. Keyed off `LabTestReferenceRange.abnormalFlagLogic` (the styling the
- * lab configured for an out-of-range quantitative reading under Master Data →
- * Reference Range), this is what wraps an observed value when it falls below the
- * lower limit or above the upper limit — see
- * `LabReportService.buildPrintContext`. Returns a bare `style` body (no quotes,
- * no trailing semicolon) so callers can drop it straight into
- * `<span style="…">`. Pure — no DB, no escaping.
- */
-/**
- * Whether one observed reading should be treated as abnormal (out of range) for
- * report display. True only for a QUANTITATIVE parameter whose value falls below
- * the lower limit or above the upper limit of its resolved reference range (via
- * {@link computeTrendFlag}). Qualitative/semi-quantitative parameters, blank or
- * non-numeric readings, and readings with no resolved range are all `false`.
- * Single source of truth for both the `{is_observed_*_abnormal}` tags and the
- * abnormal styling in `LabReportService.buildPrintContext`.
+ * Whether one observed reading is out of its reference range for report display. True
+ * only for a QUANTITATIVE parameter whose reading is a comparable number below the lower
+ * limit or above the upper limit of its resolved range (via {@link computeTrendFlag}).
+ * Qualitative/semi-quantitative parameters, blank or non-comparable readings, and readings
+ * with no resolved range are all `false`.
  */
 export function isObservedAbnormal(
   observed: string | null,
@@ -110,56 +132,99 @@ export function isObservedAbnormal(
   return flag === 'Low' || flag === 'High';
 }
 
-export function abnormalFlagStyle(flag: AbnormalFlag): string {
-  switch (flag) {
-    case AbnormalFlag.BOLD_AND_RED:
-      return 'font-weight:bold;color:#d32f2f';
-    case AbnormalFlag.BOLD_ONLY:
-      return 'font-weight:bold';
-    case AbnormalFlag.ITALIC:
-      return 'font-style:italic';
-    case AbnormalFlag.UNDERLINE:
-      return 'text-decoration:underline';
-    case AbnormalFlag.COLOUR_HIGHLIGHT:
-      return 'background-color:#fff176';
-    case AbnormalFlag.ITALIC_AND_RED:
-      return 'font-style:italic;color:#d32f2f';
-    case AbnormalFlag.BOLD_AND_ITALIC:
-      return 'font-weight:bold;font-style:italic';
-    case AbnormalFlag.BOLD_ITALIC_AND_RED:
-      return 'font-weight:bold;font-style:italic;color:#d32f2f';
-  }
-}
+/** The inline CSS of each BASIC style (a High Low style prints as the basic style it extends). */
+const BASIC_STYLE_CSS: Readonly<Partial<Record<AbnormalFlag, string>>> = {
+  [AbnormalFlag.RED_ONLY]: 'color:#d32f2f',
+  [AbnormalFlag.BOLD_ONLY]: 'font-weight:bold',
+  [AbnormalFlag.ITALIC]: 'font-style:italic',
+  [AbnormalFlag.BOLD_AND_ITALIC]: 'font-weight:bold;font-style:italic',
+  [AbnormalFlag.BOLD_AND_RED]: 'font-weight:bold;color:#d32f2f',
+  [AbnormalFlag.ITALIC_AND_RED]: 'font-style:italic;color:#d32f2f',
+  [AbnormalFlag.BOLD_ITALIC_AND_RED]:
+    'font-weight:bold;font-style:italic;color:#d32f2f',
+  [AbnormalFlag.UNDERLINE]: 'text-decoration:underline',
+  [AbnormalFlag.COLOUR_HIGHLIGHT]: 'background-color:#fff176',
+};
 
 /**
- * Visual style for a value the technician manually flagged via the Test Entry
- * "Highlight in Report" control (QUALITATIVE / SEMI_QUANTITATIVE only). Kept
- * SEPARATE from {@link abnormalFlagStyle} on purpose: out-of-range quantitative
- * values keep their long-standing bright bold red, while this manual highlight
- * uses a calmer, more professional clinical treatment — semibold weight with a
- * deeper, less-saturated red — so a deliberately-emphasised categorical result
- * reads as a clean highlight rather than an alarm. Shares the `AbnormalFlag`
- * palette for the non-default options so the one field can drive both.
+ * The inline CSS that renders one {@link AbnormalFlag} choice in a printed report — one
+ * look for every way a style is applied (a Quantitative value outside its range, or a
+ * Technician's Highlight). A "…and High Low" style gets the CSS of the basic style it
+ * extends; the High/Low word itself is added by the caller. Returns a bare `style` body
+ * (no quotes, no trailing semicolon) so callers can drop it straight into
+ * `<span style="…">`. Pure — no DB, no escaping.
  */
-export function reportHighlightStyle(flag: AbnormalFlag): string {
-  switch (flag) {
-    case AbnormalFlag.BOLD_AND_RED:
-      return 'font-weight:600;color:#b91c1c';
-    case AbnormalFlag.BOLD_ONLY:
-      return 'font-weight:600';
-    case AbnormalFlag.ITALIC:
-      return 'font-style:italic';
-    case AbnormalFlag.UNDERLINE:
-      return 'text-decoration:underline';
-    case AbnormalFlag.COLOUR_HIGHLIGHT:
-      return 'background-color:#fde68a;padding:0 2px;border-radius:2px';
-    case AbnormalFlag.ITALIC_AND_RED:
-      return 'font-style:italic;color:#b91c1c';
-    case AbnormalFlag.BOLD_AND_ITALIC:
-      return 'font-weight:600;font-style:italic';
-    case AbnormalFlag.BOLD_ITALIC_AND_RED:
-      return 'font-weight:600;font-style:italic;color:#b91c1c';
+export function abnormalFlagStyle(flag: AbnormalFlag): string {
+  // A value that is not one of the known styles (corrupt data, a new enum value without CSS yet) gets NO
+  // styling. It must never be turned into Bold and Red: that substitution is only allowed for the
+  // Technician's Highlight on a parameter with no style (`HIGHLIGHT_FALLBACK_STYLE`).
+  return BASIC_STYLE_CSS[baseStyleOf(flag)] ?? '';
+}
+
+/** What {@link resolvePrintStyle} decided for one reading. */
+export interface PrintStyleDecision {
+  /** The style to print the value in, or `null` for Normal (plain) style. */
+  style: AbnormalFlag | null;
+  /** The word to print beside the value — only for a "…and High Low" style on a number outside its range. */
+  label: 'Low' | 'High' | null;
+  /** True only when the system itself judged the value out of range (Default option). */
+  abnormal: boolean;
+}
+
+const NORMAL: PrintStyleDecision = {
+  style: null,
+  label: null,
+  abnormal: false,
+};
+
+/**
+ * THE single place the Abnormal Flag Logic v1.3 rules are applied: how one reading prints.
+ *
+ *  - blank reading → Normal (nothing to flag), whatever the option;
+ *  - NOT_HIGHLIGHT → Normal, whatever the value;
+ *  - HIGHLIGHT → the technician's chosen style (or, if none was chosen, the basic style of
+ *    the parameter's style, or Bold and Red when the parameter has no style), whatever the value,
+ *    for every result type; never a High Low word;
+ *  - DEFAULT → only a QUANTITATIVE reading that is a comparable number outside its range, of a
+ *    parameter that HAS a style, is styled, in that style, plus the word Low/High when that is a
+ *    High Low style; a parameter without a style, a reading that cannot be compared (`<5`, `>600`,
+ *    `Hemolysed`), a number with no range, and every Semi-Quantitative / Qualitative reading
+ *    print Normal.
+ *
+ * @param input the reading, its option and the parameter's setup
+ * @returns the style (null = Normal), the High/Low word (if any) and whether the system flagged it
+ */
+export function resolvePrintStyle(input: {
+  resultType: ResultType | null | undefined;
+  /** The parameter's Abnormal Flag Logic; null = no style set (optional). */
+  paramStyle: AbnormalFlag | null;
+  flagOption: ResultFlagOption;
+  /** The technician's Highlight choice (`highlightLogic`); read only under HIGHLIGHT. */
+  selectedStyle: AbnormalFlag | null;
+  observed: string | null;
+  range: { lowerLimit: unknown; upperLimit: unknown } | undefined;
+}): PrintStyleDecision {
+  if ((input.observed ?? '').trim() === '') return NORMAL;
+  if (input.flagOption === ResultFlagOption.NOT_HIGHLIGHT) return NORMAL;
+  if (input.flagOption === ResultFlagOption.HIGHLIGHT) {
+    return {
+      style: baseStyleOf(
+        input.selectedStyle ?? input.paramStyle ?? HIGHLIGHT_FALLBACK_STYLE,
+      ),
+      label: null,
+      abnormal: false,
+    };
   }
+  if (input.resultType !== ResultType.QUANTITATIVE) return NORMAL;
+  // No style set on the parameter: nothing to style a Default reading with.
+  if (input.paramStyle === null) return NORMAL;
+  const flag = computeTrendFlag(input.observed, input.range);
+  if (flag !== 'Low' && flag !== 'High') return NORMAL;
+  return {
+    style: input.paramStyle,
+    label: isHighLowStyle(input.paramStyle) ? flag : null,
+    abnormal: true,
+  };
 }
 
 /**

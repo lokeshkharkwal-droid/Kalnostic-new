@@ -54,6 +54,15 @@ describe('OrderSampleService — generateForOrderInTx sample name', () => {
       ]),
     },
     labTestSample: { findMany: jest.fn().mockResolvedValue(liveSamples) },
+    // The order already carries its grouping mode (decided when it first got samples).
+    order: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'order-1', groupingMode: 'DEPARTMENT_SAMPLE_NAME' },
+        ]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     tenant: {
       update: jest.fn().mockResolvedValue({ accessionCounter: 7 }),
     },

@@ -70,17 +70,27 @@ docs {
   Both fields are optional; older clients that omit them keep working. Unknown
   fields are rejected (400), so deploy the backend before a frontend that sends them.
 
-  **Report highlighting (QUALITATIVE / SEMI_QUANTITATIVE only).** The Test Entry
-  grid lets the technician highlight a categorical parameter's observed value(s)
-  on the generated report:
-  - `highlightInReport` (optional boolean, default false): when true, this
-    parameter's Observed 1 and Observed 2 render in the chosen style on the report.
-  - `highlightLogic` (optional enum, `AbnormalFlag`): which style to apply — only
-    `BOLD_AND_RED` is offered in the UI today. Read only when `highlightInReport`
-    is true.
-  These are honoured for qualitative/semi-quantitative parameters only; for a
-  quantitative parameter they are ignored by the print builder (its out-of-range
-  values are flagged automatically from the numeric reference range instead).
+  **Default / Highlight / Not Highlight (all three result types).** The Test Entry
+  grid lets the technician choose, per parameter, how its observed value(s) print:
+  - `flagOption` (optional enum `ResultFlagOption`): `DEFAULT` — the system decides (a
+    Quantitative number outside its range prints in the parameter's Abnormal Flag Logic
+    style, with the word High/Low if that is a "…with High and Low" style; everything
+    else prints Normal; a parameter with NO style set prints Normal too); `HIGHLIGHT` — print in `highlightLogic` whatever the value;
+    `NOT_HIGHLIGHT` — always Normal. Omitted = the stored choice is left as it is (a new
+    row starts on `DEFAULT`). Applies to Observed 1 and Observed 2 alike.
+  - `highlightLogic` (optional enum `AbnormalFlag`): the style under `HIGHLIGHT` — one of
+    the nine BASIC styles; a "…with High and Low" style is refused (422
+    `VALIDATION_ERROR`). Omitted under `HIGHLIGHT` = the basic style of the parameter's
+    own style, or Bold and Red when the parameter has no style. Stored as null under `DEFAULT` / `NOT_HIGHLIGHT`.
+  - A user WITHOUT the `lab_operations:reporting__change_abnormal_style` permission
+    ("Change abnormal style") may only send, or omit, the style derived from the
+    parameter's own style; any other `highlightLogic` is refused with 403
+    `ABNORMAL_STYLE_CHANGE_NOT_ALLOWED` and nothing is written. The choice is saved for
+    an analyzer's value too (it is the technician's, not part of the analyzer's record).
+    A `null` or omitted `highlightLogic` under `HIGHLIGHT` means "the parameter's own
+    style" (Bold and Red when the parameter has none) and never needs the permission. A Re-run, or a return of the sample, resets the
+    choice to `DEFAULT` (the soft-deleted row is revived by the next save or analyzer value).
+  The retired `highlightInReport` boolean is no longer accepted (400).
 
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED` if the report is locked.
   409 `LAB_REPORT_VALUE_CHANGED` if an analyzer value changed since `loadedUpdatedAt`.

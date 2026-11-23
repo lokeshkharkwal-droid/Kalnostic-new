@@ -10,6 +10,7 @@ import { AutoNotificationService } from './services/auto-notification.service';
 /** An appointment due for a reminder, with the data needed to dispatch. */
 interface DueAppointment {
   appointmentId: string;
+  orderId: string;
   orderCode: string | null;
   branchId: string | null;
   patientId: string;
@@ -122,6 +123,7 @@ export class AppointmentReminderWorkerService {
           },
         },
         select: {
+          id: true,
           orderCode: true,
           branchId: true,
           patientId: true,
@@ -149,6 +151,7 @@ export class AppointmentReminderWorkerService {
       if (!o.appointmentId || !o.appointmentAt) continue;
       due.push({
         appointmentId: o.appointmentId,
+        orderId: o.id,
         orderCode: o.orderCode,
         branchId: o.branchId,
         patientId: o.patientId,
@@ -168,19 +171,22 @@ export class AppointmentReminderWorkerService {
     const zone = await this.tenantTz.getTimeZone(tenantId);
     const when = this.formatAppt(appt.appointmentAt, zone);
     const location = appt.branchName ?? '';
-    const orderCode = appt.orderCode ?? '';
     const doctorName = appt.doctor
       ? `${appt.doctor.firstName} ${appt.doctor.lastName}`.trim()
       : '';
+
+    // Global tags come from the order with `{date}`/`{time}` = the appointment
+    // slot; `aptTimeFmt`/`aptLocation`/`dn` stay as the reminder's legacy keys
+    // so existing reminder templates keep rendering.
+    const context = { orderId: appt.orderId, at: appt.appointmentAt };
 
     // Patient.
     await this.auto.dispatchToPatient(tenantId, appt.branchId, appt.patientId, {
       feature: 'appointment_reminder_inform_patient',
       verb: 'appointment_reminder',
       subject: 'Appointment reminder',
+      context,
       variables: {
-        order_code: orderCode,
-        order_number: orderCode,
         aptTimeFmt: when,
         aptLocation: location,
         dn: doctorName,
@@ -206,11 +212,10 @@ export class AppointmentReminderWorkerService {
           feature: 'appointment_reminder_inform_doctor',
           verb: 'appointment_reminder',
           subject: 'Appointment reminder',
+          context,
           variables: {
             aptTimeFmt: when,
             aptLocation: location,
-            order_code: orderCode,
-            order_number: orderCode,
           },
           fallbackHtml: (name) =>
             `<p>Dear Dr. ${name},</p><p>You have an appointment${when ? ` on <strong>${when}</strong>` : ''}${location ? ` at ${location}` : ''}.</p>`,

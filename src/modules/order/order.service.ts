@@ -39,6 +39,7 @@ import {
   ShareService,
   type ShareRecipient,
   type ShareChannelResult,
+  type ShareTagContext,
 } from '../communication/services/share.service';
 import { OrderPrintType } from './dto/print-order.dto';
 import { AppointmentService } from '../appointment/appointment.service';
@@ -374,6 +375,9 @@ type ShareOrderCtx = Awaited<ReturnType<OrderService['loadOrderForShareCtx']>>;
  * page. `printType` undefined = no PDF attachment; `allowPanel` = the referral
  * panel is a valid recipient; `sendBothOnAll` = "Send All" delivers to patient
  * AND panel together (quotation) rather than the single selected recipient (bill).
+ * `variables` are kind-specific extras — every GLOBAL notification tag is
+ * resolved from the order by `ShareService`; `dateIsAppointment` makes
+ * `{date}`/`{time}` the order's appointment slot instead of the share moment.
  */
 interface ShareKindConfig {
   feature: string;
@@ -385,6 +389,7 @@ interface ShareKindConfig {
   iamVerb: string;
   iamSubject: string;
   variables: (ctx: ShareOrderCtx) => Record<string, string>;
+  dateIsAppointment?: boolean;
 }
 
 const SHARE_KINDS: Record<ShareKind, ShareKindConfig> = {
@@ -432,9 +437,10 @@ const SHARE_KINDS: Record<ShareKind, ShareKindConfig> = {
     sendBothOnAll: false,
     iamVerb: 'appointment_shared',
     iamSubject: 'Appointment',
+    dateIsAppointment: true,
     variables: (c) => ({
       order_code: c.orderCode ?? '',
-      appointment_code: c.appointmentCode ?? '',
+      // `{appointment_code}` is a global tag (resolved from the order).
       patient_name: c.patientName,
       patient: c.patientName,
     }),
@@ -3383,8 +3389,8 @@ export class OrderService {
   /**
    * Order + patient/panel contacts + IAM-target ids for any share, or throws if
    * the order isn't in the tenant. A dedicated lean select — the `whatsappNumber`,
-   * panel accounts-person contacts and appointment code the shares need aren't all
-   * on `ORDER_INCLUDE`.
+   * panel accounts-person contacts and appointment slot the shares need aren't
+   * all on `ORDER_INCLUDE`.
    */
   private async loadOrderForShareCtx(orderId: string, tenantId: string) {
     const order = await this.prisma.order.findFirst({
@@ -3414,7 +3420,7 @@ export class OrderService {
           },
         },
         internalReferral: { select: { id: true, employeeId: true } },
-        appointment: { select: { code: true } },
+        appointmentAt: true,
       },
     });
     if (!order) {
@@ -3426,8 +3432,24 @@ export class OrderService {
       .trim();
     return {
       ...order,
-      appointmentCode: order.appointment?.code ?? null,
       patientName,
+    };
+  }
+
+  /**
+   * What an order share is about, for the GLOBAL notification tags — the
+   * order, plus its appointment slot as `{date}`/`{time}` for kinds that share
+   * an appointment.
+   */
+  private shareTagContext(
+    cfg: ShareKindConfig,
+    ctx: ShareOrderCtx,
+  ): ShareTagContext {
+    return {
+      orderId: ctx.id,
+      ...(cfg.dateIsAppointment && ctx.appointmentAt
+        ? { at: ctx.appointmentAt }
+        : {}),
     };
   }
 
@@ -3630,6 +3652,7 @@ export class OrderService {
           subject: cfg.iamSubject,
           actorEntityType: 'STAFF',
         },
+        this.shareTagContext(cfg, ctx),
       );
       return [];
     }
@@ -3667,6 +3690,7 @@ export class OrderService {
       getPdf,
       cfg.variables(ctx),
       cfg.attachmentName?.(ctx),
+      this.shareTagContext(cfg, ctx),
     );
   }
 
@@ -3693,6 +3717,7 @@ export class OrderService {
       ? this.makePrintPdfProvider(orderId, tenantId, cfg.printType)
       : undefined;
     const variables = cfg.variables(ctx);
+    const tagContext = this.shareTagContext(cfg, ctx);
     const attachmentName = cfg.attachmentName?.(ctx);
     const selected = dto.recipientType ?? 'PATIENT';
 
@@ -3758,6 +3783,7 @@ export class OrderService {
             getPdf,
             variables,
             attachmentName,
+            tagContext,
           );
           outcomes.push({ channel, status: 'QUEUED', logId: logs[0]?.id });
         } catch (err) {
@@ -3781,6 +3807,7 @@ export class OrderService {
           subject: cfg.iamSubject,
           actorEntityType: 'STAFF',
         },
+        tagContext,
       );
       results.push({
         channel: MessagingChannel.IAM,

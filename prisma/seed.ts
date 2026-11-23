@@ -121,7 +121,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'patient_registration',
       displayTitle: 'Patient Registration',
       template:
-        'Dear {patient_name}, welcome to {branch_name}. Your registration is complete.',
+        'Dear {patient_name}, welcome to {user_name}. Your registration is complete.',
       messageType: MessageType.TRANSACTIONAL,
     },
     {
@@ -129,7 +129,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'lab_order_report_published_inform_patient',
       displayTitle: 'Lab Report Published',
       template:
-        'Dear {patient_name}, your report for order {order_id} is ready: {report_link}',
+        'Dear {patient_name}, your report for order {order_number} is ready: {publish_report_url}',
       messageType: MessageType.TRANSACTIONAL,
     },
     {
@@ -137,7 +137,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'appointment_reminder_inform_patient',
       displayTitle: 'Appointment Reminder',
       template:
-        'Reminder: {patient_name}, your appointment at {branch_name} is on {appointment_date}.',
+        'Reminder: {patient_name}, your appointment at {location} is on {date} at {time}.',
       messageType: MessageType.TRANSACTIONAL,
     },
     {
@@ -145,7 +145,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'patient_pay_request_for_order',
       displayTitle: 'Payment Request',
       template:
-        'Dear {patient_name}, an amount of {amount} is due for order {order_id}. Pay: {report_link}',
+        'Dear {patient_name}, an amount of {currency} {balance_amount} is due for order {order_number}. View your order: {short_link}',
       messageType: MessageType.TRANSACTIONAL,
     },
     // ── Email ──
@@ -154,7 +154,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'patient_registration',
       displayTitle: 'Patient Registration',
       template:
-        '<p>Dear {patient_name},</p><p>Welcome to <strong>{branch_name}</strong>. Your registration is complete.</p>',
+        '<p>Dear {patient_name},</p><p>Welcome to <strong>{user_name}</strong>. Your registration is complete.</p>',
       messageType: MessageType.TRANSACTIONAL,
     },
     {
@@ -162,7 +162,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'lab_order_report_published_inform_patient',
       displayTitle: 'Lab Report Published',
       template:
-        '<p>Dear {patient_name},</p><p>Your report for order <strong>{order_id}</strong> is ready. <a href="{report_link}">View report</a>.</p>',
+        '<p>Dear {patient_name},</p><p>Your report for order <strong>{order_number}</strong> is ready. <a href="{publish_report_url}">View report</a>.</p>',
       messageType: MessageType.TRANSACTIONAL,
     },
     {
@@ -170,7 +170,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'complete_payment_for_lab_order_inform_patient',
       displayTitle: 'Payment Received',
       template:
-        '<p>Dear {patient_name},</p><p>We have received your payment of <strong>{amount}</strong> for order {order_id}. Thank you.</p>',
+        '<p>Dear {patient_name},</p><p>We have received your payment of <strong>{currency} {amount}</strong> for order {order_number}. Thank you.</p>',
       messageType: MessageType.TRANSACTIONAL,
     },
     // ── WhatsApp ──
@@ -179,7 +179,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'lab_order_report_published_inform_patient',
       displayTitle: 'Lab Report Published',
       template:
-        'Dear {patient_name}, your report for order {order_id} is ready: {report_link}',
+        'Dear {patient_name}, your report for order {order_number} is ready: {publish_report_url}',
       templateType: WhatsappMessageType.TEXT,
       templateCategory: WhatsappTemplateCategory.UTILITY,
     },
@@ -188,7 +188,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'appointment_reminder_inform_patient',
       displayTitle: 'Appointment Reminder',
       template:
-        'Reminder: {patient_name}, your appointment at {branch_name} is on {appointment_date}.',
+        'Reminder: {patient_name}, your appointment at {location} is on {date} at {time}.',
       templateType: WhatsappMessageType.TEXT,
       templateCategory: WhatsappTemplateCategory.UTILITY,
     },
@@ -277,7 +277,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'bulk_messaging',
       displayTitle: 'Bulk Promotion (SMS)',
       template:
-        'Hi {patient_name}! {branch_name} has a special health check-up offer for you.',
+        'Hi {patient_name}! {user_name} has a special health check-up offer for you.',
       messageType: MessageType.MARKETING,
     },
     {
@@ -285,7 +285,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'bulk_messaging',
       displayTitle: 'Bulk Promotion (Email)',
       template:
-        '<p>Hi {patient_name}!</p><p>{branch_name} has a special health check-up offer for you.</p>',
+        '<p>Hi {patient_name}!</p><p>{user_name} has a special health check-up offer for you.</p>',
       messageType: MessageType.MARKETING,
     },
     {
@@ -293,7 +293,7 @@ async function seedGlobalMessagingTemplates(): Promise<void> {
       feature: 'google_review_template',
       displayTitle: 'Google Review Request',
       template:
-        'Hi {patient_name}, we hope you had a great experience at {branch_name}. Please review us: {report_link}',
+        'Hi {patient_name}, we hope you had a great experience at {user_name}. Please review us: {weburl}',
       messageType: MessageType.MARKETING,
       templateType: WhatsappMessageType.TEXT,
       templateCategory: WhatsappTemplateCategory.MARKETING,

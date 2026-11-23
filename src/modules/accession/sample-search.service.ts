@@ -32,6 +32,7 @@ import type {
   SampleSearchResult,
   SearchDateTime,
   SearchFields,
+  SearchRouting,
   SearchSampleRow,
   SearchSection,
 } from './entities/sample-search.entity';
@@ -108,6 +109,27 @@ const TRANSFER_SELECT = {
 type TransferRow = Prisma.SampleTransferGetPayload<{
   select: typeof TRANSFER_SELECT;
 }>;
+
+/** The hand-off an In-House sample in each out-of-branch status is on (decides what the details column shows). */
+const IN_HOUSE_ROUTING: Partial<
+  Record<
+    SampleStatus,
+    { transfer: TransferKind; routing: 'SEND' | 'FORWARD' | 'OUTSOURCE' }
+  >
+> = {
+  [SampleStatus.SENT_INTERNAL]: {
+    transfer: TransferKind.INTERNAL,
+    routing: 'SEND',
+  },
+  [SampleStatus.FORWARD_EXTERNAL]: {
+    transfer: TransferKind.EXTERNAL,
+    routing: 'FORWARD',
+  },
+  [SampleStatus.OUTSOURCED]: {
+    transfer: TransferKind.OUTSOURCE,
+    routing: 'OUTSOURCE',
+  },
+};
 
 /** One row of the popup before it is grouped into sections. */
 interface Entry {
@@ -374,7 +396,7 @@ export class SampleSearchService {
     const sections: SearchSection[] = [];
     for (const [, group] of byStatus) {
       const rows = group.flatMap((e) =>
-        this.rowsOf(e, names, reports, removed.has(e.sample.id)),
+        this.rowsOf(e, names, reports, removed.has(e.sample.id), dto.menu),
       );
       const { actions, hiddenActionReasons } =
         dto.menu === 'IN_HOUSE'
@@ -447,7 +469,9 @@ export class SampleSearchService {
     names: Names,
     reports: Map<string, LabReportStatus>,
     itemRemoved: boolean,
+    menu: SearchMenu,
   ): SearchSampleRow[] {
+    const routing = this.routingOf(menu, e, names);
     return e.sample.tests.map((t) => {
       const classification = names.classificationOf(e.sample, t);
       const link = `${t.orderItemId}::${t.labTestId ?? ''}`;
@@ -463,6 +487,7 @@ export class SampleSearchService {
         reportStatus:
           reports.get(link) ?? reports.get(`${t.orderItemId}::`) ?? null,
         itemRemoved,
+        routing,
         recoverable:
           e.status === SampleStatus.DISCARDED
             ? e.sample.isRecoverable === true
@@ -473,6 +498,48 @@ export class SampleSearchService {
             : null,
       };
     });
+  }
+
+  /**
+   * Where the test of this entry is RIGHT NOW (the "Send / Forward / Outsource Details" column).
+   * In-House follows the sample's current status, as the In-House list does: Sent, Forwarded or Outsourced show their
+   * hand-off, every other status is "In-House" - even if an older, finished hand-off of the sample still exists (a Retrieve
+   * or a Repeat brought it back), so an old destination is never shown. The referral menus describe the transfer of the row
+   * itself (every row there is one).
+   */
+  private routingOf(menu: SearchMenu, e: Entry, names: Names): SearchRouting {
+    const none: SearchDateTime = { date: null, time: null };
+    const t = e.transfer;
+    const when: SearchDateTime = t
+      ? {
+          date: t.sendDate ? t.sendDate.toISOString() : null,
+          time: t.sendTime ?? null,
+        }
+      : none;
+    if (menu === 'IN_HOUSE') {
+      const out = IN_HOUSE_ROUTING[e.sample.status];
+      if (!out) return { kind: 'IN_HOUSE', to: null, when: none };
+      // Only a hand-off of the matching kind describes the status; anything else leaves the details empty, not wrong.
+      const own = t && t.kind === out.transfer ? t : null;
+      return {
+        kind: out.routing,
+        to: own ? this.destinationOf(own, names) : null,
+        when: own ? when : none,
+      };
+    }
+    return {
+      kind: menu === 'INTERNAL' ? 'INTERNAL_REFERRAL' : 'EXTERNAL_REFERRAL',
+      to: t ? this.destinationOf(t, names) : null,
+      when,
+    };
+  }
+
+  /** The name of where a transfer goes: its branch, partner business or outsource center. */
+  private destinationOf(t: TransferRow, names: Names): string | null {
+    if (t.kind === TransferKind.INTERNAL)
+      return names.branch(t.destinationBranchId);
+    if (t.kind === TransferKind.EXTERNAL) return t.externalPartnerName ?? null;
+    return names.outsourceCenter(t.outsourceCenterId);
   }
 
   /** The branch / center / date fields of the popup, by menu. */

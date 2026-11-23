@@ -15,6 +15,7 @@ import { ExchangeModule } from './exchange/exchange.module';
 import { ShareService } from './services/share.service';
 import { AutoNotificationService } from './services/auto-notification.service';
 import { NotificationEnablementService } from './services/notification-enablement.service';
+import { NotificationTagsService } from './services/notification-tags.service';
 import { ChannelSettingsController } from './channel-settings.controller';
 import { ChannelSettingsService } from './services/channel-settings.service';
 import { AppointmentReminderWorkerService } from './appointment-reminder-worker.service';
@@ -51,6 +52,7 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
     ShareService,
     AutoNotificationService,
     NotificationEnablementService,
+    NotificationTagsService,
     ChannelSettingsService,
     AppointmentReminderWorkerService,
   ],
@@ -59,6 +61,7 @@ import { AppointmentReminderWorkerService } from './appointment-reminder-worker.
     NotificationService,
     ShareService,
     AutoNotificationService,
+    NotificationTagsService,
   ],
 })
 export class CommunicationModule {}

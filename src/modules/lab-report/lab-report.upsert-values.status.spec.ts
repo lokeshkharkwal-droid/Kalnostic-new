@@ -151,3 +151,60 @@ describe('upsertResultValues — which report statuses allow a value change', ()
     );
   });
 });
+
+describe('upsertResultValues — the status is checked AGAIN under the write lock', () => {
+  /**
+   * The first check runs before the transaction. A Submit + Validate can commit between that check and the lock,
+   * and a value written then would change a report whose print is already frozen (the mark was decided for the old
+   * value, a new row would have no snapshot). So the report is read again once the row is locked.
+   */
+  const raced = (statusUnderLock: string) => {
+    const m = build('SAVED'); // the first read says Saved...
+    const reportRow = {
+      id: 'r1',
+      orderItemId: 'oi1',
+      labTestId: 'lt1',
+      isLocked: false,
+      status: statusUnderLock, // ...but by the time the lock is held it has moved on
+    };
+    m.prisma.withTenant.mockImplementation(
+      (_t: string, fn: (t: unknown) => unknown) =>
+        fn({
+          labReportResultValue: m.labReportResultValue,
+          labReportHistory: { create: jest.fn().mockResolvedValue({}) },
+          labAdapter: { findMany: jest.fn().mockResolvedValue([]) },
+          $queryRaw: jest.fn().mockResolvedValue([]),
+          labReport: {
+            findFirst: jest.fn(
+              ({ where }: { where?: { orderItem?: unknown } }) =>
+                Promise.resolve(where?.orderItem ? null : reportRow),
+            ),
+          },
+        }),
+    );
+    return m;
+  };
+
+  it.each(['RESULT_DONE', 'VALIDATION_PENDING', 'APPROVED', 'PUBLISHED'])(
+    'a report that became %s under the lock is refused (409) and nothing is written',
+    async (statusUnderLock) => {
+      const m = raced(statusUnderLock);
+      const failure: unknown = await save(m).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(failure).toBeInstanceOf(LabReportResultsNotEditableException);
+      expect((failure as LabReportResultsNotEditableException).context).toEqual(
+        { id: 'r1', currentStatus: statusUnderLock },
+      );
+      expect(m.labReportResultValue.upsert).not.toHaveBeenCalled();
+      expect(m.labReportResultValue.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('a report still editable under the lock is saved as before', async () => {
+    const m = raced('SAVED');
+    await save(m);
+    expect(m.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+  });
+});

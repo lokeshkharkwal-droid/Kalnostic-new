@@ -54,6 +54,16 @@ export class CommunicationController {
   }
 
   /**
+   * Whether the caller's tenant is registered with the external Exchange gateway.
+   * The frontend reads this to block manual sends (with a snackbar) when the
+   * tenant can't deliver. Declared before `:id` so it isn't captured as an id.
+   */
+  @Get('exchange-status')
+  exchangeStatus(@CurrentTenant() tenantId: string) {
+    return this.communicationService.getExchangeStatus(tenantId);
+  }
+
+  /**
    * Fetch one communication log row.
    */
   @Get(':id')

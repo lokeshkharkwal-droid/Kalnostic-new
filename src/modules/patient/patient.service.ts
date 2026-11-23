@@ -1248,6 +1248,7 @@ export class PatientService {
         tenantId,
         branchId: ctx.branchId ?? null,
         patientId: id,
+        actorId: actorId ?? null, // `{updated_by}`
       });
       return updated;
     } catch (e) {
