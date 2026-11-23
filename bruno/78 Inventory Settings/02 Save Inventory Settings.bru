@@ -1,0 +1,50 @@
+meta {
+  name: 02 Save Inventory Settings
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/inventory-settings
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "isAutomaticInventoryReductionEnabled": true,
+    "manualAdjustmentMode": "TEST_TYPE"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("echoes back the saved settings", function () {
+    const d = res.getBody().data;
+    expect(d.isAutomaticInventoryReductionEnabled).to.equal(true);
+    expect(d.manualAdjustmentMode).to.equal("TEST_TYPE");
+  });
+}
+
+docs {
+  Save the tenant's Inventory Settings. Both fields are optional: a field left out
+  keeps its current value. The response is the resulting settings.
+
+  - `isAutomaticInventoryReductionEnabled` (boolean) — auto-deduct at order creation.
+  - `manualAdjustmentMode` (`ORDER_TYPE` | `TEST_TYPE`) — where manual adjustment is offered.
+
+  Needs `business_admin:inventory_settings__update_inventory_settings` (the Business
+  Admin role holds it by default and also bypasses the guard). Unknown fields,
+  including `tenantId`, are rejected with 400: the tenant is always the caller's from
+  the JWT. Audited under `AuditModule.INVENTORY_SETTINGS`.
+}

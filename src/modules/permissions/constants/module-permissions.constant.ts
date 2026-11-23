@@ -964,6 +964,11 @@ export const PERMISSION_KEYS = {
   BA_SETTINGS_LAB_TEST_MASTER_UPDATE:
     'business_admin:lab_test_master_setting__update_lab_test_master_setting',
 
+  BA_INVENTORY_SETTINGS_VIEW:
+    'business_admin:inventory_settings__view_inventory_settings',
+  BA_INVENTORY_SETTINGS_UPDATE:
+    'business_admin:inventory_settings__update_inventory_settings',
+
   BA_ORT_ADD: 'business_admin:overall_result_template__add_overall_result',
   BA_ORT_EDIT: 'business_admin:overall_result_template__edit_overall_result',
   BA_ORT_DELETE:

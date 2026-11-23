@@ -66,6 +66,22 @@ export class PdfTemplateConfigTypeMismatchException extends KaltrosException {
   }
 }
 
+/**
+ * 404 — no usable template exists for a document type. Raised by the
+ * resolve-and-render flow (`render-by-type/:type`) when neither the
+ * Configuration default nor any active template of that type is found.
+ */
+export class NoPdfReportTemplateForTypeException extends KaltrosException {
+  constructor(type: string) {
+    super(
+      'NO_PDF_REPORT_TEMPLATE_FOR_TYPE',
+      'No print template is configured for this document type',
+      { type },
+      HttpStatus.NOT_FOUND,
+    );
+  }
+}
+
 /** 500 — the PDF could not be rendered from the template. */
 export class PdfGenerationFailedException extends KaltrosException {
   constructor(id: string, cause?: string) {

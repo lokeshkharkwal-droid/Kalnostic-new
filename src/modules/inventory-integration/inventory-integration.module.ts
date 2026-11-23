@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { InventorySettingsModule } from '../inventory-settings/inventory-settings.module';
 import { InventoryConsumptionClient } from './inventory-consumption.client';
 import { InventoryConsumptionService } from './inventory-consumption.service';
 import { InventoryIntegrationController } from './inventory-integration.controller';
@@ -13,7 +14,7 @@ import { InventoryIntegrationController } from './inventory-integration.controll
  */
 @Global()
 @Module({
-  imports: [ConfigModule, PrismaModule],
+  imports: [ConfigModule, PrismaModule, InventorySettingsModule],
   controllers: [InventoryIntegrationController],
   providers: [InventoryConsumptionClient, InventoryConsumptionService],
   exports: [InventoryConsumptionService],

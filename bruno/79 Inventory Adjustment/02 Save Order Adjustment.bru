@@ -1,0 +1,49 @@
+meta {
+  name: 02 Save Order Adjustment
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/inventory/order-adjustment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "orderId": "{{adjOrderId}}",
+    "lines": [
+      { "productId": "{{adjProductId}}", "finalQty": 2 }
+    ],
+    "reason": "Manual correction"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("applies the diff and returns the updated view", function () {
+    const d = res.getBody().data;
+    expect(d.scope).to.equal("ORDER");
+    expect(d).to.have.property("applied");
+  });
+}
+
+docs {
+  Set the final deducted quantity per product for the whole order. Only the
+  difference vs the currently-deducted quantity is applied to stock, so re-saving
+  the same `finalQty` changes nothing. When automatic reduction is OFF this first
+  save performs the initial deduction and creates the linked sale. A net additional
+  deduction beyond available stock → 409 `INSUFFICIENT_INVENTORY_STOCK` (nothing
+  applied). `reason`/`note` are stored in the adjustment history.
+}

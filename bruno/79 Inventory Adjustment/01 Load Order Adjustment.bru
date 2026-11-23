@@ -1,0 +1,33 @@
+meta {
+  name: 01 Load Order Adjustment
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/inventory/order-adjustment?orderId={{adjOrderId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an ORDER-scope view", function () {
+    const d = res.getBody().data;
+    expect(d.scope).to.equal("ORDER");
+    expect(d.products).to.be.an("array");
+  });
+}
+
+docs {
+  Order-level adjustment view: every product across the order's branch-enabled
+  proformas, with planned / previously-deducted / current-stock quantities. The
+  order's branch is resolved server-side from `orderId`. Empty `products` means no
+  proforma applies (or the inventory app is not configured).
+}
