@@ -31,10 +31,7 @@ import {
   PdfReportTemplateType,
   isPdfReportTemplateType,
 } from './constants/pdf-report-template-types.constant';
-import {
-  InvalidPdfReportTemplateTypeException,
-  PdfReportTemplateNotFoundException,
-} from './exceptions/pdf-report-template.exceptions';
+import { InvalidPdfReportTemplateTypeException } from './exceptions/pdf-report-template.exceptions';
 
 /**
  * PDF report template endpoints (business-authenticated; tenant comes from the
@@ -49,48 +46,6 @@ export class PdfReportTemplateController {
     private readonly service: PdfReportTemplateService,
     private readonly configService: PdfTemplateConfigService,
   ) {}
-
-  /**
-   * Render the template mapped to `:type` and stream the PDF back. Resolves the
-   * tenant's Configuration default for the type (honoring the active branch),
-   * falling back to the first active template of that type; 404 if none exists.
-   * Used by the separate inventory monorepo (`inventory_invoice` /
-   * `inventory_delivery`), which forwards the business JWT. Streams a raw PDF via
-   * a library-specific response (no envelope).
-   */
-  @Post('render-by-type/:type')
-  @Audit({
-    module: AuditModule.PDF_REPORT_TEMPLATE,
-    action: AuditAction.OTHER,
-    description: 'Rendered a PDF from the template mapped to a type',
-  })
-  async renderByType(
-    @CurrentTenant() tenantId: string,
-    @CurrentProfile() profile: ActiveProfile,
-    @Param('type') type: string,
-    @Body() dto: GeneratePdfDto,
-    @Res() res: Response,
-  ): Promise<void> {
-    if (!isPdfReportTemplateType(type)) {
-      throw new InvalidPdfReportTemplateTypeException(type);
-    }
-    const id =
-      (await this.configService.resolveConfiguredTemplateId(
-        tenantId,
-        profile.branchId,
-        type,
-      )) ?? (await this.service.findDefaultTemplateIdByType(tenantId, type));
-    if (!id) throw new PdfReportTemplateNotFoundException(type);
-
-    const pdf = await this.service.generatePdf(id, tenantId, dto);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="${type}.pdf"`,
-    );
-    res.setHeader('Content-Length', pdf.length);
-    res.end(pdf);
-  }
 
   /**
    * Create a PDF report template in the caller's tenant.
@@ -198,6 +153,48 @@ export class PdfReportTemplateController {
       types: PDF_REPORT_TEMPLATE_TYPES,
       labels: PDF_REPORT_TEMPLATE_TYPE_LABELS,
     };
+  }
+
+  /**
+   * Resolve the template mapped to a document `type` (the Configuration default
+   * for the caller's active branch, falling back to the first active template of
+   * that type) and render it to a PDF, streamed back as `application/pdf`.
+   *
+   * Lets another app render a document by TYPE without knowing a specific
+   * template id — e.g. the inventory app renders a sales invoice via
+   * `render-by-type/inventory_invoice`, honouring whatever template the tenant
+   * mapped on the Configuration screen. Declared before `:id` so `render-by-type`
+   * isn't captured as a template id.
+   */
+  @Post('render-by-type/:type')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.OTHER,
+    description: 'Rendered a PDF for a document type via the mapped template',
+  })
+  async renderByType(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('type') type: string,
+    @Body() dto: GeneratePdfDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!isPdfReportTemplateType(type)) {
+      throw new InvalidPdfReportTemplateTypeException(type);
+    }
+    const templateId = await this.configService.resolveTemplateIdForType(
+      tenantId,
+      profile.branchId,
+      type,
+    );
+    const pdf = await this.service.generatePdf(templateId, tenantId, dto);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${type}-${templateId}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
   }
 
   /**

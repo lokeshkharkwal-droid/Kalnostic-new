@@ -1,9 +1,18 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
+import { validate, type ValidationError } from 'class-validator';
 import { BulkSampleNoteDto } from './bulk-sample-action.dto';
 import { BulkTransferAcceptDto } from './bulk-transfer-action.dto';
 import { TransferDispatchDto } from './transfer-dispatch.dto';
+
+/**
+ * Common shape of each per-DTO runner below. The three DTOs differ, so the
+ * tuple type widens `dto` to the shared supertype (`object`); the cases only
+ * ever read a flag off it (cast) or inspect `errors`.
+ */
+type FlagRunner = (
+  extra: Record<string, unknown>,
+) => Promise<{ dto: object; errors: ValidationError[] }>;
 
 /**
  * `force` and `skipInvalid` are JSON body booleans. The global ValidationPipe turns the text "false" into `true` when it
@@ -37,7 +46,7 @@ describe('force / skipInvalid accept only a real boolean', () => {
   };
 
   // Each DTO declares its own flags: the bulk transfer DTO has `skipInvalid` only.
-  const cases: Array<[string, typeof bulkSample, string[]]> = [
+  const cases: Array<[string, FlagRunner, string[]]> = [
     ['bulk sample action', bulkSample, ['force', 'skipInvalid']],
     ['bulk transfer action', bulkTransfer, ['skipInvalid']],
     ['transfer dispatch', dispatch, ['force', 'skipInvalid']],

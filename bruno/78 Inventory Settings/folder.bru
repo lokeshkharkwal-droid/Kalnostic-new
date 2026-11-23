@@ -1,0 +1,30 @@
+meta {
+  name: 78 Inventory Settings
+  seq: 78
+}
+
+docs {
+  # Inventory Settings
+
+  Business Admin › Business Settings › Inventory Settings — tenant-level toggles
+  that control how inventory is deducted for orders. Tenant-scoped (RLS),
+  tenant-level: the tenant comes from the JWT, never a body field. Stored in the
+  tenant's `business_inventory_settings` row (NOT the inventory app's
+  `inventory_settings`; the two apps share this database).
+
+  Two settings:
+  - `isAutomaticInventoryReductionEnabled` (boolean, default `false`) — when ON,
+    inventory is auto-deducted at order creation via the existing proforma
+    consumption flow; when OFF, no automatic deduction happens and stock is managed
+    manually from Technician Reporting.
+  - `manualAdjustmentMode` (`ORDER_TYPE` | `TEST_TYPE`, default `ORDER_TYPE`) —
+    where manual inventory adjustment is offered: once per order, or once per test.
+
+  Permissions (module `business_admin`, section "Inventory Settings"):
+  - read is ungated for any authenticated business user (the Technician Reporting
+    page reads `manualAdjustmentMode` to decide which adjustment action to show).
+  - `business_admin:inventory_settings__update_inventory_settings` — save (a
+    Business Admin holds it by default; the role also bypasses the guard).
+
+  Use a Business Admin token (`{{businessAccessToken}}`).
+}

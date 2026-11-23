@@ -98,6 +98,7 @@ import { CommunicationModule } from './modules/communication/communication.modul
 import { EmiModule } from './modules/emi/emi.module';
 import { PublicModule } from './modules/public/public.module';
 import { InventoryIntegrationModule } from './modules/inventory-integration/inventory-integration.module';
+import { InventorySettingsModule } from './modules/inventory-settings/inventory-settings.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
@@ -222,6 +223,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     EmiModule,
     PublicModule,
     InventoryIntegrationModule,
+    InventorySettingsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their
