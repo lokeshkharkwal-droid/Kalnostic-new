@@ -48,10 +48,11 @@ interface OrderForConsumption {
 /**
  * Orchestrates inventory consumption for kalnostics orders. Bridges order data
  * (branch lab tests) to the inventory service (which keys proforma mappings on
- * the **master** `LabTest.id`): it resolves each order item's branch lab test to
- * its `sourceLabTestId`, then validates / consumes / looks up proforma info via
- * {@link InventoryConsumptionClient}. Every method degrades to a safe no-op when
- * the inventory integration is not configured, so order flows never break.
+ * the **canonical master** `LabTest.id`): it resolves each order item's branch
+ * lab test to that canonical id, then validates / consumes / looks up proforma
+ * info via {@link InventoryConsumptionClient}. Every method degrades to a safe
+ * no-op when the inventory integration is not configured, so order flows never
+ * break.
  */
 @Injectable()
 export class InventoryConsumptionService {
@@ -66,7 +67,20 @@ export class InventoryConsumptionService {
     return this.client.isEnabled;
   }
 
-  /** Distinct master `LabTest.id`s behind a set of branch lab test ids. */
+  /**
+   * Distinct **canonical** master `LabTest.id`s behind a set of branch lab test
+   * ids — the id a proforma "Lab Test" mapping is keyed on.
+   *
+   * Two hops: a branch lab test's `sourceLabTestId` points at the **Branch Master
+   * Data** test it was snapshotted from, and that in turn carries
+   * `sourceMasterLabTestId` → the **Tenant Master Data** original. We return the
+   * Tenant Master Data id (the canonical representative) — or the Branch Master
+   * Data id itself for a branch-only test with no tenant parent
+   * (`sourceMasterLabTestId` null). This matches the one-row-per-logical-test id
+   * the mapping picker stores (`LabTestService.findOptions`, which lists exactly
+   * the `sourceMasterLabTestId IS NULL` originals), so a mapping made in the
+   * picker matches an ordered test here regardless of which branch it ran at.
+   */
   private async resolveSourceLabTestIds(
     tenantId: string,
     branchLabTestIds: string[],
@@ -76,11 +90,27 @@ export class InventoryConsumptionService {
       where: { id: { in: branchLabTestIds }, tenantId, deletedAt: null },
       select: { sourceLabTestId: true },
     });
-    return [
+    const branchMasterTestIds = [
       ...new Set(
         rows
           .map((r) => r.sourceLabTestId)
           .filter((x): x is string => Boolean(x)),
+      ),
+    ];
+    if (branchMasterTestIds.length === 0) return [];
+    // Collapse each Branch Master Data test onto its Tenant Master Data original.
+    // Soft-deleted originals are still followed (the mapping outlives a deletion),
+    // so no `deletedAt` filter here.
+    const masterTests = await this.prisma.labTest.findMany({
+      where: { id: { in: branchMasterTestIds }, tenantId },
+      select: { id: true, sourceMasterLabTestId: true },
+    });
+    const canonicalById = new Map(
+      masterTests.map((t) => [t.id, t.sourceMasterLabTestId ?? t.id]),
+    );
+    return [
+      ...new Set(
+        branchMasterTestIds.map((id) => canonicalById.get(id) ?? id),
       ),
     ];
   }
@@ -238,8 +268,9 @@ export class InventoryConsumptionService {
 
   /**
    * The master lab test behind a lab report: the panel-member test when the report
-   * is a panel member, else the order line's branch lab test. Returns the master
-   * `LabTest.id` (`sourceLabTestId`) or null when it can't be resolved.
+   * is a panel member, else the order line's branch lab test. Returns the
+   * **canonical** master `LabTest.id` (see {@link resolveSourceLabTestIds}) or null
+   * when it can't be resolved.
    */
   private async resolveReportSourceLabTestId(
     tenantId: string,
