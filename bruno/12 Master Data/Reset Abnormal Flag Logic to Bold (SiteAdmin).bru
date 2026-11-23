@@ -24,17 +24,17 @@ tests {
   });
   test("returns an update summary", function () {
     const d = res.getBody().data;
-    expect(d).to.have.property("referenceRangesUpdated");
-    expect(d).to.have.property("referenceValuesUpdated");
+    expect(d).to.have.property("parametersUpdated");
   });
 }
 
 docs {
   **SiteAdmin maintenance** — for the tenant given by the `tenantId` **query
-  param**, normalise the "Abnormal Flag Logic" of all its existing reference
-  ranges **and** reference values from **Bold and Red** (`BOLD_AND_RED`) to
-  **Bold** (`BOLD_ONLY`). Any row carrying a different flag (`ITALIC`, …) is left
-  untouched, and no other reference-value setting is changed.
+  param**, normalise the "Abnormal Flag Logic" of all its existing result
+  **parameters** from **Bold and Red** (`BOLD_AND_RED`) to **Bold** (`BOLD_ONLY`).
+  Any parameter carrying a different style (`ITALIC`, …) is left untouched, and no
+  other parameter setting is changed. (Since Abnormal Flag Logic v1.3 the style lives
+  on the parameter, not on its reference ranges / values.)
 
   Auth: **SiteAdmin** token (`jwt-siteadmin`), requires `master-data:write`
   (CONTENT_ADMIN and above). `@Public()` only opts out of the *business* JWT guard.
@@ -49,8 +49,7 @@ docs {
 
   ```json
   {
-    "referenceRangesUpdated": 128,
-    "referenceValuesUpdated": 42
+    "parametersUpdated": 128
   }
   ```
 

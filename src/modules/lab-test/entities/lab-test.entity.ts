@@ -192,6 +192,8 @@ export interface LabTestResultsParamRow {
   units: string | null;
   isNabl: boolean;
   isCap: boolean;
+  /** The parameter's abnormal style (v1.3 — moved up from the reference range / value). NULL = not set (optional). */
+  abnormalFlagLogic: AbnormalFlag | null;
 }
 
 /** RESULTS view: one test with its (nested) result parameters. */
@@ -220,7 +222,6 @@ export interface LabTestRefRangeRow {
   lowerLimit: Prisma.Decimal | null;
   upperLimit: Prisma.Decimal | null;
   displayOfReferenceRange: string | null;
-  flag: AbnormalFlag;
 }
 
 /** REFERENCE_RANGE view: one test with its (nested) reference ranges. */
@@ -245,7 +246,6 @@ export interface LabTestRefValueRow {
   ageTo: number;
   ageToUnit: AgeUnit;
   displayValue: string;
-  flag: AbnormalFlag;
 }
 
 /** REFERENCE_VALUE view: one test with its (nested) reference values. */
@@ -451,4 +451,8 @@ export interface ImportXlsxResult {
   /** Sample names in the file that are not standard names (saved as typed) or were tidied to the standard
    * spelling. Empty when every name was already a standard one. Never causes a skip. */
   sampleNameNotices: ImportXlsxSampleNameNotice[];
+  /** Plain-language notices about parts of the file that were not read (for example the old per-range / per-value
+   * "ABNORMAL FLAG LOGIC" columns of a file exported before the style moved to the parameter). Empty for a current file.
+   * Never causes a skip. */
+  ignoredColumnNotices: string[];
 }

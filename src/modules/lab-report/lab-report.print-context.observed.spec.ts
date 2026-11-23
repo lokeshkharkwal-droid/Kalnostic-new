@@ -6,6 +6,10 @@ import { LabReportService } from './lab-report.service';
  * range keeps its abnormal styling, and the plain readings stay available as `observed1_raw`.
  */
 jest.mock('./utils/print-barcode.util', () => ({
+  // The real helpers stay (the print code calls several of them); only the two that need a sample/barcode are stubbed.
+  ...jest.requireActual<typeof import('./utils/print-barcode.util')>(
+    './utils/print-barcode.util',
+  ),
   buildReportBarcodeTags: jest.fn().mockResolvedValue({
     order_id_barcode: '',
     order_id_qr_code: '',
@@ -27,7 +31,10 @@ const TYPED = [
   'two  spaces and a tab\there',
 ].join('\n');
 
-function build(values: Array<Record<string, unknown>>) {
+function build(
+  values: Array<Record<string, unknown>>,
+  styles: { qual?: string; quant?: string } = {},
+) {
   const prisma = {
     orderSampleTest: { findMany: jest.fn().mockResolvedValue([]) },
     orderDiagnostics: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -44,6 +51,7 @@ function build(values: Array<Record<string, unknown>>) {
           sortOrder: 1,
           notes: '',
           resultType: 'QUALITATIVE',
+          abnormalFlagLogic: styles.qual ?? 'BOLD_AND_RED',
         },
         {
           id: QUANT,
@@ -52,6 +60,7 @@ function build(values: Array<Record<string, unknown>>) {
           sortOrder: 2,
           notes: '',
           resultType: 'QUANTITATIVE',
+          abnormalFlagLogic: styles.quant ?? 'BOLD_AND_RED',
         },
       ]),
     },
@@ -62,12 +71,14 @@ function build(values: Array<Record<string, unknown>>) {
           id: RANGE,
           lowerLimit: 70,
           upperLimit: 110,
-          abnormalFlagLogic: 'BOLD_AND_RED',
         },
       ]),
     },
   };
-  const deps = Array(11).fill(undefined) as unknown[];
+  // 13 constructor arguments; the 13th is the ConfigService `buildPrintContext` reads.
+  const deps = Array.from({ length: 13 }, (_, i) =>
+    i === 12 ? { get: () => undefined } : undefined,
+  ) as unknown[];
   deps[0] = prisma;
   const service = new LabReportService(
     ...(deps as ConstructorParameters<typeof LabReportService>),
@@ -145,8 +156,9 @@ const value = (
 type Row = Record<string, unknown>;
 const rowsOf = async (
   values: Array<Record<string, unknown>>,
+  styles: { qual?: string; quant?: string } = {},
 ): Promise<Row[]> => {
-  const ctx = await build(values).buildPrintContext('r1', T, 'b1');
+  const ctx = await build(values, styles).buildPrintContext('r1', T, 'b1');
   return (ctx.sections as { results: Row[] }).results;
 };
 
@@ -206,65 +218,52 @@ describe('buildPrintContext — the result readings a template receives', () => 
     expect(String(row!.observed1)).not.toContain('color:#d32f2f');
   });
 
-  it('a Qualitative result flagged "Highlight in Report" (Bold and Red) is wrapped in the semibold deep-red highlight style, but stays non-abnormal', async () => {
+  it('a Qualitative result with Highlight chosen (Bold and Red) is wrapped in that style, but stays non-abnormal', async () => {
     const [row] = await rowsOf([
       value(QUAL, 'Positive', {
-        highlightInReport: true,
+        flagOption: 'HIGHLIGHT',
         highlightLogic: 'BOLD_AND_RED',
       }),
     ]);
-    // The manual highlight uses the calmer `reportHighlightStyle` (semibold +
-    // deeper red), distinct from the brighter out-of-range `abnormalFlagStyle`.
+    // One look for every way a style is applied (the automatic range flag and a Highlight).
     expect(row!.observed1).toBe(
-      '<span style="font-weight:600;color:#b91c1c">Positive</span>',
+      '<span style="font-weight:bold;color:#d32f2f">Positive</span>',
     );
     // The styling is a presentation choice, not an out-of-range signal.
     expect(row!.is_observed_1_abnormal).toBe(false);
   });
 
-  it('highlighting is applied to BOTH observed values of a highlighted parameter', async () => {
+  it('Highlight is applied to BOTH observed values of a parameter', async () => {
     const [row] = await rowsOf([
       value(QUAL, 'Positive', {
         observed2: 'Reactive',
-        highlightInReport: true,
+        flagOption: 'HIGHLIGHT',
         highlightLogic: 'BOLD_AND_RED',
       }),
     ]);
     expect(row!.observed1).toBe(
-      '<span style="font-weight:600;color:#b91c1c">Positive</span>',
+      '<span style="font-weight:bold;color:#d32f2f">Positive</span>',
     );
     expect(row!.observed2).toBe(
-      '<span style="font-weight:600;color:#b91c1c">Reactive</span>',
+      '<span style="font-weight:bold;color:#d32f2f">Reactive</span>',
     );
   });
 
-  it('a Qualitative result NOT flagged for highlight is left plain', async () => {
+  it('a Qualitative result left on Default is plain, even when its parameter has a style', async () => {
     const [row] = await rowsOf([
-      value(QUAL, 'Positive', { highlightInReport: false }),
+      value(QUAL, 'Positive', { flagOption: 'DEFAULT' }),
     ]);
     expect(row!.observed1).toBe('Positive');
   });
 
-  it('an empty reading is never wrapped, even when highlight is on', async () => {
+  it('an empty reading is never wrapped, even when Highlight is chosen', async () => {
     const [row] = await rowsOf([
       value(QUAL, '', {
-        highlightInReport: true,
+        flagOption: 'HIGHLIGHT',
         highlightLogic: 'BOLD_AND_RED',
       }),
     ]);
     expect(row!.observed1).toBe('');
-  });
-
-  it('a Quantitative value is never highlighted by the manual control (scope restriction) — only auto-flagged out of range', async () => {
-    const [row] = await rowsOf([
-      value(QUANT, '90', {
-        referenceRangeId: RANGE,
-        highlightInReport: true,
-        highlightLogic: 'BOLD_AND_RED',
-      }),
-    ]);
-    expect(row!.observed1).toBe('90');
-    expect(row!.is_observed_1_abnormal).toBe(false);
   });
 
   it('both kinds in one report come out in parameter order, each as it should', async () => {
@@ -286,5 +285,193 @@ describe('buildPrintContext — the result readings a template receives', () => 
       '<span style="display:block;white-space:pre-wrap;text-align:left">a\nb</span>',
     );
     expect(row!.observed2_raw).toBe('a\nb');
+  });
+});
+
+describe('Abnormal Flag Logic v1.3 — how one Quantitative reading prints (range 70-110)', () => {
+  // The printed value is HTML-escaped ("<5" prints as "&lt;5").
+  const esc = (t: string) =>
+    t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const quant = (
+    observed1: string,
+    over: Record<string, unknown> = {},
+    quantStyle = 'BOLD_AND_RED',
+  ) =>
+    rowsOf([value(QUANT, observed1, { referenceRangeId: RANGE, ...over })], {
+      quant: quantStyle,
+    }).then((rows) => rows[0]!);
+
+  describe('Default', () => {
+    it('a number inside the range is plain', async () => {
+      const row = await quant('95.5');
+      expect(row.observed1).toBe('95.5');
+      expect(row.is_observed_1_abnormal).toBe(false);
+    });
+
+    it('a number outside the range prints in the PARAMETER style', async () => {
+      expect((await quant('135')).observed1).toBe(
+        '<span style="font-weight:bold;color:#d32f2f">135</span>',
+      );
+      expect((await quant('135', {}, 'ITALIC')).observed1).toBe(
+        '<span style="font-style:italic">135</span>',
+      );
+      expect((await quant('135', {}, 'UNDERLINE')).observed1).toBe(
+        '<span style="text-decoration:underline">135</span>',
+      );
+      expect((await quant('135', {}, 'RED_ONLY')).observed1).toBe(
+        '<span style="color:#d32f2f">135</span>',
+      );
+      expect((await quant('135')).is_observed_1_abnormal).toBe(true);
+    });
+
+    it('a "…with High and Low" style adds the word High above the range and Low below it', async () => {
+      expect((await quant('185', {}, 'BOLD_AND_RED_HIGH_LOW')).observed1).toBe(
+        '<span style="font-weight:bold;color:#d32f2f">185 High</span>',
+      );
+      expect((await quant('42', {}, 'BOLD_AND_RED_HIGH_LOW')).observed1).toBe(
+        '<span style="font-weight:bold;color:#d32f2f">42 Low</span>',
+      );
+      expect((await quant('185', {}, 'RED_HIGH_LOW')).observed1).toBe(
+        '<span style="color:#d32f2f">185 High</span>',
+      );
+    });
+
+    it('a High Low style prints no word, and no style, for a number inside the range', async () => {
+      expect((await quant('95', {}, 'BOLD_AND_RED_HIGH_LOW')).observed1).toBe(
+        '95',
+      );
+    });
+
+    it('the values exactly on the limits are inside the range', async () => {
+      expect((await quant('70')).observed1).toBe('70');
+      expect((await quant('110')).observed1).toBe('110');
+    });
+
+    it.each([
+      '<5',
+      '>600',
+      'Hemolysed',
+      '1,200',
+      '1e3',
+      '0x1F',
+      '--67',
+      '12 mg/dL',
+    ])(
+      'a reading that cannot be compared (%s) prints Normal, not abnormal',
+      async (text) => {
+        const row = await quant(text, {}, 'BOLD_AND_RED_HIGH_LOW');
+        expect(row.observed1).toBe(esc(text));
+        expect(row.is_observed_1_abnormal).toBe(false);
+      },
+    );
+
+    it.each(['.5', '-3', '+200', '200.'])(
+      'a number written as %s is compared (it is outside 70-110)',
+      async (text) => {
+        const row = await quant(text);
+        expect(row.is_observed_1_abnormal).toBe(true);
+      },
+    );
+
+    it('a blank reading is Normal', async () => {
+      expect((await quant('')).observed1).toBe('');
+      expect((await quant('   ')).is_observed_1_abnormal).toBe(false);
+    });
+
+    it('a number with no resolved range is Normal (nothing to compare it with)', async () => {
+      const [row] = await rowsOf([value(QUANT, '999')]);
+      expect(row!.observed1).toBe('999');
+      expect(row!.is_observed_1_abnormal).toBe(false);
+    });
+
+    it('Observed 2 follows the same rules as Observed 1', async () => {
+      const row = await quant(
+        '95',
+        { observed2: '185' },
+        'BOLD_AND_RED_HIGH_LOW',
+      );
+      expect(row.observed1).toBe('95');
+      expect(row.observed2).toBe(
+        '<span style="font-weight:bold;color:#d32f2f">185 High</span>',
+      );
+      expect(row.is_observed_2_abnormal).toBe(true);
+      const blank2 = await quant('95', { observed2: '' });
+      expect(blank2.observed2).toBe('');
+      expect(blank2.is_observed_2_abnormal).toBe(false);
+    });
+  });
+
+  describe('Not Highlight', () => {
+    it('prints Normal even for a number far outside the range', async () => {
+      const row = await quant('185', { flagOption: 'NOT_HIGHLIGHT' });
+      expect(row.observed1).toBe('185');
+      expect(row.is_observed_1_abnormal).toBe(false);
+    });
+
+    it('also stays Normal for a Semi-Quantitative / Qualitative reading with a stored style', async () => {
+      const [row] = await rowsOf([
+        value(QUAL, 'Positive', {
+          flagOption: 'NOT_HIGHLIGHT',
+          highlightLogic: 'BOLD_AND_RED',
+        }),
+      ]);
+      expect(row!.observed1).toBe('Positive');
+    });
+  });
+
+  describe('Highlight', () => {
+    it('prints the chosen style whatever the value — inside the range, outside it, or not a number', async () => {
+      for (const text of ['95', '185', '>600', 'Hemolysed']) {
+        const row = await quant(text, {
+          flagOption: 'HIGHLIGHT',
+          highlightLogic: 'UNDERLINE',
+        });
+        expect(row.observed1).toBe(
+          `<span style="text-decoration:underline">${esc(text)}</span>`,
+        );
+        expect(row.is_observed_1_abnormal).toBe(false);
+      }
+    });
+
+    it('never prints a High/Low word, even when the parameter style is a High Low style', async () => {
+      const row = await quant(
+        '185',
+        { flagOption: 'HIGHLIGHT', highlightLogic: 'RED_ONLY' },
+        'BOLD_AND_RED_HIGH_LOW',
+      );
+      expect(row.observed1).toBe('<span style="color:#d32f2f">185</span>');
+    });
+
+    it('with no style chosen it starts from the basic style of the parameter style', async () => {
+      const row = await quant(
+        '95',
+        { flagOption: 'HIGHLIGHT', highlightLogic: null },
+        'BOLD_ITALIC_AND_RED_HIGH_LOW',
+      );
+      expect(row.observed1).toBe(
+        '<span style="font-weight:bold;font-style:italic;color:#d32f2f">95</span>',
+      );
+    });
+
+    it('works for a number with no resolved range', async () => {
+      const [row] = await rowsOf([
+        value(QUANT, '999', {
+          flagOption: 'HIGHLIGHT',
+          highlightLogic: 'BOLD_ONLY',
+        }),
+      ]);
+      expect(row!.observed1).toBe('<span style="font-weight:bold">999</span>');
+    });
+  });
+
+  describe('Semi-Quantitative / Qualitative on Default', () => {
+    it('always print Normal, whatever the parameter style or the reading', async () => {
+      const [row] = await rowsOf(
+        [value(QUAL, 'Reactive', { referenceRangeId: RANGE })],
+        { qual: 'BOLD_AND_RED' },
+      );
+      expect(row!.observed1).toBe('Reactive');
+      expect(row!.is_observed_1_abnormal).toBe(false);
+    });
   });
 });

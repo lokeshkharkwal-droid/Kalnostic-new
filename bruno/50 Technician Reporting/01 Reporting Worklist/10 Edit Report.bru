@@ -19,6 +19,11 @@ docs {
   Sends the report back for correction; Enter → edit values → Submit returns
   it to Validation Pending.
 
+  Drops the report's frozen print (`printSnapshot`, written by Validate): while
+  the report is back in Saved it is not printable, and the next Validate freezes
+  it again under the rules of that day. Error Reported, Re-run and the sample
+  return do the same.
+
   404 `LAB_REPORT_NOT_FOUND`. 409 `LAB_REPORT_LOCKED`. 409
   `INVALID_LAB_REPORT_TRANSITION` if the report isn't in an allowed status.
 }

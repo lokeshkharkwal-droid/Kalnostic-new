@@ -11,6 +11,28 @@ export interface SearchDateTime {
   time: string | null;
 }
 
+/**
+ * Where one test is right now, for the "Send / Forward / Outsource Details" column of the popup.
+ * - `IN_HOUSE`: the test is here (also when an older hand-off of it was retrieved or is over).
+ * - `SEND` / `FORWARD` / `OUTSOURCE`: In-House menu, the sample is Sent / Forwarded / Outsourced right now.
+ * - `INTERNAL_REFERRAL` / `EXTERNAL_REFERRAL`: the referral menus, the transfer of the row itself.
+ */
+export type SearchRoutingKind =
+  | 'IN_HOUSE'
+  | 'SEND'
+  | 'FORWARD'
+  | 'OUTSOURCE'
+  | 'INTERNAL_REFERRAL'
+  | 'EXTERNAL_REFERRAL';
+
+export interface SearchRouting {
+  kind: SearchRoutingKind;
+  /** The destination's name: the branch (Send / Internal Referral), the business or partner (Forward / External Referral), the center (Outsource). `null` for IN_HOUSE or when none was assigned. */
+  to: string | null;
+  /** When it was dispatched (the transfer's send date and time); both `null` for IN_HOUSE. */
+  when: SearchDateTime;
+}
+
 /** One test line of a section: one sample row holds one test. */
 export interface SearchSampleRow {
   sampleId: string;
@@ -24,6 +46,8 @@ export interface SearchSampleRow {
   reportStatus: LabReportStatus | null;
   /** The test was removed from the order (the sample is kept but frozen). */
   itemRemoved: boolean;
+  /** Where this test is now (the "Send / Forward / Outsource Details" column). */
+  routing: SearchRouting;
   /** Discarded rows only: whether THIS row is marked recoverable; `null` for a row in another status. */
   recoverable: boolean | null;
   /** Returned rows only: whether THIS row is confirmed physically back and verified; `null` for a row in another status. */

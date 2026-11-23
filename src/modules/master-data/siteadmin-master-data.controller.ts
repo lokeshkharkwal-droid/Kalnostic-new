@@ -26,9 +26,9 @@ export class SiteAdminMasterDataController {
 
   /**
    * One-off data normalisation for a single tenant (id from the `tenantId` query
-   * param): change the "Abnormal Flag Logic" of all its existing reference ranges
-   * and reference values from "Bold and Red" (`BOLD_AND_RED`) to "Bold"
-   * (`BOLD_ONLY`). Any other flag value is left untouched.
+   * param): change the "Abnormal Flag Logic" of all its existing result parameters
+   * from "Bold and Red" (`BOLD_AND_RED`) to "Bold" (`BOLD_ONLY`). Any other style is
+   * left untouched.
    */
   @Post('abnormal-flag-logic/reset-to-bold')
   @Audit({

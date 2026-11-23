@@ -1,4 +1,4 @@
-import { LabReportStatus } from '@prisma/client';
+import { LabReportStatus, Prisma } from '@prisma/client';
 import { LabReportService } from './lab-report.service';
 
 /** The first argument of a mock's first call, typed (jest mocks are `any`). */
@@ -90,8 +90,18 @@ describe('LabReportService.resetReportsForReturn', () => {
 
     const soft = { deletedAt: expect.any(Date) as Date };
     const byReport = { labReportId: { in: ['r1'] }, deletedAt: null };
+    // The result values go too, and the Default / Highlight / Not Highlight choice starts over with them
+    // (the soft-deleted row is revived by the next save, so an old choice must not survive).
+    expect(tx.labReportResultValue.updateMany).toHaveBeenCalledWith({
+      where: byReport,
+      data: {
+        ...soft,
+        flagOption: 'DEFAULT',
+        highlightLogic: null,
+        printSnapshot: Prisma.DbNull,
+      },
+    });
     for (const model of [
-      tx.labReportResultValue,
       tx.reRunRequest,
       tx.criticalAlert,
       tx.outOfRangeFlag,

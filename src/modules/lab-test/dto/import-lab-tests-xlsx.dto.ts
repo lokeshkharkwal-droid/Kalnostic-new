@@ -31,6 +31,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { RichTextNote } from '../../../common/decorators/rich-text-note.decorator';
+import {
+  ABNORMAL_FLAG_IMPORT_LABELS,
+  invalidAbnormalStyleMessage,
+} from '../../../common/utils/abnormal-flag.util';
 
 /** 24-hour `HH:mm` clock time (branch-local), e.g. `08:30`. */
 export const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -537,6 +541,17 @@ export class ImportXlsxResultParamRowDto {
   @IsOptional()
   resultRoundingType?: ResultRounding;
 
+  /**
+   * The parameter's abnormal style (Abnormal Flag Logic v1.3). Blank = leave an existing
+   * parameter's style as it is / save a new one with no style. A "…with High and Low"
+   * style is only valid when `resultType` is Quantitative (`LabTestService.assertImportParam`).
+   */
+  @IsEnum(AbnormalFlag, {
+    message: (args) => invalidAbnormalStyleMessage(args.value),
+  })
+  @IsOptional()
+  abnormalFlagLogic?: AbnormalFlag;
+
   /** Free-text logical ref (no lookup table exists yet). */
   @IsString()
   @IsOptional()
@@ -649,10 +664,6 @@ export class ImportXlsxReferenceRangeRowDto {
   @IsOptional()
   @MaxLength(500)
   displayOfReferenceRange?: string;
-
-  @IsEnum(AbnormalFlag)
-  @IsOptional()
-  abnormalFlagLogic?: AbnormalFlag;
 }
 
 /** One Reference Value row — same join-key treatment as `ImportXlsxReferenceRangeRowDto`. */
@@ -692,10 +703,6 @@ export class ImportXlsxReferenceValueRowDto {
   @MinLength(1)
   @MaxLength(255)
   normalValueText: string;
-
-  @IsEnum(AbnormalFlag)
-  @IsOptional()
-  abnormalFlagLogic?: AbnormalFlag;
 }
 
 // ── Single worksheet: name + full 123-column header list, in order ─────────
@@ -797,6 +804,7 @@ export const XLSX_COLUMNS = [
   'NABL',
   'CAP',
   'result rounding type',
+  'abnormal flag logic',
   'icon settings',
   'imgae settings',
   'reflex test',
@@ -816,7 +824,6 @@ export const XLSX_COLUMNS = [
   'CRITICAL MIN',
   'CRITICAL MAX',
   'DISPLAY OF REFERENCE RANGE',
-  'ABNORMAL FLAG LOGIC',
   'REFERENCE VALUE',
   'Parameter Name',
   'Method',
@@ -826,7 +833,6 @@ export const XLSX_COLUMNS = [
   'AGE TO',
   'AGE TO UNIT',
   'DISPLAY OF REFERENCE VALUE',
-  'ABNORMAL FLAG LOGIC',
   'USEFUL FOR',
   'INTERPRETATION OF RESULTS',
   'LIMITATIONS',
@@ -843,8 +849,19 @@ export const XLSX_COLUMNS = [
 /** Column indexes (0-based) of the two literal section-label columns that
  * carry no data of their own ("REFERENCE RANGE" / "REFERENCE VALUE") —
  * included verbatim as empty columns to match the reference file exactly. */
-export const REFERENCE_RANGE_LABEL_COL = 82; // 'REFERENCE RANGE'
-export const REFERENCE_VALUE_LABEL_COL = 96; // 'REFERENCE VALUE'
+export const REFERENCE_RANGE_LABEL_COL =
+  XLSX_COLUMNS.indexOf('REFERENCE RANGE');
+export const REFERENCE_VALUE_LABEL_COL =
+  XLSX_COLUMNS.indexOf('REFERENCE VALUE');
+
+/**
+ * Columns an uploaded file may leave out. Every other `XLSX_COLUMNS` column must be
+ * present. `abnormal flag logic` (the parameter's style, added by the v1.3 change) is
+ * optional so an Excel file exported before that change still imports: its two old
+ * "ABNORMAL FLAG LOGIC" columns (range / value) are simply ignored and the parameter keeps
+ * its style (a new one is saved with no style).
+ */
+export const OPTIONAL_XLSX_COLUMNS: readonly string[] = ['abnormal flag logic'];
 
 /** Columns exported for round-trip fidelity but IGNORED on import (version
  * history is an audit trail managed elsewhere, never bulk-edited via Excel —
@@ -998,13 +1015,8 @@ export const ENUM_LABEL_FIELDS: Record<string, Record<string, string>> = {
     Yrs: 'YEARS',
     Yr: 'YEARS',
   },
-  abnormalFlagLogic: {
-    'Bold And Red': 'BOLD_AND_RED',
-    Bold: 'BOLD_ONLY',
-    Italic: 'ITALIC',
-    Underline: 'UNDERLINE',
-    'Colour Highlight': 'COLOUR_HIGHLIGHT',
-  },
+  // The parameter-level style (v1.3): every one of the 16 styles, by label or enum name.
+  abnormalFlagLogic: { ...ABNORMAL_FLAG_IMPORT_LABELS },
   // Labels match the grid's generic `fmtEnum` (underscore→space, title-case),
   // e.g. `EDTA_TUBE_PURPLE_TOP` → "Edta Tube Purple Top" — the exact text
   // this sheet exports (see `fmtEnum`-style `titleCaseEnum` in
@@ -1253,6 +1265,7 @@ export const FIELD_TO_COLUMN_LABEL: Record<string, string> = {
   isNabl: 'NABL',
   isCap: 'CAP',
   resultRoundingType: 'result rounding type',
+  abnormalFlagLogic: 'abnormal flag logic',
   iconSettingsId: 'icon settings',
   reflexTestNames: 'reflex test',
   calculationFormula: 'calculation formula',
@@ -1266,7 +1279,6 @@ export const FIELD_TO_COLUMN_LABEL: Record<string, string> = {
   ageFromUnit: 'AGE FROM UNIT',
   ageTo: 'AGE TO',
   ageToUnit: 'AGE TO UNIT',
-  abnormalFlagLogic: 'ABNORMAL FLAG LOGIC',
   // Reference Range-only fields
   lowerLimit: 'LOWER LIMIT',
   upperLimit: 'UPPER LIMIT',

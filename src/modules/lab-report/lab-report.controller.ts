@@ -12,6 +12,7 @@ import {
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
 import { PermissionGuard } from '../permissions/guards/permission.guard';
+import { PermissionCheckService } from '../permissions/services/permission-check.service';
 import {
   RequirePermission,
   RequireAnyPermission,
@@ -92,6 +93,7 @@ export class LabReportController {
     private readonly deltaCheckService: DeltaCheckService,
     private readonly scheduledTestService: ScheduledTestService,
     private readonly multiStepProcessService: MultiStepProcessService,
+    private readonly permissionCheck: PermissionCheckService,
   ) {}
 
   @Get('counts')
@@ -526,19 +528,31 @@ export class LabReportController {
     action: AuditAction.UPDATE,
     description: 'Entered lab report result values',
   })
-  upsertResults(
+  async upsertResults(
     @CurrentTenant() tenantId: string,
     @CurrentProfile() profile: ActiveProfile,
     @CurrentUser('person_id') personId: string,
     @Param('id') id: string,
     @Body() dto: UpsertResultValuesDto,
   ) {
+    // Whether this user may pick any Highlight style (Abnormal Flag Logic v1.3). Looked up here,
+    // where the request context is, and handed to the service — which enforces it per value.
+    const canChangeAbnormalStyle = await this.permissionCheck.has(
+      {
+        tenantId,
+        personId,
+        branchId: profile.branchId,
+        profileKey: profile.profileKey,
+      },
+      PERMISSION_KEYS.LAB_CHANGE_ABNORMAL_STYLE,
+    );
     return this.labReportService.upsertResultValues(
       id,
       tenantId,
       profile.branchId,
       dto,
       personId,
+      { canChangeAbnormalStyle },
     );
   }
 

@@ -119,6 +119,7 @@ body:json {
         "method": "Spectrophotometry",
         "reportingUnit": "g/dL",
         "resultType": "QUANTITATIVE",
+        "abnormalFlagLogic": "BOLD_AND_RED",
         "parameterType": "MEASURED",
         "resultEntryMode": "MANUAL",
         "resultRoundingType": "ONE_DECIMAL",
@@ -144,8 +145,7 @@ body:json {
             "upperLimit": 17.0,
             "criticalMin": 7.0,
             "criticalMax": 20.0,
-            "displayOfReferenceRange": "13.0 - 17.0 g/dL",
-            "abnormalFlagLogic": "BOLD_AND_RED"
+            "displayOfReferenceRange": "13.0 - 17.0 g/dL"
           }
         ]
       },
@@ -156,6 +156,7 @@ body:json {
         "method": "Serology",
         "attachFileUrl": "https://files.example.com/methods/abo-serology.pdf",
         "resultType": "QUALITATIVE",
+        "abnormalFlagLogic": "BOLD_AND_RED",
         "parameterType": "MEASURED",
         "resultEntryMode": "MANUAL",
         "reflexTests": [],
@@ -171,8 +172,7 @@ body:json {
             "ageTo": 99,
             "ageToUnit": "YEARS",
             "normalValueText": "Not Detected",
-            "displayOfReferenceRange": "Not Detected",
-            "abnormalFlagLogic": "BOLD_AND_RED"
+            "displayOfReferenceRange": "Not Detected"
           }
         ]
       },
@@ -183,6 +183,7 @@ body:json {
         "method": "Flow Cytometry",
         "reportingUnit": "10^6/uL",
         "resultType": "QUANTITATIVE",
+        "abnormalFlagLogic": "BOLD_AND_RED",
         "parameterType": "MEASURED",
         "resultEntryMode": "MANUAL",
         "resultRoundingType": "TWO_DECIMAL",
@@ -198,7 +199,7 @@ body:json {
         "parameterCode": "MCH",
         "method": "Calculated",
         "reportingUnit": "pg",
-        "resultType": "CALCULATED",
+        "resultType": "QUANTITATIVE",
         "parameterType": "CALCULATED",
         "resultEntryMode": "AUTO",
         "calculationFormula": "(HGB * 10) / RBC",
@@ -218,8 +219,7 @@ body:json {
             "ageToUnit": "YEARS",
             "lowerLimit": 27.0,
             "upperLimit": 33.0,
-            "displayOfReferenceRange": "27.0 - 33.0 pg",
-            "abnormalFlagLogic": "BOLD_ONLY"
+            "displayOfReferenceRange": "27.0 - 33.0 pg"
           }
         ]
       }
@@ -370,11 +370,28 @@ docs {
   `processMethod` (SINGLE_STEP|MULTI_STEP), `samplePriorityType`
   (ROUTINE|URGENT|STAT), `tat*Unit`/`procTime*Unit` (MINUTES|HOURS|DAYS),
   `repeatIntervalUnit` (HOURS|DAYS|MONTHS|YEARS), `scheduleDays` (MONDAY…SUNDAY),
-  `containerType`, `resultType` (QUANTITATIVE|QUALITATIVE|CALCULATED),
+  `containerType`, `resultType` (QUANTITATIVE|QUALITATIVE|SEMI_QUANTITATIVE),
   `parameterType` (MEASURED|CALCULATED), `resultEntryMode` (MANUAL|AUTO),
   `resultRoundingType` (NO_ROUNDING|ONE_DECIMAL|TWO_DECIMAL|THREE_DECIMAL|WHOLE_NUMBER),
-  `gender` (ALL|MALE|FEMALE), `age*Unit` (DAYS|MONTHS|YEARS), `abnormalFlagLogic`
-  (BOLD_AND_RED|BOLD_ONLY|ITALIC|UNDERLINE|COLOUR_HIGHLIGHT).
+  `gender` (ALL|MALE|FEMALE), `age*Unit` (DAYS|MONTHS|YEARS).
+
+  **`resultParams[].abnormalFlagLogic`** (optional; omitted or `null` = no style, saved
+  blank) — how an abnormal result of that parameter is styled in the printed report. A
+  parameter without a style prints an out-of-range Default value plain (Normal); when a
+  technician picks Highlight on it, the Test Entry screen starts on Bold and Red. On an
+  UPDATE an omitted field keeps the stored style and an explicit `null` clears it. Since the Abnormal
+  Flag Logic v1.3 change it lives on the **parameter**, no longer on its
+  `referenceRanges` / `referenceValues` (those no longer accept it: a request that sends
+  it there gets 400). Basic styles, valid for every `resultType`: `RED_ONLY`,
+  `BOLD_ONLY`, `ITALIC`, `BOLD_AND_ITALIC`, `BOLD_AND_RED`, `ITALIC_AND_RED`,
+  `BOLD_ITALIC_AND_RED`, `UNDERLINE`, `COLOUR_HIGHLIGHT`. The seven "…with High and
+  Low" styles (`RED_HIGH_LOW`, `BOLD_HIGH_LOW`, `ITALIC_HIGH_LOW`,
+  `BOLD_AND_ITALIC_HIGH_LOW`, `BOLD_AND_RED_HIGH_LOW`, `ITALIC_AND_RED_HIGH_LOW`,
+  `BOLD_ITALIC_AND_RED_HIGH_LOW`) print the word High or Low beside a number outside its
+  range and are valid ONLY when `resultType` is `QUANTITATIVE` (else 422
+  `VALIDATION_ERROR`). An update that changes a parameter's `resultType` to a
+  non-Quantitative one without sending a style turns a stored High Low style into the
+  basic style it extends.
   
   ## Conflicts & cross-field rules
   

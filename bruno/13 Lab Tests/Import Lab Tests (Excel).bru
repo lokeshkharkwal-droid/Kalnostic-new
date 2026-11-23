@@ -33,6 +33,11 @@ tests {
     expect(data).to.have.property("skipped");
     expect(data.skipped).to.be.an("array");
   });
+  test("lists ignored columns (old abnormal flag layout) as plain notices", function () {
+    const data = res.getBody() && res.getBody().data;
+    expect(data).to.have.property("ignoredColumnNotices");
+    expect(data.ignoredColumnNotices).to.be.an("array");
+  });
 }
 
 docs {
@@ -163,6 +168,20 @@ docs {
   every field on the test/sample/result-parameter/reference-range/value
   DTOs — a string typed into a numeric column, an invalid enum label, a
   too-short Test Name, etc. all read in plain Excel terms.
+
+  **Abnormal Flag Logic (spec v1.3).** The style is one optional column in
+  the Result Parameter block — `abnormal flag logic`, right after `result
+  rounding type`. A blank cell keeps an existing parameter's style (a new
+  parameter with a blank cell is saved with no style; clearing a style is only
+  possible on the Master Data screen). A word the system does not have skips the
+  test with a message that names the word and lists the allowed labels. A
+  "…with High and Low" style on a Semi-Quantitative / Qualitative parameter
+  skips the test too; the message names the parameter (`Parameter "Glucose"
+  (GLU): …`), and EVERY such parameter in the test is listed, not just the
+  first. A file exported before the change has `ABNORMAL FLAG LOGIC` columns
+  in the Reference Range / Reference Value blocks; they are not read, and the
+  response says so in `ignoredColumnNotices` (an array of plain sentences,
+  `[]` for a current file) instead of dropping their styles silently.
 
   Round-trip an unmodified export through this endpoint to confirm
   `{ created: 0, updated: <all active tests>, skipped: [] }` — a good smoke

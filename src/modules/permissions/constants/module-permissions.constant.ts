@@ -304,6 +304,7 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
         'Access to enter result',
         'Do bulk action',
         'Update technician notes',
+        'Change abnormal style',
       ],
     },
     {
@@ -872,6 +873,8 @@ export const PERMISSION_KEYS = {
   LAB_ENTER_RESULT: 'lab_operations:reporting__access_to_enter_result',
   LAB_BULK_ACTION: 'lab_operations:reporting__do_bulk_action',
   LAB_UPDATE_TECH_NOTES: 'lab_operations:reporting__update_technician_notes',
+  /** Pick any Abnormal Style in the Technician's Highlight dropdown (Abnormal Flag Logic v1.3). */
+  LAB_CHANGE_ABNORMAL_STYLE: 'lab_operations:reporting__change_abnormal_style',
   LAB_SETTINGS_VIEW:
     'lab_operations:laboratory_settings__view_laboratory_settings',
   LAB_SETTINGS_UPDATE:

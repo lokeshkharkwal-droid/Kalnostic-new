@@ -580,6 +580,13 @@ enum AgeUnit {
 /// are the original styles; the last three are faithful "combined" styles added
 /// so every Master Data → Abnormal Flag Logic label (and the matching Technician
 /// Reporting → Highlighted option) renders exactly as its name reads.
+///
+/// 2026-11-19 (Abnormal Flag Logic v1.3): the style now lives on the result
+/// parameter (`LabTestResultParam.abnormalFlagLogic`). `RED_ONLY` is the plain
+/// "Red" style, and the seven `*_HIGH_LOW` values are the Quantitative-only
+/// "…and High Low" variants (the printed value gets the word High or Low beside
+/// it). A High Low value is only valid on a QUANTITATIVE parameter and is never
+/// offered as a Technician Highlight choice. See `common/utils/abnormal-flag.util.ts`.
 enum AbnormalFlag {
   BOLD_AND_RED
   BOLD_ONLY
@@ -589,6 +596,25 @@ enum AbnormalFlag {
   ITALIC_AND_RED
   BOLD_AND_ITALIC
   BOLD_ITALIC_AND_RED
+  RED_ONLY
+  RED_HIGH_LOW
+  BOLD_HIGH_LOW
+  ITALIC_HIGH_LOW
+  BOLD_AND_ITALIC_HIGH_LOW
+  BOLD_AND_RED_HIGH_LOW
+  ITALIC_AND_RED_HIGH_LOW
+  BOLD_ITALIC_AND_RED_HIGH_LOW
+}
+
+/// The Technician's per-result choice on the report-fill screen (Abnormal Flag
+/// Logic v1.3 §2.1): DEFAULT = the system decides (a Quantitative value outside
+/// its range prints in the parameter's style, everything else prints Normal),
+/// HIGHLIGHT = print in the chosen style whatever the value, NOT_HIGHLIGHT =
+/// always print Normal.
+enum ResultFlagOption {
+  DEFAULT
+  HIGHLIGHT
+  NOT_HIGHLIGHT
 }
 
 /// Sample container type (tube/colour or receptacle). One display label per value
@@ -2956,6 +2982,13 @@ model LabTestResultParam {
   resultSuggestions String[] @default([]) @map("result_suggestions")
   defaultValue      String?  @map("default_value")
 
+  // How an abnormal result of this parameter is styled in the printed report
+  // (Abnormal Flag Logic v1.3 §1.1). OPTIONAL (manager decision 2026-11-22): NULL = no style set,
+  // so a Default reading is never styled automatically; the Technician's Highlight then starts on
+  // Bold and Red. New parameters start NULL (no database default). A "…_HIGH_LOW" style is only
+  // valid when `resultType` is QUANTITATIVE (also enforced by a CHECK constraint; NULL passes it).
+  abnormalFlagLogic AbnormalFlag? @map("abnormal_flag_logic")
+
   // Result-level critical bounds (separate from per-reference-range criticals)
   criticalMin Decimal? @map("critical_min") @db.Decimal(10, 4)
   criticalMax Decimal? @map("critical_max") @db.Decimal(10, 4)
@@ -3024,6 +3057,9 @@ model LabTestReferenceRange {
   criticalMin             Decimal?     @map("critical_min") @db.Decimal(10, 4)
   criticalMax             Decimal?     @map("critical_max") @db.Decimal(10, 4)
   displayOfReferenceRange String?      @map("display_of_reference_range")
+  /// DEPRECATED 2026-11-19 — the style moved to `LabTestResultParam.abnormalFlagLogic`.
+  /// No longer read or written by the app (rows take the default); kept only
+  /// until the release clean-up migration drops this column.
   abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
 
   // Position in the test's whole Reference Range list, set by drag-to-reorder
@@ -3064,6 +3100,7 @@ model LabTestReferenceValue {
 
   normalValueText         String       @map("normal_value_text")
   displayOfReferenceRange String?      @map("display_of_reference_range")
+  /// DEPRECATED 2026-11-19 — see `LabTestReferenceRange.abnormalFlagLogic`.
   abnormalFlagLogic       AbnormalFlag @default(BOLD_AND_RED) @map("abnormal_flag_logic")
 
   // Position in the test's whole Reference Value list, set by drag-to-reorder
@@ -7600,15 +7637,27 @@ model LabReportResultValue {
   /// silently rewrite what was actually shown when this value was entered.
   referenceDisplay String? @map("reference_display")
 
-  /// Technician-set, per-report request to visually highlight THIS parameter's
-  /// observed value(s) in the generated report. Applies to QUALITATIVE and
-  /// SEMI_QUANTITATIVE parameters only — quantitative values are flagged
-  /// automatically from their numeric reference range (`AbnormalFlag`), so this
-  /// manual control is never surfaced for them. `highlightLogic` is the styling
-  /// to apply (reuses the `AbnormalFlag` palette; only `BOLD_AND_RED` is offered
-  /// in the UI today) and is read only when `highlightInReport` is true.
-  highlightInReport Boolean       @default(false) @map("highlight_in_report")
-  highlightLogic    AbnormalFlag? @map("highlight_logic")
+  /// Technician's per-result choice (Abnormal Flag Logic v1.3 §2.1), for ALL
+  /// three result types: DEFAULT (system decides), HIGHLIGHT (print in
+  /// `highlightLogic` whatever the value) or NOT_HIGHLIGHT (always Normal).
+  /// `highlightLogic` is the style chosen under HIGHLIGHT (never a *_HIGH_LOW
+  /// style) and is read only when `flagOption` is HIGHLIGHT.
+  flagOption     ResultFlagOption @default(DEFAULT) @map("flag_option")
+  highlightLogic AbnormalFlag?    @map("highlight_logic")
+
+  /// DEPRECATED 2026-11-19 — replaced by `flagOption`. No longer read or
+  /// written by the app; kept only until the release clean-up migration drops it.
+  highlightInReport Boolean @default(false) @map("highlight_in_report")
+
+  /// Frozen print decision of THIS reading, written by `validate()` (the only route into a
+  /// printable status) and read by the print only while the report is printable, so Master Data
+  /// edits and branch syncs never change a finished report. Versioned JSON — see
+  /// `utils/print-snapshot.util.ts` (Observed 1 / Observed 2 style, High/Low word and abnormal
+  /// tag, plus parameter name, group, order, result type and the configured note). NULL = not
+  /// frozen (an unfinished report, or a report finished before the freeze existed and not yet
+  /// backfilled: the print then follows the live rules and logs a warning). Cleared whenever the
+  /// report is reopened (Edit Report, Re-run, return, Error Reported).
+  printSnapshot Json? @map("print_snapshot")
 
   source ResultValueSource @default(MANUAL)
 

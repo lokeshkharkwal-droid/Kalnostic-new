@@ -37,6 +37,16 @@ docs {
   to the whole report — that shared, single-slot design is what this change
   replaces; see `LabReportOverallResult` model's doc comment for why.)
 
+  **Locked once the result is validated.** The Overall Result prints, and a finished
+  report must not change, so this endpoint (apply AND edit) only works while the report is
+  Pending, Partial Pending or Saved — the same rule as the result values and the Notes.
+  From Validation Pending onwards it answers 409
+  `LAB_REPORT_OVERALL_RESULT_NOT_EDITABLE` and writes nothing; Edit Report sends the
+  report back to Saved when a change is really needed. The status is read again under the
+  report's row lock, so a Validate that commits in between is not followed by a write.
+  (With the branch setting "Overall Result editable" OFF nothing is ever written and the
+  stored text comes back, whatever the status.)
+
   - `templateId` only (apply): the server resolves the named
     `OverallResultTemplate`'s CURRENT `content` itself — it never trusts a
     client-supplied content string for an apply — and snapshots that content
