@@ -1,4 +1,4 @@
-import { LabReportStatus } from '@prisma/client';
+import { LabReportStatus, Prisma } from '@prisma/client';
 import { LabReportService } from './lab-report.service';
 import { ReRunService } from './re-run.service';
 import { LAB_REPORT_ALLOWED_FROM } from './entities/lab-report.entity';
@@ -42,6 +42,7 @@ function makeService(
   const tx = {
     labReportResultValue: { updateMany: jest.fn().mockResolvedValue({}) },
     labReportParameterNote: { updateMany: jest.fn().mockResolvedValue({}) },
+    labReportOverallResult: { updateMany: jest.fn().mockResolvedValue({}) },
     labReport: {
       findFirst: jest
         .fn()
@@ -100,6 +101,29 @@ describe('LabReportService.resetForRerun — status rule', () => {
       're_run',
       'p1',
     );
+  });
+
+  it('a Re-run starts the Default / Highlight / Not Highlight choice over, so an old Not Highlight cannot hide the next abnormal value', async () => {
+    const { svc, tx } = makeService(LabReportStatus.RESULT_DONE);
+    await svc.resetForRerun('r1', 't1', 'b1', 'p1');
+    expect(tx.labReportResultValue.updateMany).toHaveBeenCalledWith({
+      where: { labReportId: 'r1', deletedAt: null },
+      data: {
+        deletedAt: expect.any(Date) as Date,
+        flagOption: 'DEFAULT',
+        highlightLogic: null,
+        printSnapshot: Prisma.DbNull,
+      },
+    });
+  });
+
+  it('a Re-run also clears the Overall Result (the old comment must not print next to the new values)', async () => {
+    const { svc, tx } = makeService(LabReportStatus.RESULT_DONE);
+    await svc.resetForRerun('r1', 't1', 'b1', 'p1');
+    expect(tx.labReportOverallResult.updateMany).toHaveBeenCalledWith({
+      where: { labReportId: 'r1', deletedAt: null },
+      data: { deletedAt: expect.any(Date) as Date },
+    });
   });
 
   it.each(REFUSED)(

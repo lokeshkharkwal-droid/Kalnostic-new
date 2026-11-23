@@ -47,6 +47,11 @@ import {
   type AgeBound,
 } from '../../common/utils/age-bounds.util';
 import { normalizeUnit } from '../../common/utils/unit-normalize.util';
+import {
+  ABNORMAL_FLAG_LABELS,
+  isStyleAllowedForResultType,
+  styleForResultType,
+} from '../../common/utils/abnormal-flag.util';
 import { AddLabTestVersionDto } from './dto/add-lab-test-version.dto';
 import {
   BulkEditLabTestItemDto,
@@ -69,6 +74,7 @@ import {
   FIELD_TO_COLUMN_LABEL,
   INTEGER_FIELDS,
   NUMERIC_FIELDS,
+  OPTIONAL_XLSX_COLUMNS,
   SEMICOLON_LIST_FIELDS,
   STATUS_LABEL_TO_ACTIVE,
   XLSX_COLUMNS,
@@ -182,6 +188,7 @@ interface ColumnIndex {
   nabl: number;
   cap: number;
   resultRoundingType: number;
+  paramFlag: number;
   iconSettings: number;
   reflexTest: number;
   calculationFormula: number;
@@ -198,7 +205,6 @@ interface ColumnIndex {
   criticalMin: number;
   criticalMax: number;
   displayOfRange: number;
-  rangeFlag: number;
   valueMethod: number;
   valueGender: number;
   valueAgeFrom: number;
@@ -208,7 +214,6 @@ interface ColumnIndex {
   rangeParamName: number;
   valueParamName: number;
   displayOfValue: number;
-  valueFlag: number;
 }
 
 /** Row keys that are re-derived (never copied) when cloning. */
@@ -943,6 +948,7 @@ export class LabTestService {
               units: p.reportingUnit,
               isNabl: p.isNabl,
               isCap: p.isCap,
+              abnormalFlagLogic: p.abnormalFlagLogic,
             }),
           ),
         }));
@@ -975,7 +981,6 @@ export class LabTestService {
                   lowerLimit: r.lowerLimit,
                   upperLimit: r.upperLimit,
                   displayOfReferenceRange: r.displayOfReferenceRange,
-                  flag: r.abnormalFlagLogic,
                 };
               },
             ),
@@ -1008,7 +1013,6 @@ export class LabTestService {
                   ageTo: v.ageTo,
                   ageToUnit: v.ageToUnit,
                   displayValue: v.normalValueText,
-                  flag: v.abnormalFlagLogic,
                 };
               },
             ),
@@ -2399,6 +2403,28 @@ export class LabTestService {
           await this.createSamples(tx, null, null, labTestId, samples);
         }
         if (resultParams !== undefined) {
+          // A template's parameters are replaced wholesale (soft-deleted and created again), so a parameter that
+          // arrives WITHOUT `abnormalFlagLogic` would silently lose its style. The contract is "omitted = unchanged,
+          // null = clear" (as for a tenant test): carry the stored style over, matched by id, else by code, and
+          // reduce a High/Low style to its basic style when the type is no longer Quantitative.
+          const stored = await tx.labTestResultParam.findMany({
+            where: { labTestId, tenantId: null, deletedAt: null },
+            select: { id: true, parameterCode: true, abnormalFlagLogic: true },
+          });
+          const carried = resultParams.map((p) => {
+            if (p.abnormalFlagLogic !== undefined) return p;
+            const was =
+              stored.find((x) => p.id !== undefined && x.id === p.id) ??
+              stored.find((x) => x.parameterCode === p.parameterCode);
+            if (!was) return p;
+            return {
+              ...p,
+              abnormalFlagLogic: styleForResultType(
+                was.abnormalFlagLogic,
+                p.resultType,
+              ),
+            };
+          });
           await tx.labTestReferenceRange.updateMany({
             where: { labTestId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
@@ -2411,7 +2437,7 @@ export class LabTestService {
             where: { labTestId, tenantId: null, deletedAt: null },
             data: { deletedAt: now },
           });
-          await this.createParams(tx, null, null, labTestId, resultParams);
+          await this.createParams(tx, null, null, labTestId, carried);
         }
       });
     } catch (e) {
@@ -3193,7 +3219,9 @@ export class LabTestService {
       },
     );
     const missingColumns = XLSX_COLUMNS.filter(
-      (_, i) => colForCanonicalIndex[i] === undefined,
+      (label, i) =>
+        colForCanonicalIndex[i] === undefined &&
+        !OPTIONAL_XLSX_COLUMNS.includes(label),
     );
     if (missingColumns.length) {
       throw new LabTestImportValidationException(
@@ -3202,6 +3230,10 @@ export class LabTestService {
     }
 
     const COL = this.buildColumnIndex();
+    const ignoredColumnNotices = this.oldAbnormalFlagColumnNotices(
+      headerRow,
+      colForCanonicalIndex[XLSX_COLUMNS.indexOf('abnormal flag logic')],
+    );
 
     // ── 2. Extract every data row into a plain `string[]` positioned by
     //        CANONICAL column index (0-based, matching `XLSX_COLUMNS`). The
@@ -3495,8 +3527,22 @@ export class LabTestService {
           mandatorySubcatId: instance.mandatorySubcatId,
         });
         this.assertImportSamples(instance.samples);
+        // Check EVERY parameter and report each problem (named by parameter), so the user can fix
+        // them all in one pass instead of finding the next one after each re-upload.
+        const paramProblems: string[] = [];
         for (const p of instance.resultParams ?? []) {
-          this.assertImportParam(p);
+          try {
+            this.assertImportParam(p);
+          } catch (e) {
+            if (!(e instanceof ValidationException)) throw e;
+            paramProblems.push(this.validationMessage(e));
+          }
+        }
+        if (paramProblems.length) {
+          for (const message of paramProblems) {
+            recordError(span.rowLabel, message);
+          }
+          continue;
         }
       } catch (e) {
         if (e instanceof ValidationException) {
@@ -3789,7 +3835,36 @@ export class LabTestService {
       skipped,
       unresolvedClassifications,
       sampleNameNotices,
+      ignoredColumnNotices,
     };
+  }
+
+  /**
+   * A file exported before the Abnormal Flag Logic change carries an "ABNORMAL FLAG LOGIC" column in the
+   * Reference Range block and another in the Reference Value block. The style now belongs to the parameter,
+   * so those two columns are not read — say so, instead of letting their styles vanish unannounced.
+   *
+   * @param headerRow the worksheet's header row
+   * @param paramFlagCol the worksheet column of the parameter-level "abnormal flag logic" column, if the file has it
+   * @returns one notice for the whole file, or none when the file has no old column
+   */
+  private oldAbnormalFlagColumnNotices(
+    headerRow: ExcelJS.Row,
+    paramFlagCol: number | undefined,
+  ): string[] {
+    let oldColumns = 0;
+    headerRow.eachCell((cell, colNumber) => {
+      const text = this.cellToString(cell.value).trim().toLowerCase();
+      if (text === 'abnormal flag logic' && colNumber !== paramFlagCol) {
+        oldColumns += 1;
+      }
+    });
+    if (oldColumns === 0) return [];
+    return [
+      paramFlagCol === undefined
+        ? `This file is from before the Abnormal Flag Logic change: its ${oldColumns} "ABNORMAL FLAG LOGIC" column(s) in the Reference Range / Reference Value blocks were ignored. The style now belongs to the parameter, so existing parameters kept their current style and new ones are saved without a style. Export again to get the new layout.`
+        : `${oldColumns} "ABNORMAL FLAG LOGIC" column(s) in the Reference Range / Reference Value blocks were ignored. The style is read from the parameter's own "abnormal flag logic" column.`,
+    ];
   }
 
   /**
@@ -4155,7 +4230,7 @@ export class LabTestService {
    * Resolve every canonical `XLSX_COLUMNS` position this parser needs, once
    * per import, keyed by a friendly name. Several header labels repeat
    * (`Parameter Name`/`Method`/`GENDER`/`AGE FROM`/`AGE FROM UNIT`/`AGE TO`/
-   * `AGE TO UNIT`/`ABNORMAL FLAG LOGIC` each appear in the Result Parameter
+   * `AGE TO UNIT` each appear in the Result Parameter
    * block AND the Reference Range block AND/or the Reference Value block —
    * see the header-count check in the reference CSV), so `occurrence`
    * disambiguates which one a given field means (0 = Result Parameter
@@ -4203,6 +4278,7 @@ export class LabTestService {
       nabl: idx('NABL'),
       cap: idx('CAP'),
       resultRoundingType: idx('result rounding type'),
+      paramFlag: idx('abnormal flag logic'),
       iconSettings: idx('icon settings'),
       reflexTest: idx('reflex test'),
       calculationFormula: idx('calculation formula'),
@@ -4220,7 +4296,6 @@ export class LabTestService {
       criticalMin: idx('CRITICAL MIN'),
       criticalMax: idx('CRITICAL MAX'),
       displayOfRange: idx('DISPLAY OF REFERENCE RANGE'),
-      rangeFlag: idx('ABNORMAL FLAG LOGIC', 0),
       valueParamName: idx('Parameter Name', 2),
       valueMethod: idx('Method', 2),
       valueGender: idx('GENDER', 1),
@@ -4229,7 +4304,6 @@ export class LabTestService {
       valueAgeTo: idx('AGE TO', 1),
       valueAgeToUnit: idx('AGE TO UNIT', 1),
       displayOfValue: idx('DISPLAY OF REFERENCE VALUE'),
-      valueFlag: idx('ABNORMAL FLAG LOGIC', 1),
     };
   }
 
@@ -4513,8 +4587,7 @@ export class LabTestService {
       (v[COL.upperLimit] ?? '') !== '' ||
       (v[COL.criticalMin] ?? '') !== '' ||
       (v[COL.criticalMax] ?? '') !== '' ||
-      (v[COL.displayOfRange] ?? '') !== '' ||
-      (v[COL.rangeFlag] ?? '') !== '';
+      (v[COL.displayOfRange] ?? '') !== '';
 
     const valueHasAny = (v: string[]) =>
       (v[COL.valueMethod] ?? '') !== '' ||
@@ -4523,8 +4596,7 @@ export class LabTestService {
       (v[COL.valueAgeFromUnit] ?? '') !== '' ||
       (v[COL.valueAgeTo] ?? '') !== '' ||
       (v[COL.valueAgeToUnit] ?? '') !== '' ||
-      (v[COL.displayOfValue] ?? '') !== '' ||
-      (v[COL.valueFlag] ?? '') !== '';
+      (v[COL.displayOfValue] ?? '') !== '';
 
     for (const row of rows) {
       const v = row.v;
@@ -4557,6 +4629,10 @@ export class LabTestService {
           'resultRoundingType',
           v[COL.resultRoundingType] ?? '',
         ) as ResultRounding | undefined;
+        dto.abnormalFlagLogic = this.coerceCellValue(
+          'abnormalFlagLogic',
+          v[COL.paramFlag] ?? '',
+        ) as AbnormalFlag | undefined;
         dto.iconSettingsId = v[COL.iconSettings] || undefined;
         // `imgae settings` (sic) — no matching DB field; not read.
         dto.reflexTestNames = v[COL.reflexTest] || undefined;
@@ -4652,10 +4728,6 @@ export class LabTestService {
           v[COL.criticalMax] ?? '',
         ) as number | undefined;
         range.displayOfReferenceRange = v[COL.displayOfRange] || undefined;
-        range.abnormalFlagLogic = this.coerceCellValue(
-          'abnormalFlagLogic',
-          v[COL.rangeFlag] ?? '',
-        ) as AbnormalFlag | undefined;
         this.assertImportRangeQuiet(range, range.rowLabel, errors, skipDetails);
         current.referenceRanges = current.referenceRanges ?? [];
         current.referenceRanges.push(range);
@@ -4685,10 +4757,6 @@ export class LabTestService {
           v[COL.valueAgeToUnit] ?? '',
         ) as AgeUnit | undefined;
         value.normalValueText = v[COL.displayOfValue] ?? '';
-        value.abnormalFlagLogic = this.coerceCellValue(
-          'abnormalFlagLogic',
-          v[COL.valueFlag] ?? '',
-        ) as AbnormalFlag | undefined;
         this.assertImportValueQuiet(value, value.rowLabel, errors, skipDetails);
         current.referenceValues = current.referenceValues ?? [];
         current.referenceValues.push(value);
@@ -4734,9 +4802,53 @@ export class LabTestService {
         { parameterCode: p.parameterCode },
       );
     }
+    this.assertAbnormalStyleAllowed(
+      p.abnormalFlagLogic,
+      p.resultType,
+      p.parameterCode,
+      p.parameterName,
+    );
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
     (p.referenceValues ?? []).forEach((v) => this.assertAgeBounds(v));
     this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode);
+  }
+
+  /**
+   * A parameter's abnormal style must be allowed for its result type: the seven
+   * "…with High and Low" styles are Quantitative-only (Abnormal Flag Logic v1.3). Nothing
+   * is checked when no style is sent or the style is cleared (`null`): a new parameter is then
+   * saved with no style, an existing one keeps its style (omitted) or loses it (null).
+   *
+   * @param style the style sent, if any
+   * @param resultType the parameter's result type
+   * @param parameterCode the parameter, for the error context
+   * @param parameterName the parameter's name, put in the message so the user can find the row
+   * @throws ValidationException when a High Low style is sent for a non-Quantitative parameter
+   */
+  private assertAbnormalStyleAllowed(
+    style: AbnormalFlag | null | undefined,
+    resultType: ResultType,
+    parameterCode: string,
+    parameterName?: string,
+  ): void {
+    if (
+      style !== undefined &&
+      style !== null &&
+      !isStyleAllowedForResultType(style, resultType)
+    ) {
+      const who = parameterName
+        ? `Parameter "${parameterName}" (${parameterCode}): `
+        : `Parameter ${parameterCode}: `;
+      const typeLabel: Record<ResultType, string> = {
+        QUANTITATIVE: 'Quantitative',
+        SEMI_QUANTITATIVE: 'Semi-quantitative',
+        QUALITATIVE: 'Qualitative',
+      };
+      throw new ValidationException(
+        `${who}Abnormal Flag Logic "${ABNORMAL_FLAG_LABELS[style]}" is only available for Quantitative results (this parameter is ${typeLabel[resultType]})`,
+        { parameterCode, abnormalFlagLogic: style, resultType },
+      );
+    }
   }
 
   /** Validate a reference-value row's Age From / Age To without throwing (aggregate instead). */
@@ -5009,8 +5121,11 @@ export class LabTestService {
     const fromImport = options.fromImport === true;
     const existing = await tx.labTestResultParam.findMany({
       where: { labTestId, tenantId, deletedAt: null },
-      select: { id: true, parameterCode: true },
+      select: { id: true, parameterCode: true, abnormalFlagLogic: true },
     });
+    const existingStyleById = new Map(
+      existing.map((e) => [e.id, e.abnormalFlagLogic]),
+    );
     const incoming = params ?? [];
     const matches = this.matchParamsToExisting(existing, incoming);
     const matchedIds = new Set<string>();
@@ -5031,10 +5146,21 @@ export class LabTestService {
         reflexTests,
         ...paramScalars
       } = p;
+      // A client that changes the result type but sends no style must not leave a High Low
+      // style on a non-Quantitative parameter (the database CHECK would refuse it): turn it
+      // back into the basic style it extends.
+      const storedStyle = existingStyleById.get(existingId);
+      const keptStyle =
+        p.abnormalFlagLogic === undefined && storedStyle !== undefined
+          ? styleForResultType(storedStyle, p.resultType)
+          : undefined;
       await tx.labTestResultParam.update({
         where: { id: existingId },
         data: {
           ...blankNotesToNull(paramScalars),
+          ...(keptStyle !== undefined && keptStyle !== storedStyle
+            ? { abnormalFlagLogic: keptStyle }
+            : {}),
           ...(fromImport && reflexTests === undefined
             ? {}
             : {
@@ -5278,13 +5404,14 @@ export class LabTestService {
 
   /**
    * The identity of a reference range: every field that decides how a result is
-   * judged against it — analyzer, method, unit, gender, age band, lower/upper limit,
-   * critical limits and abnormal-flag style. Two ranges with the same identity are
+   * judged against it — analyzer, method, unit, gender, age band, lower/upper limit
+   * and critical limits. (The abnormal style used to be part of it; since v1.3 it
+   * belongs to the parameter, not the range.) Two ranges with the same identity are
    * the same range. The Default flag and the Display text are deliberately NOT part
    * of it (see `syncRangesKeepingIds`).
    *
    * Works on both an incoming DTO and a stored row: a missing value is normalised to
-   * the database default (gender ALL, age 0–999 Years, flag BOLD_AND_RED), a number to
+   * the database default (gender ALL, age 0–999 Years), a number to
    * the 4 decimals the database stores, and the method/unit are compared trimmed. Any
    * mismatch here is harmless: it only makes a range look "changed", which creates a
    * new row (the previous behaviour).
@@ -5305,7 +5432,6 @@ export class LabTestService {
     upperLimit?: number | Prisma.Decimal | null;
     criticalMin?: number | Prisma.Decimal | null;
     criticalMax?: number | Prisma.Decimal | null;
-    abnormalFlagLogic?: AbnormalFlag | null;
   }): string {
     const num = (v: number | Prisma.Decimal | null | undefined): string =>
       v === null || v === undefined ? '' : Number(v).toFixed(4);
@@ -5322,7 +5448,6 @@ export class LabTestService {
       num(r.upperLimit),
       num(r.criticalMin),
       num(r.criticalMax),
-      r.abnormalFlagLogic ?? AbnormalFlag.BOLD_AND_RED,
     ].join('\u0000');
   }
 
@@ -5584,6 +5709,12 @@ export class LabTestService {
         parameterCode: p.parameterCode,
       });
     }
+    this.assertAbnormalStyleAllowed(
+      p.abnormalFlagLogic,
+      p.resultType,
+      p.parameterCode,
+      p.parameterName,
+    );
     (p.referenceRanges ?? []).forEach((r) => this.assertRange(r));
     (p.referenceValues ?? []).forEach((v) => this.assertAgeBounds(v));
     this.assertNoRangeOverlap(p.referenceRanges ?? [], p.parameterCode, true);

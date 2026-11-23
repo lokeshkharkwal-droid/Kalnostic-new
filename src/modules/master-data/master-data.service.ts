@@ -724,10 +724,10 @@ export class MasterDataService {
 
   /**
    * SiteAdmin maintenance: normalise the "Abnormal Flag Logic" of all of a
-   * tenant's existing reference ranges and reference values from `BOLD_AND_RED`
-   * ("Bold and Red") to `BOLD_ONLY` ("Bold"). Rows carrying any other flag
-   * (`ITALIC`, …) are left untouched, and no other reference-value setting is
-   * changed.
+   * tenant's existing result parameters from `BOLD_AND_RED` ("Bold and Red") to
+   * `BOLD_ONLY` ("Bold"). Parameters carrying any other style (`ITALIC`, …) are
+   * left untouched, and no other parameter setting is changed. (Since Abnormal Flag
+   * Logic v1.3 the style lives on the parameter, not on its reference ranges / values.)
    *
    * Runs inside {@link PrismaService.withTenant} so it works whether or not RLS is
    * enabled — the tenant GUC is set and every `where` stays tenant-scoped (defence
@@ -736,12 +736,11 @@ export class MasterDataService {
    * Soft-deleted rows (`deletedAt`) are skipped.
    *
    * @param tenantId the tenant whose tests should be updated (from the query string)
-   * @returns a summary of how many reference ranges / values were updated
+   * @returns how many result parameters were updated
    * @throws NotFoundException if `tenantId` does not exist
    */
   async resetAbnormalFlagLogicToBold(tenantId: string): Promise<{
-    referenceRangesUpdated: number;
-    referenceValuesUpdated: number;
+    parametersUpdated: number;
   }> {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -755,24 +754,17 @@ export class MasterDataService {
     const TO = AbnormalFlag.BOLD_ONLY;
 
     return this.prisma.withTenant(tenantId, async (tx) => {
-      const ranges = await tx.labTestReferenceRange.updateMany({
-        where: { tenantId, abnormalFlagLogic: FROM, deletedAt: null },
-        data: { abnormalFlagLogic: TO },
-      });
-      const values = await tx.labTestReferenceValue.updateMany({
+      const params = await tx.labTestResultParam.updateMany({
         where: { tenantId, abnormalFlagLogic: FROM, deletedAt: null },
         data: { abnormalFlagLogic: TO },
       });
 
       this.logger.log(
         `Reset Abnormal Flag Logic to BOLD_ONLY for tenant ${tenantId}: ` +
-          `${ranges.count} reference range(s), ${values.count} reference value(s)`,
+          `${params.count} result parameter(s)`,
       );
 
-      return {
-        referenceRangesUpdated: ranges.count,
-        referenceValuesUpdated: values.count,
-      };
+      return { parametersUpdated: params.count };
     });
   }
 }

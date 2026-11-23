@@ -3,6 +3,7 @@ import {
   abnormalFlagStyle,
   computeTrendFlag,
   isObservedAbnormal,
+  parseComparableNumber,
 } from './reference-range.util';
 
 describe('abnormalFlagStyle', () => {
@@ -23,6 +24,14 @@ describe('abnormalFlagStyle', () => {
   it('covers every enum member (no unmapped value)', () => {
     for (const flag of Object.values(AbnormalFlag)) {
       expect(abnormalFlagStyle(flag).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('abnormalFlagStyle never invents a style', () => {
+  it('an unknown, null or undefined value gets NO styling (not Bold and Red)', () => {
+    for (const v of [undefined, null, 'PINK', '', 'bold_only']) {
+      expect(abnormalFlagStyle(v as unknown as AbnormalFlag)).toBe('');
     }
   });
 });
@@ -113,5 +122,35 @@ describe('isObservedAbnormal (shared tag + styling decision)', () => {
       false,
     );
     expect(isObservedAbnormal('9', undefined, range)).toBe(false);
+  });
+});
+
+describe('parseComparableNumber stays fast on hostile input', () => {
+  it('a very long run of digits ending in a letter is rejected in well under a second', () => {
+    const started = Date.now();
+    expect(parseComparableNumber('1'.repeat(200000) + 'x')).toBeNull();
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('still reads every ordinary form the same way', () => {
+    expect(parseComparableNumber('135')).toBe(135);
+    expect(parseComparableNumber('135.50')).toBe(135.5);
+    expect(parseComparableNumber('-2.1')).toBe(-2.1);
+    expect(parseComparableNumber('+5')).toBe(5);
+    expect(parseComparableNumber('.5')).toBe(0.5);
+    expect(parseComparableNumber('5.')).toBe(5);
+    for (const bad of [
+      '<5',
+      '1,200',
+      '1e3',
+      '0x1F',
+      '-',
+      '5.5.5',
+      '--5',
+      '1 2',
+      'Hemolysed',
+    ]) {
+      expect(parseComparableNumber(bad)).toBeNull();
+    }
   });
 });

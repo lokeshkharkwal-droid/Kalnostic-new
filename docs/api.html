@@ -487,7 +487,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>PATCH /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>DELETE /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
-  <tr><td>POST /siteadmin/master-data/abnormal-flag-logic/reset-to-bold?tenantId=…</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ — for the <code>tenantId</code> query param, update all the tenant's reference ranges + values from Abnormal Flag Logic BOLD_AND_RED → BOLD_ONLY ("Bold"); other flags untouched</td></tr>
+  <tr><td>POST /siteadmin/master-data/abnormal-flag-logic/reset-to-bold?tenantId=…</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ — for the <code>tenantId</code> query param, update all the tenant's result parameters from Abnormal Flag Logic BOLD_AND_RED → BOLD_ONLY ("Bold") (returns <code>{ parametersUpdated }</code>); other styles untouched</td></tr>
   <tr><td>GET /master-data/tenant</td><td>Business JWT</td><td>get-or-create the tenant-level Tenant Master Data singleton (branchId NULL)</td></tr>
   <tr><td>GET /master-data/branch</td><td>Business JWT</td><td>get-or-create the active branch's Branch Master Data (branch from JWT)</td></tr>
   <tr><td>POST /master-data/branch/import-from-tenant</td><td>Business JWT</td><td>sync Tenant Master Data → active Branch Master Data (full overwrite, tests + panels); also carries each test/panel TAT into its Lab Test/Panel List copies in every list (empty or un-customised copies only — branch-customised TAT is kept). Branch Master Data test/panel update, bulk-edit and Excel update propagate TAT the same way</td></tr>
@@ -1467,7 +1467,18 @@ tests never appear regardless of status.</div>
   member becomes the display label the sheet uses (<code>SINGLE_STEP</code> → <code>"Single Step"</code>).
   Applies to every field on the test/sample/result-parameter/reference-range/value DTOs.</p>
   <pre>{ "success": true, "data": { "created": 1, "updated": 1, "skipped": [
-  { "rowLabel": "Row 5", "errors": [ "Price Maximum must be ≤ Price MSRP" ] } ] } }</pre>
+  { "rowLabel": "Row 5", "errors": [ "Price Maximum must be ≤ Price MSRP" ] } ],
+  "unresolvedClassifications": [], "sampleNameNotices": [], "ignoredColumnNotices": [] } }</pre>
+  <p><b>Abnormal Flag Logic (v1.3).</b> The style is one optional column in the Result Parameter block,
+  <code>abnormal flag logic</code>, right after <code>result rounding type</code> — one of the 16 labels
+  (9 basic: Red, Bold, Italic, Bold Italic, Bold and Red, Italic and Red, Bold Italic and Red, Underline, Colour Highlight;
+  plus <code>… with High and Low</code> for the first 7, Quantitative only), any letter case, or the enum name. A blank cell
+  keeps an existing parameter's style (a new parameter with a blank cell is saved with no style; a style can only be
+  cleared on the Master Data screen). A word the system does not have, or a
+  High/Low style on a Semi-Quantitative / Qualitative parameter, skips the test; the messages name the typed word or
+  <code>Parameter "X" (CODE)</code>, and every such parameter of the test is listed. A file exported before the change has
+  <code>ABNORMAL FLAG LOGIC</code> columns in the Reference Range / Reference Value blocks: they are not read, and
+  <code>ignoredColumnNotices</code> (array of plain sentences, <code>[]</code> for a current file) says so.</p>
 </div>
 
 <div class="ep" id="lt-get">
@@ -3041,6 +3052,38 @@ tagged with the old name — there is no cascade or reference-count warning.</di
   <p>Soft delete (<code>deletedAt</code>). A report that already applied this template keeps its
   snapshotted <code>overallResultContent</code> — deleting the template does not retroactively
   blank existing reports, it only removes the template from future pickers.</p>
+</div>
+
+<div class="ep" id="lr-results">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/lab-reports/:id/results</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Save a report's observed values. Body <code>{ "values": [ { resultParamId, observed1?, observed2?, unit?, methodology?,
+  referenceRangeId?, referenceDisplay?, flagOption?, highlightLogic? } ] }</code>.</p>
+  <p><b>Abnormal Flag Logic (v1.3).</b> <code>flagOption</code> is the technician's choice for the row —
+  <code>DEFAULT</code> (the system decides: a Quantitative value outside its range prints in the parameter's style;
+  everything else prints Normal, as does a parameter that has no style set), <code>HIGHLIGHT</code> (always prints in the chosen style) or <code>NOT_HIGHLIGHT</code> (always
+  Normal). <code>highlightLogic</code> is the Highlight style and is kept only under <code>HIGHLIGHT</code>; omitted/null
+  means "the parameter's own style" (Bold and Red when the parameter has none). It may be one of the 9 basic styles only — a <code>… with High and Low</code> style is
+  <span class="pill">422 VALIDATION_ERROR</span>. Omitting <code>flagOption</code> leaves the stored choice as it is (a new row
+  starts on <code>DEFAULT</code>). The old <code>highlightInReport</code> field is no longer accepted (400).</p>
+  <p><b>Finished reports do not change.</b> <code>POST /lab-reports/:id/validate</code> freezes how each reading prints
+  (Observed 1 and Observed 2 style, the High/Low word, the abnormal tag) plus the parameter's name, group, order, result type
+  and configured Note, in the same transaction as the status change. While the report is Result Done / Approved / Published
+  every print (single, Print All, shared and public) reads that frozen copy, so a later Master Data edit or branch sync cannot
+  change it; the technician's own parameter Note stays live. The Overall Result is locked from Validation Pending onwards
+  (<code>PATCH /lab-reports/:id/overall-result/:resultParamId</code> → <span class="pill">409 LAB_REPORT_OVERALL_RESULT_NOT_EDITABLE</span>),
+  like the values and the Notes. Edit Report, Re-run, a sample return and Error Reported drop the
+  frozen copy, and the next validate freezes it again under that day's rules. A finished report with no frozen copy (finished
+  before this feature and not yet backfilled) prints with the live rules and logs a warning;
+  <code>pnpm backfill:print-snapshots</code> (dry run by default, <code>-- --apply</code> to write) freezes those once, with
+  the rules they printed with before.</p>
+  <p>Picking a Highlight style other than the parameter's own (Bold and Red when the parameter has no style) needs the
+  <b>Change abnormal style</b> permission (<code>lab_operations:reporting__change_abnormal_style</code>, granted by default
+  to every role that has the Laboratory module); re-saving a style already saved on that row does not. Without the permission →
+  <span class="pill">403 ABNORMAL_STYLE_CHANGE_NOT_ALLOWED</span> and nothing is written. A Re-run or a return resets the
+  choice to <code>DEFAULT</code>. A value is a comparable number when it is an optional <code>+</code>/<code>-</code>, digits and
+  at most one decimal point (<code>135</code>, <code>-2.1</code>, <code>.5</code>); <code>&lt;5</code>, <code>1,200</code>,
+  <code>1e3</code> and text are not, and print Normal under Default.</p>
 </div>
 
 <div class="ep" id="ort-apply">

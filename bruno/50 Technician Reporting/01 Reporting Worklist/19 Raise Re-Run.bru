@@ -26,8 +26,10 @@ script:post-response {
 }
 
 docs {
-  Re-Run Request (LABORATORY.docx §5.5). Clears the report's result values
-  and returns it to Pending; also creates a tracking row in the Re-Run
+  Re-Run Request (LABORATORY.docx §5.5). Clears the report's result values,
+  the technician's parameter Notes and the Overall Result (the old comment must
+  not print next to the new values; a later save writes a fresh one) and
+  returns it to Pending; also creates a tracking row in the Re-Run
   worklist (see "02 Re-Run"). `notes` optional.
 
   Allowed only from RESULT_DONE, RESULT_REJECTED or ERROR_REPORTED (manager's
