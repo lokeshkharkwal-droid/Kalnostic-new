@@ -146,10 +146,14 @@ describe('collectionProgressByOrder', () => {
       const text = JSON.stringify(buildCollectionProgressWhere(status));
       // collected = has a date AND is not in REPEAT; uncollected = no date OR in REPEAT
       if (status !== 'COLLECTED') {
-        expect(text).toContain('"collectedAt":{"not":null},"status":{"not":"REPEAT"}');
+        expect(text).toContain(
+          '"collectedAt":{"not":null},"status":{"not":"REPEAT"}',
+        );
       }
       if (status !== 'PENDING') {
-        expect(text).toContain('"OR":[{"collectedAt":null},{"status":"REPEAT"}]');
+        expect(text).toContain(
+          '"OR":[{"collectedAt":null},{"status":"REPEAT"}]',
+        );
       }
     }
   });

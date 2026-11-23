@@ -2158,14 +2158,15 @@ export class UsersService {
     // with an empty `permissions` list so the frontend's module-visibility gate
     // (branch-enabled ∩ moduleAllowed) treats them identically to a
     // permission-bearing module — no client-side special-casing.
-    const enablementOnlyModules: PermissionModuleGroup[] = SYSTEM_MODULES.filter(
-      (m) => m.hasPermissions === false && permGate.has(m.key),
-    ).map((m) => ({
-      moduleKey: m.key,
-      moduleLabel: m.label,
-      moduleAllowed: true,
-      permissions: [],
-    }));
+    const enablementOnlyModules: PermissionModuleGroup[] =
+      SYSTEM_MODULES.filter(
+        (m) => m.hasPermissions === false && permGate.has(m.key),
+      ).map((m) => ({
+        moduleKey: m.key,
+        moduleLabel: m.label,
+        moduleAllowed: true,
+        permissions: [],
+      }));
 
     return {
       role,

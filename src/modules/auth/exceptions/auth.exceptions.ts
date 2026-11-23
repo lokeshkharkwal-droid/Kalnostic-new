@@ -67,3 +67,20 @@ export class InvalidPasswordException extends KaltrosException {
     super('INVALID_PASSWORD', reason, {}, HttpStatus.UNPROCESSABLE_ENTITY);
   }
 }
+
+/**
+ * 403 — a patient-only identity (a patient record with no staff identity) tried
+ * to authenticate through business auth. It must use the patient portal; this
+ * stops a patient credential row minting a business token that the global guard
+ * would accept on staff routes (business RBAC isn't route-enforced yet).
+ */
+export class BusinessLoginNotAllowedForPatientException extends KaltrosException {
+  constructor(personId: string) {
+    super(
+      'BUSINESS_LOGIN_NOT_ALLOWED_FOR_PATIENT',
+      'This account can only sign in through the patient portal',
+      { personId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}

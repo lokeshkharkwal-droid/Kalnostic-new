@@ -1,0 +1,51 @@
+meta {
+  name: 04 Select Business
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/patient-portal/auth/select-business
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "bootstrapToken": "{{patientBootstrapToken}}",
+    "tenantId": "{{tenantId}}"
+  }
+}
+
+script:post-response {
+  const body = res.getBody();
+  const data = body && body.data;
+  if (data && data.accessToken) {
+    bru.setEnvVar("patientAccessToken", data.accessToken);
+    bru.setEnvVar("patientRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  **Patient portal — step 2 of 2.** Exchanges the bootstrap token + a chosen
+  business (`tenantId` from the login response's `businesses` list) for a
+  tenant-scoped access (15m) + refresh (30d) pair.
+
+  The `tenantId` is validated against the person's enrolments — a client cannot
+  select a business they are not a patient of.
+
+  Returns `data`: `{ accessToken, refreshToken, patient, mustChangePassword }`
+  where `patient` is `{ patientId, personId, tenantId, branchId, platformMrn,
+  name }`. Captures `patientAccessToken` + `patientRefreshToken`.
+
+  When `mustChangePassword` is true the session is restricted to **Patient Change
+  Password** until the patient sets their own password.
+
+  Errors: `401 PATIENT_INVALID_BOOTSTRAP_TOKEN` (bad/expired bootstrap); `403
+  PATIENT_TENANT_NOT_SELECTABLE` (tenant not enrolled); `403
+  PATIENT_NO_LOGIN_ACCESS` (no patient row in the tenant).
+}

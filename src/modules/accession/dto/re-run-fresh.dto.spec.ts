@@ -13,7 +13,8 @@ const pipe = new ValidationPipe({
   transformOptions: { enableImplicitConversion: true },
 });
 const ID = '11111111-1111-4111-8111-111111111111';
-const run = (body: unknown) => pipe.transform(body, { type: 'body', metatype: ReRunFreshDto });
+const run = (body: unknown) =>
+  pipe.transform(body, { type: 'body', metatype: ReRunFreshDto });
 const body = (repeatReason: unknown) => ({ reportIds: [ID], repeatReason });
 
 async function refusedFor(repeatReason: unknown): Promise<string[] | null> {
@@ -23,7 +24,9 @@ async function refusedFor(repeatReason: unknown): Promise<string[] | null> {
   );
   if (err === null) return null;
   expect(err).toBeInstanceOf(BadRequestException);
-  const res = (err as BadRequestException).getResponse() as { message?: string | string[] };
+  const res = (err as BadRequestException).getResponse() as {
+    message?: string | string[];
+  };
   return Array.isArray(res.message) ? res.message : [String(res.message)];
 }
 
@@ -69,11 +72,14 @@ describe('ReRunFreshDto.repeatReason - must contain a visible character', () => 
     ['an array', ['x']],
     ['a number', 123],
     ['a boolean', true],
-  ])('refuses %s as the reason - it must not be turned into text such as "[object Object]"', async (_name, reason) => {
-    const msgs = await refusedFor(reason);
-    expect(msgs).not.toBeNull();
-    expect(msgs!.join(' ')).toMatch(/repeatReason/);
-  });
+  ])(
+    'refuses %s as the reason - it must not be turned into text such as "[object Object]"',
+    async (_name, reason) => {
+      const msgs = await refusedFor(reason);
+      expect(msgs).not.toBeNull();
+      expect(msgs!.join(' ')).toMatch(/repeatReason/);
+    },
+  );
 
   it('refuses a NUL character in the reason (PostgreSQL cannot store it: it used to be a 500)', async () => {
     const msgs = await refusedFor('abc\u0000def');
@@ -83,14 +89,20 @@ describe('ReRunFreshDto.repeatReason - must contain a visible character', () => 
 });
 
 describe('ReRunFreshDto.notes - optional, text only, no NUL character', () => {
-  const withNotes = (notes: unknown) => ({ reportIds: [ID], repeatReason: 'Clotted', notes });
+  const withNotes = (notes: unknown) => ({
+    reportIds: [ID],
+    repeatReason: 'Clotted',
+    notes,
+  });
   const refusedNotes = async (notes: unknown) => {
     const err: unknown = await run(withNotes(notes)).then(
       () => null,
       (e: unknown) => e,
     );
     if (err === null) return null;
-    const res = (err as BadRequestException).getResponse() as { message?: string | string[] };
+    const res = (err as BadRequestException).getResponse() as {
+      message?: string | string[];
+    };
     return Array.isArray(res.message) ? res.message : [String(res.message)];
   };
 
@@ -107,11 +119,14 @@ describe('ReRunFreshDto.notes - optional, text only, no NUL character', () => {
     ['an object', { a: 1 }],
     ['an array', ['x']],
     ['a number', 5],
-  ])('refuses %s (it used to be saved as "[object Object]" / "5")', async (_name, notes) => {
-    const msgs = await refusedNotes(notes);
-    expect(msgs).not.toBeNull();
-    expect(msgs!.join(' ')).toMatch(/notes/);
-  });
+  ])(
+    'refuses %s (it used to be saved as "[object Object]" / "5")',
+    async (_name, notes) => {
+      const msgs = await refusedNotes(notes);
+      expect(msgs).not.toBeNull();
+      expect(msgs!.join(' ')).toMatch(/notes/);
+    },
+  );
 
   it('refuses a NUL character in the notes', async () => {
     const msgs = await refusedNotes('abc\u0000def');

@@ -1,0 +1,22 @@
+meta {
+  name: 08 Patient Logout
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/patient-portal/auth/logout
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  Log out of the patient portal everywhere: revokes the person's **patient**
+  refresh tokens. Any business sessions (for a staff+patient hybrid) are left
+  untouched. The current access token remains valid until it expires (15m) — the
+  client should discard it.
+}

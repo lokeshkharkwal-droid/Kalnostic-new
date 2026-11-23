@@ -176,10 +176,13 @@ describe('buildTransferTimeline - what the RECEIVING branch did', () => {
       actorName: 'Ravi',
       reason: 'Clotted',
     });
-    expect(reject[1]).toMatchObject({ display: 'rejected', branchName: 'Branch B' });
+    expect(reject[1]).toMatchObject({
+      display: 'rejected',
+      branchName: 'Branch B',
+    });
   });
 
-  it("a send-back of an EARLIER transfer is named from that transfer, not from this one", () => {
+  it('a send-back of an EARLIER transfer is named from that transfer, not from this one', () => {
     const tl = buildTransferTimeline({
       ...base,
       sender: [sent, returned],
@@ -188,7 +191,10 @@ describe('buildTransferTimeline - what the RECEIVING branch did', () => {
       returned: null, // this (later) transfer was not sent back
       returnedAt: () => 'REJECTED',
     });
-    expect(tl[1]).toMatchObject({ display: 'rejected', branchName: 'Branch B' });
+    expect(tl[1]).toMatchObject({
+      display: 'rejected',
+      branchName: 'Branch B',
+    });
   });
 
   it('a send-back of unknown kind keeps the general label but still shows the right branch', () => {
@@ -218,19 +224,36 @@ describe('buildTransferTimeline - what the RECEIVING branch did', () => {
       steps: [],
       receiver: [],
     });
-    expect(t[1]).toMatchObject({ display: 'receiver-retrieve', side: 'receiver', branchName: 'Branch B' });
+    expect(t[1]).toMatchObject({
+      display: 'receiver-retrieve',
+      side: 'receiver',
+      branchName: 'Branch B',
+    });
     expect(t[2]!.display).toBeUndefined();
     expect(t[2]).toMatchObject({ side: 'sender', branchName: 'Branch A' });
   });
 
-  it("ordinary sender lines are left exactly as they were", () => {
-    const t = buildTransferTimeline({ ...base, sender: [sent], steps: [], receiver: [], returned: 'REPEAT' });
+  it('ordinary sender lines are left exactly as they were', () => {
+    const t = buildTransferTimeline({
+      ...base,
+      sender: [sent],
+      steps: [],
+      receiver: [],
+      returned: 'REPEAT',
+    });
     expect(t[0]).toMatchObject({ side: 'sender', branchName: 'Branch A' });
     expect(t[0]!.display).toBeUndefined();
   });
 
   it('without a known receiving branch the stored branch is kept', () => {
-    const t = buildTransferTimeline({ ...base, receiverDestination: null, sender: [returned], steps: [], receiver: [], returned: 'REPEAT' });
+    const t = buildTransferTimeline({
+      ...base,
+      receiverDestination: null,
+      sender: [returned],
+      steps: [],
+      receiver: [],
+      returned: 'REPEAT',
+    });
     expect(t[0]!.branchName).toBe('Branch A');
   });
 });
@@ -248,7 +271,11 @@ describe('endAtReturn', () => {
   ];
 
   it('a transfer sent back ends at the send-back: what the sender did next is left out', () => {
-    expect(endAtReturn(rows, 'REPEAT').map((r) => r.action)).toEqual(['returned-by-receiver', 'send', 'accept']);
+    expect(endAtReturn(rows, 'REPEAT').map((r) => r.action)).toEqual([
+      'returned-by-receiver',
+      'send',
+      'accept',
+    ]);
     expect(endAtReturn(rows, 'REJECTED')).toHaveLength(3);
   });
 
@@ -262,7 +289,13 @@ describe('endAtReturn', () => {
   });
 
   it('keeps the newest send-back when there are several', () => {
-    const two = [{ action: 'send' }, { action: 'returned-by-receiver' }, { action: 'send' }, { action: 'returned-by-receiver' }, { action: 'collect' }];
+    const two = [
+      { action: 'send' },
+      { action: 'returned-by-receiver' },
+      { action: 'send' },
+      { action: 'returned-by-receiver' },
+      { action: 'collect' },
+    ];
     expect(endAtReturn(two, 'REPEAT')).toHaveLength(4);
   });
 });

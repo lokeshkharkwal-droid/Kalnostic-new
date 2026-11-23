@@ -82,6 +82,17 @@
   <a href="#auth-logout">POST /auth/logout</a>
   <a href="#auth-me">GET /auth/me</a>
   <a href="#tenant-locale">GET /tenant/locale</a>
+  <h3>Patient portal auth</h3>
+  <a href="#patient-issue-credentials">POST /patients/:id/login-credentials</a>
+  <a href="#patient-login">POST /patient-portal/auth/login</a>
+  <a href="#patient-select-business">POST /patient-portal/auth/select-business</a>
+  <a href="#patient-refresh">POST /patient-portal/auth/refresh</a>
+  <a href="#patient-switch-business">POST /patient-portal/auth/switch-business</a>
+  <a href="#patient-home">GET /patient-portal/home</a>
+  <a href="#patient-businesses">GET /patient-portal/businesses</a>
+  <a href="#patient-change-password">POST /patient-portal/auth/change-password</a>
+  <a href="#patient-me">GET /patient-portal/auth/me</a>
+  <a href="#patient-logout">POST /patient-portal/auth/logout</a>
   <h3>Branches</h3>
   <a href="#branch-create">POST /branches</a>
   <a href="#branch-list">GET /branches</a>
@@ -435,6 +446,17 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /auth/logout</td><td>Business JWT</td><td>self</td></tr>
   <tr><td>GET /auth/me</td><td>Business JWT</td><td>self</td></tr>
   <tr><td>GET /tenant/locale</td><td>Business JWT</td><td>own tenant</td></tr>
+  <tr><td>POST /patients/:id/login-credentials</td><td>Business JWT</td><td>own tenant (staff enables patient login)</td></tr>
+  <tr><td>POST /patients/:id/login-credentials/reset</td><td>Business JWT</td><td>own tenant (staff resets patient password)</td></tr>
+  <tr><td>POST /patient-portal/auth/login</td><td>Public</td><td>—</td></tr>
+  <tr><td>POST /patient-portal/auth/select-business</td><td>Public</td><td>bootstrap token</td></tr>
+  <tr><td>POST /patient-portal/auth/refresh</td><td>Public</td><td>—</td></tr>
+  <tr><td>POST /patient-portal/auth/switch-business</td><td>Patient JWT</td><td>self (enrolled tenants)</td></tr>
+  <tr><td>GET /patient-portal/home</td><td>Patient JWT</td><td>self (own patient + tenant)</td></tr>
+  <tr><td>GET /patient-portal/businesses</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>POST /patient-portal/auth/change-password</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>GET /patient-portal/auth/me</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>POST /patient-portal/auth/logout</td><td>Patient JWT</td><td>self</td></tr>
   <tr><td>POST /branches</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
   <tr><td>GET /branches</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
   <tr><td>GET /branches/:id</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
@@ -923,6 +945,121 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   "timezone": "Asia/Kolkata", "currency": "INR",
   "dateFormat": "DD/MM/YYYY", "timeFormat": "12h", "language": "en"
 }, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<!-- ───────────────────────── PATIENT PORTAL AUTH ───────────────────────── -->
+<h2>Patient Portal Authentication</h2>
+<p>A third, isolated auth system (separate <code>'jwt-patient'</code> strategy +
+<code>type: "patient"</code> token). Reuses the platform-level credential/refresh
+tables; a patient token is rejected on every business/SiteAdmin route by
+construction. Flow is two-step — <strong>login then pick business</strong>.
+Credentials are enabled by staff (below); patients never self-register here.</p>
+
+<div class="ep" id="patient-issue-credentials">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patients/:id/login-credentials</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Staff action. Enables patient-portal login: links the patient to a platform <code>Person</code> (creating/linking one when the patient has no <code>personId</code>), creates credentials with the fixed temp password <code>Password@123</code> (bcrypt-hashed, <code>isTempPassword</code>), and records a <code>PersonTenantEnrollment</code>. Tenant + actor come from the token. Idempotent on an existing login (a staff+patient hybrid's password is kept). <code>POST …/login-credentials/reset</code> forces the password back to the temp password.</p>
+  <p class="lbl">201 response</p>
+  <pre>{ "success": true, "data": {
+  "patientId": "uuid", "personId": "uuid", "loginIdentifier": "9876543210",
+  "tempPassword": "Password@123", "credentialsAlreadyExisted": false
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-login">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/login</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Step 1 — authenticate the platform identity (mobile/email + password). Returns a short-lived bootstrap token and the businesses the patient may enter. Shared lockout (10 fails → 15 min). <code>403 PATIENT_NO_LOGIN_ACCESS</code> when the identity isn't enrolled as a patient anywhere.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "identifier": "9876543210", "password": "Password@123" }</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "bootstrapToken": "eyJhbGciOi…", "mustChangePassword": true,
+  "businesses": [ { "tenantId":"uuid","tenantName":"Flow Lab","tenantSlug":"flow-lab",
+                    "shortName":null,"logoUrl":null } ]
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-select-business">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/select-business</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Step 2 — exchange the bootstrap token + a chosen <code>tenantId</code> (from the login response) for a tenant-scoped access (15m) + refresh (30d) pair. The tenant is validated against the person's enrolments (<code>403 PATIENT_TENANT_NOT_SELECTABLE</code> otherwise). When <code>mustChangePassword</code> is true the session is restricted to change-password.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "bootstrapToken": "eyJhbGciOi…", "tenantId": "uuid" }</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "accessToken": "eyJhbGciOi…", "refreshToken": "a1b2c3…",
+  "patient": { "patientId":"uuid","personId":"uuid","tenantId":"uuid",
+               "branchId":"uuid","platformMrn":"KAL-…","name":"Sample Patient" },
+  "mustChangePassword": true
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-refresh">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/refresh</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Rotate a patient refresh token (single-use). Audience-isolated: a business refresh token is rejected here and vice-versa (<code>token_type</code>). Stays scoped to the selected tenant.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "refreshToken": "a1b2c3…" }</pre>
+</div>
+
+<div class="ep" id="patient-switch-business">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/switch-business</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Switch an authenticated session to another of the patient's businesses — <strong>no re-login</strong> (mirrors business switch-profile). Returns a fresh access + refresh pair scoped to the target tenant. Blocked on a temp-password session. Powers the portal's lab switcher.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "tenantId": "uuid" }</pre>
+</div>
+
+<div class="ep" id="patient-home">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/home</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Composed home summary for the authenticated patient + tenant: identity, stat tiles, next appointment, ready reports, recent messages. Best-effort (empty/zero where a source is thin). <code>403 PATIENT_PASSWORD_CHANGE_REQUIRED</code> on a temp-password session.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "patient": { "patientId":"uuid","name":"Sahu Kumar","initials":"SK","platformMrn":"KAL-…",
+               "photoUrl":null,"tenantId":"uuid","tenantName":"Flow Lab" },
+  "stats": { "upcomingAppointments":1,"reportsReady":3,"unreadMessages":0,"balanceDue":1250,"billsCount":2 },
+  "nextAppointment": { "orderCode":"…","appointmentAt":"…","appointmentType":"OPD",
+                       "doctorName":"Dr. Sunakshi","branchName":"Main","reason":"test","status":"NEW" },
+  "reportsReady": [ { "id":"uuid","testName":"FSH","orderCode":"…","publishedAt":"…" } ],
+  "recentMessages": []
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-businesses">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/businesses</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>The businesses (labs) this patient can switch into, for the lab switcher.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": [
+  { "tenantId":"uuid","tenantName":"Flow Lab","tenantSlug":"flow-lab","shortName":null,"logoUrl":null }
+], "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-change-password">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/change-password</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Change the patient's password (requires the current one). Reachable on a temp-password session — this is how a patient clears the staff-issued temp password. Clears the temp flag and revokes existing patient sessions (log in again afterwards).</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "currentPassword": "Password@123", "newPassword": "MyNewPass2" }</pre>
+</div>
+
+<div class="ep" id="patient-me">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/auth/me</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Current patient session info. On a temp-password session returns <code>403 PATIENT_PASSWORD_CHANGE_REQUIRED</code> until the password is changed.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "person_id":"uuid","patient_id":"uuid","tenant_id":"uuid","active_branch_id":"uuid",
+  "platform_mrn":"KAL-…","is_patient_context":true,"must_change_password":false
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-logout">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/logout</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Revoke the person's patient refresh tokens (business sessions, if any, untouched).</p>
 </div>
 
 <!-- ───────────────────────── BRANCHES ───────────────────────── -->

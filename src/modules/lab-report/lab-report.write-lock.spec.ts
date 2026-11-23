@@ -111,13 +111,14 @@ describe('LabReportService.lockReports (used by Send and by the receiver’s ret
     expect(tx.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it('locks the reports\' ORDER rows first (the same order an order Cancel uses), then every report in one ordered statement', async () => {
+  it("locks the reports' ORDER rows first (the same order an order Cancel uses), then every report in one ordered statement", async () => {
     const { tx } = makeTx({ sentOut: false });
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     await svc.lockReports(tx as never, 't1', ['r2', 'r1']);
     expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     // a tagged template: the first argument is the array of SQL fragments
-    const sql = (n: number) => (tx.$queryRaw.mock.calls[n] as unknown as [string[]])[0].join('?');
+    const sql = (n: number) =>
+      (tx.$queryRaw.mock.calls[n] as unknown as [string[]])[0].join('?');
     // 1st: the order rows, so a Cancel landing at the same time queues instead of deadlocking
     expect(sql(0)).toContain('FROM orders');
     expect(sql(0)).toContain('FOR NO KEY UPDATE');

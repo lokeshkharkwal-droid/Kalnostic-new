@@ -1,0 +1,44 @@
+meta {
+  name: 07 Patient Refresh
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/patient-portal/auth/refresh
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "refreshToken": "{{patientRefreshToken}}"
+  }
+}
+
+script:post-response {
+  const body = res.getBody();
+  const data = body && body.data;
+  if (data && data.accessToken) {
+    bru.setEnvVar("patientAccessToken", data.accessToken);
+    bru.setEnvVar("patientRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  Rotate a patient refresh token for a new access + refresh pair (single-use: the
+  old token is consumed). Re-validates the person, enrolment and patient row
+  against current state. Stays scoped to the tenant chosen at **Select Business**.
+
+  Audience-isolated: a **business** refresh token is rejected here, and a
+  **patient** refresh token is rejected on the business `/auth/refresh`
+  (`token_type` discriminator). Updates `patientAccessToken` +
+  `patientRefreshToken`.
+
+  Errors: `401 PATIENT_INVALID_REFRESH_TOKEN` (missing/used/revoked/expired, wrong
+  audience, or the enrolment/patient no longer exists).
+}

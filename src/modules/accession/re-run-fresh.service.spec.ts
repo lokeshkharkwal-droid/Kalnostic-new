@@ -280,7 +280,8 @@ describe('ReRunFreshService.eligibility (the pop-up)', () => {
       [tube('s1', 'item-r1'), tube('s2', 'item-r2')],
     );
     m.samples.findSamplesOutsideDepartmentScope.mockImplementation(
-      (_t: string, _p: string | null, ids: string[]) => Promise.resolve(ids.filter((id) => id === 's2')),
+      (_t: string, _p: string | null, ids: string[]) =>
+        Promise.resolve(ids.filter((id) => id === 's2')),
     );
     const res = await m.service.eligibility(T, B, 'r1', P);
     expect(res.tests.map((x) => [x.reportId, x.eligible, x.reason])).toEqual([
@@ -289,13 +290,19 @@ describe('ReRunFreshService.eligibility (the pop-up)', () => {
     ]);
     expect(res.tests[1]!.kind).toBeNull();
     // asked for the acting person, with the tubes of each test
-    expect(m.samples.findSamplesOutsideDepartmentScope).toHaveBeenCalledWith(T, P, ['s2']);
+    expect(m.samples.findSamplesOutsideDepartmentScope).toHaveBeenCalledWith(
+      T,
+      P,
+      ['s2'],
+    );
   });
 
   it('a clicked report that is itself outside the caller’s departments is "not found" (nothing about it is revealed)', async () => {
     const m = build([report('r1')], [tube('s1', 'item-r1')]);
     m.samples.findSamplesOutsideDepartmentScope.mockResolvedValue(['s1']);
-    await expect(m.service.eligibility(T, B, 'r1', P)).rejects.toBeInstanceOf(LabReportNotFoundException);
+    await expect(m.service.eligibility(T, B, 'r1', P)).rejects.toBeInstanceOf(
+      LabReportNotFoundException,
+    );
   });
 
   it('an unrestricted caller sees every test exactly as before (no person id needed either)', async () => {

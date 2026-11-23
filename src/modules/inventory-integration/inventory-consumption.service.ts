@@ -109,9 +109,7 @@ export class InventoryConsumptionService {
       masterTests.map((t) => [t.id, t.sourceMasterLabTestId ?? t.id]),
     );
     return [
-      ...new Set(
-        branchMasterTestIds.map((id) => canonicalById.get(id) ?? id),
-      ),
+      ...new Set(branchMasterTestIds.map((id) => canonicalById.get(id) ?? id)),
     ];
   }
 

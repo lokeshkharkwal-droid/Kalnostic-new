@@ -1166,6 +1166,15 @@ model RefreshToken {
   issuedToIp String?   @map("issued_to_ip")
   userAgent  String?   @map("user_agent")
 
+  // Audience discriminator: 'business' (staff) or 'patient'. A patient refresh
+  // token must not be redeemable on the business refresh endpoint and vice-versa;
+  // each refresh endpoint filters on this. Defaults to 'business' so every
+  // existing row keeps its meaning without a data backfill.
+  tokenType String  @default("business") @map("token_type")
+  // Selected tenant for a patient session ("login then pick business"). Null for
+  // business sessions, which derive the tenant from the person's ownerTenantId.
+  tenantId  String? @map("tenant_id")
+
   expiresAt DateTime @map("expires_at")
   isUsed    Boolean  @default(false) @map("is_used")
   isRevoked Boolean  @default(false) @map("is_revoked")
@@ -1176,15 +1185,20 @@ model RefreshToken {
 
   @@index([personId])
   @@index([authRoleId])
+  @@index([tenantId])
   @@map("refresh_tokens")
 }
 
-/// Cross-business patient linkage (each business keeps its own tenant_mrn).
+/// Cross-business patient linkage (each business keeps its own tenant_mrn). Also
+/// the platform-level (RLS-exempt) index used by patient-portal login to list the
+/// tenants a person can sign into without reading the RLS-scoped `patients` table.
 model PersonTenantEnrollment {
   id        String  @id @default(uuid())
   personId  String  @map("person_id")
   tenantId  String  @map("tenant_id")
-  branchId  String  @map("branch_id")
+  // Nullable: a patient enrolled for portal access may be tenant-level (no
+  // registration branch). The row only needs (person, tenant) to drive login.
+  branchId  String? @map("branch_id")
   tenantMrn String? @map("tenant_mrn")
 
   enrolledAt DateTime @default(now()) @map("enrolled_at")

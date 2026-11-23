@@ -1,0 +1,44 @@
+meta {
+  name: 09 Switch Business
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/patient-portal/auth/switch-business
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+body:json {
+  {
+    "tenantId": "{{tenantId}}"
+  }
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (data && data.accessToken) {
+    bru.setEnvVar("patientAccessToken", data.accessToken);
+    bru.setEnvVar("patientRefreshToken", data.refreshToken);
+  }
+}
+
+docs {
+  Switch an already-authenticated patient session to another of the patient's
+  businesses — **no re-login** (mirrors business `switch-profile`). Returns a
+  fresh access + refresh pair scoped to the target tenant. The `tenantId` is
+  validated against the person's enrolments.
+
+  Requires a patient JWT; **blocked on a temp-password session** (same gate as the
+  other patient routes — change the password first). Powers the portal's lab
+  switcher. Errors: `403 PATIENT_TENANT_NOT_SELECTABLE` (not enrolled).
+}
