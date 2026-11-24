@@ -459,6 +459,10 @@ const PERMISSION_SPEC: Record<string, SectionSpec[]> = {
       permissions: ['View referral panel settings'],
     },
     { label: 'Machines', permissions: ['View machines'] },
+    {
+      label: 'Reports',
+      permissions: ['View WhatsApp report', 'View SMS report'],
+    },
   ],
 
   branch_admin: [
@@ -981,6 +985,10 @@ export const PERMISSION_KEYS = {
   BA_TPL_ADD_REPORT: 'business_admin:templates__add_report_template',
   BA_TPL_EDIT_REPORT: 'business_admin:templates__edit_report_template',
   BA_TPL_DELETE_REPORT: 'business_admin:templates__delete_report_template',
+
+  // ── Business Admin — messaging reports (REPORT → WhatsApp Report / SMS Report) ──
+  BA_REPORTS_VIEW_WHATSAPP: 'business_admin:reports__view_whatsapp_report',
+  BA_REPORTS_VIEW_SMS: 'business_admin:reports__view_sms_report',
 
   // ── Branch Admin — write actions (route-guarded). The `branch_admin` role's
   //    baseline includes these, so it is not bypassed but is granted by default;

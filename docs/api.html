@@ -190,6 +190,9 @@
   <a href="#technician-worklist-dates">Technician special worklists — date filter</a>
   <h3>Notes</h3>
   <a href="#order-notes">Order &amp; Technician notes</a>
+  <h3>Messaging Reports</h3>
+  <a href="#messaging-report-list">GET /messaging-reports/whatsapp|sms</a>
+  <a href="#messaging-report-detail">GET /messaging-reports/whatsapp|sms/:id</a>
 </nav>
 <main>
 
@@ -400,6 +403,12 @@ declare requirements via <code>@RequireSiteAdminPermission()</code>; the guard A
   <tr><td><code>staff:manage</code></td><td>business_admin, branch_admin</td></tr>
   <tr><td><code>billing:read</code></td><td>business_admin, branch_admin, receptionist</td></tr>
   <tr><td><code>billing:manage</code></td><td>business_admin</td></tr>
+</table>
+<p class="lbl">Business Admin › Reports (module permission keys) — granted to the business_admin baseline</p>
+<table>
+  <tr><th>Permission key</th><th>Guards</th></tr>
+  <tr><td><code>business_admin:reports__view_whatsapp_report</code></td><td><code>GET /messaging-reports/whatsapp</code>, <code>GET /messaging-reports/whatsapp/:id</code></td></tr>
+  <tr><td><code>business_admin:reports__view_sms_report</code></td><td><code>GET /messaging-reports/sms</code>, <code>GET /messaging-reports/sms/:id</code></td></tr>
 </table>
 <p class="lbl">SiteAdmin permissions (13) — minimum role that holds them (cumulative)</p>
 <table>
@@ -3261,6 +3270,67 @@ tenant from the JWT, branch from the active profile. Full field notes are in the
   <p>The receiving branch can no longer Retrieve an INTERNAL transfer it sent back as a Repeat or a Reject once the SENDING branch has
   acted on it (confirmed the Repeat, or flagged the rejected sample as Error: its sample left Sent): 422 <code>TRANSFER_RETRIEVE_AFTER_SENDER_CONFIRMED</code> (skipped, with that reason, when
   <code>skipInvalid</code> is set). Before the sender confirms, Retrieve (Repeat &rarr; Received) still works.</p>
+</div>
+
+<h2>Messaging Reports</h2>
+<p>Business Admin › REPORT › <b>WhatsApp Report</b> / <b>SMS Report</b>: every WhatsApp/SMS the tenant sent, with the
+provider's delivery status. The data is read live from the external <b>Exchange</b> gateway, the same source as the legacy
+<code>subscription/business/whatsAppReport</code> / <code>smsReport</code> screens:</p>
+<ul>
+  <li>The backend calls <code>GET {EXCHANGE_API_URL}/notifications/items</code> and <code>/notifications/itemDetail</code>
+  with a JSON body on the GET, scoped to the tenant's <code>exchangeTenantId</code>.</li>
+  <li>Nothing is stored. Local <code>communication_logs</code> rows, matched on <code>exchange_id</code>, only fill in a
+  missing recipient or template name.</li>
+</ul>
+<p>Bruno: <code>bruno/78 Messaging Reports</code>.</p>
+
+<div class="ep" id="messaging-report-list">
+  <div><span class="m get">GET</span><span class="path">/api/v1/messaging-reports/whatsapp</span> · <span class="path">/api/v1/messaging-reports/sms</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag">perm: business_admin:reports__view_whatsapp_report / …view_sms_report</span></div>
+  <p>One page of messages, newest first.</p>
+  <p class="lbl">Query</p>
+  <ul>
+    <li><code>dateFrom</code>, <code>dateTo</code>: required <code>YYYY-MM-DD</code>. Whole days in Indian local time,
+    inclusive (00:00:00–23:59:59).</li>
+    <li><code>page</code>: default 1.</li>
+    <li><code>status</code>: optional, case-insensitive, empty means All.
+      <ul>
+        <li>WhatsApp: <code>delivered|failed|pending|read|sent</code></li>
+        <li>SMS: <code>sent|undelivered|not-sent|failed|pending</code></li>
+      </ul>
+    </li>
+  </ul>
+  <p>There is no <code>limit</code>: the gateway fixes the page size (<code>meta.limit</code>, usually 50).</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true,
+  "data": [ { "id": 51234, "to": "919800000001", "template": "Lab create order, Inform Patient",
+              "notificationStatus": "Success", "deliveryStatus": "Pending", "smsParts": null,
+              "createdAt": "2026-11-21T15:25:00.000Z", "updatedAt": "2026-11-21T15:25:00.000Z" } ],
+  "meta": { "total": 1563, "page": 1, "limit": 50, "totalPages": 32, "timestamp": "…" } }</pre>
+  <p>On SMS:</p>
+  <ul>
+    <li><code>template</code> is null.</li>
+    <li><code>smsParts</code> is the parts billed for that message.</li>
+    <li><code>meta.smsPartsCount</code> is the parts summed over the whole filtered set (null if the gateway did not report it).</li>
+  </ul>
+  <p class="lbl">Errors</p>
+  <ul>
+    <li>400: validation, or <code>MESSAGING_REPORT_INVALID_DATE_RANGE</code> when <code>dateFrom &gt; dateTo</code>.</li>
+    <li>403: missing permission.</li>
+    <li>409: <code>EXCHANGE_TENANT_ID_MISSING</code>, or <code>MESSAGING_TENANT_NOT_REGISTERED</code> when the gateway answers
+    "client not found!" (the business was never registered with the Exchange: SiteAdmin → register-exchange).</li>
+    <li>502: <code>MESSAGING_GATEWAY_UNAVAILABLE</code>.</li>
+    <li>503: <code>MESSAGING_GATEWAY_NOT_CONFIGURED</code>, meaning no <code>EXCHANGE_API_*</code> env.</li>
+  </ul>
+</div>
+
+<div class="ep" id="messaging-report-detail">
+  <div><span class="m get">GET</span><span class="path">/api/v1/messaging-reports/whatsapp/:id</span> · <span class="path">/api/v1/messaging-reports/sms/:id</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag">perm: same as the list</span></div>
+  <p>The "Message Detail" pop-up. <code>:id</code> is the Exchange id from the list.</p>
+  <pre>{ "success": true, "data": { "id": 51234, "to": "919800000001", "createdAt": "2026-11-21T15:25:00.000Z", "message": "Dear …" } }</pre>
+  <p>404 <code>MESSAGE_NOT_FOUND</code> when the gateway has no such message for this tenant. That includes a message the gateway reports as
+  belonging to another tenant or to the other channel. Other errors are the same as the list.</p>
 </div>
 
 <p style="margin:40px 0 10px;color:var(--muted);font-size:13px">
