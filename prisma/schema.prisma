@@ -6561,6 +6561,21 @@ enum PaymentEntryType {
   REFUND
 }
 
+/// What a payment was collected FOR — stamped once at creation so the patient
+/// transaction page can tell apart the three contexts a payment can belong to
+/// without ever double-classifying one. Set in the two write paths
+/// (OrderService.create inline payments vs. the standalone PaymentDetailsService
+/// "Make Payment"); the read layer additionally overrides to APPOINTMENT from the
+/// order's appointment FK, so it is always authoritative.
+/// - APPOINTMENT — collected while the order is an appointment booking.
+/// - ORDER       — collected inline during order creation (a normal lab order).
+/// - BILL        — collected later against an existing bill (Make Payment).
+enum TransactionType {
+  APPOINTMENT
+  ORDER
+  BILL
+}
+
 /// B2B client billing type on an order.
 enum B2bClientType {
   CASH
@@ -8408,6 +8423,12 @@ model PaymentDetails {
   /// Null on rows written before this field existed (no retroactive backfill
   /// possible — historical payments never captured who collected them).
   collectedBy String? @map("collected_by")
+
+  /// What this payment was collected FOR (see `TransactionType`). Stamped once at
+  /// creation: APPOINTMENT (order was an appointment), ORDER (inline at order
+  /// creation) or BILL (standalone Make Payment / dues settlement). Legacy rows
+  /// default to BILL and are backfilled deterministically in the migration.
+  transactionType TransactionType @default(BILL) @map("transaction_type")
 
   /// Ledger entry kind. PAYMENT (default) = money collected (`paidAmount`).
   /// REFUND = money returned to the patient (`refundAmount`, `paidAmount` stays 0).
