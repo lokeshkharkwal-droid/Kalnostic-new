@@ -1,0 +1,63 @@
+meta {
+  name: 03 List Transactions
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/transactions?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~dateFrom: 2026-01-01
+  ~dateTo: 2026-12-31
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+script:post-response {
+  const body = res.getBody();
+  const data = body && body.data;
+  if (Array.isArray(data) && data.length && data[0].id) {
+    bru.setEnvVar("patientTransactionId", data[0].id);
+  }
+}
+
+docs {
+  Paginated transaction history for the authenticated patient — the SAME payment
+  records that appear under a bill's "Payment History" (never a separate store).
+  Consolidated across EVERY branch of the active tenant; scoped to the session's
+  person + tenant from the patient JWT (ownership enforced server-side). Only real
+  collections appear (PAYMENT rows with money, not reverted); refunds, reverted
+  and ₹0 draft rows are excluded.
+
+  Requires a patient JWT (`{{patientAccessToken}}`, from **Select Business**).
+
+  Query params (all optional):
+  - `page` (default 1), `limit` (default 10, max 100)
+  - `dateFrom`, `dateTo` — ISO-8601; inclusive date-range filter on the
+    transaction date. There is NO branch filter — the list always spans the whole
+    tenant.
+
+  Response `data` — one row per transaction:
+  - `id` — PaymentDetails id (the unique transaction identifier + detail key)
+  - `dateTime` — ISO payment date/time
+  - `patientName`
+  - `totalPayment` — amount collected (rupees)
+  - `transactionType` — `APPOINTMENT` | `ORDER` | `BILL` (what the payment was
+    FOR: an appointment booking, a normal lab order collected at creation, or a
+    later bill payment). Exactly one category per transaction.
+  - `transactionTypeLabel` — human label ("Appointment" / "Lab Test / Order" /
+    "Lab Bill")
+
+  `meta` carries `{ total, page, limit, totalPages }`. The "Payment Status" and
+  "Source" columns on the page are intentionally blank for now, so they are not
+  returned. Captures `patientTransactionId` from the first row for the detail
+  request.
+}

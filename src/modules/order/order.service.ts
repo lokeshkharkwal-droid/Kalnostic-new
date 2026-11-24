@@ -28,6 +28,7 @@ import {
   RepeatIntervalUnit,
   SampleSource,
   SettlementStatus,
+  TransactionType,
   TransferKind,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -1108,6 +1109,14 @@ export class OrderService {
                   }
                 : {}),
               paymentDate: p.paymentDate ? new Date(p.paymentDate) : null,
+              // What this payment was collected FOR (patient transaction page):
+              // an APPOINTMENT booking, else a normal lab ORDER. A later
+              // Make-Payment against the same order is stamped BILL instead (see
+              // PaymentDetailsService.create).
+              transactionType:
+                dto.status === OrderStatus.APPOINTMENT
+                  ? TransactionType.APPOINTMENT
+                  : TransactionType.ORDER,
               // Who actually collected/recorded this payment — the logged-in
               // actor, never client-submitted (no `collectedBy` field exists on
               // `OrderPaymentDto`).
@@ -2111,6 +2120,9 @@ export class OrderService {
           collectedBy: personId,
           reference: newOrderCode,
           notes: `Previous dues settled via order ${newOrderCode}`,
+          // Settling an already-finalized order's outstanding balance is a later
+          // bill payment (the settled order is status ORDER, never an appointment).
+          transactionType: TransactionType.BILL,
         },
       });
       await tx.order.update({

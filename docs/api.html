@@ -90,6 +90,8 @@
   <a href="#patient-switch-business">POST /patient-portal/auth/switch-business</a>
   <a href="#patient-home">GET /patient-portal/home</a>
   <a href="#patient-businesses">GET /patient-portal/businesses</a>
+  <a href="#patient-transactions">GET /patient-portal/transactions</a>
+  <a href="#patient-transaction">GET /patient-portal/transactions/:id</a>
   <a href="#patient-change-password">POST /patient-portal/auth/change-password</a>
   <a href="#patient-me">GET /patient-portal/auth/me</a>
   <a href="#patient-logout">POST /patient-portal/auth/logout</a>
@@ -454,6 +456,8 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /patient-portal/auth/switch-business</td><td>Patient JWT</td><td>self (enrolled tenants)</td></tr>
   <tr><td>GET /patient-portal/home</td><td>Patient JWT</td><td>self (own patient + tenant)</td></tr>
   <tr><td>GET /patient-portal/businesses</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>GET /patient-portal/transactions</td><td>Patient JWT</td><td>self (own patient + tenant, all branches)</td></tr>
+  <tr><td>GET /patient-portal/transactions/:id</td><td>Patient JWT</td><td>self (owner-checked)</td></tr>
   <tr><td>POST /patient-portal/auth/change-password</td><td>Patient JWT</td><td>self</td></tr>
   <tr><td>GET /patient-portal/auth/me</td><td>Patient JWT</td><td>self</td></tr>
   <tr><td>POST /patient-portal/auth/logout</td><td>Patient JWT</td><td>self</td></tr>
@@ -1035,6 +1039,38 @@ Credentials are enabled by staff (below); patients never self-register here.</p>
   <pre>{ "success": true, "data": [
   { "tenantId":"uuid","tenantName":"Flow Lab","tenantSlug":"flow-lab","shortName":null,"logoUrl":null }
 ], "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-transactions">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/transactions</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Paginated transaction history for the authenticated patient — the <strong>same</strong> payment records shown under a bill's Payment History (no separate store). Consolidated across <strong>every branch</strong> of the active tenant; scoped to the session's person + tenant. Only real collections appear (PAYMENT rows with money, not reverted); refunds, reverted and ₹0 draft rows are excluded. No branch filter. <code>transactionType</code> is exactly one of <code>APPOINTMENT</code> / <code>ORDER</code> (collected inline at order creation) / <code>BILL</code> (collected later via Make Payment); an appointment order always wins (from its appointment FK).</p>
+  <p class="lbl">Query params</p>
+  <pre>page=1&amp;limit=10         # limit max 100
+dateFrom=ISO&amp;dateTo=ISO  # optional inclusive date-range filter</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": [
+  { "id":"uuid", "dateTime":"2026-11-03T00:00:00.000Z", "patientName":"Sahu Kumar",
+    "totalPayment":11100, "transactionType":"ORDER", "transactionTypeLabel":"Lab Test / Order" }
+], "meta": { "total":147,"page":1,"limit":10,"totalPages":15,"timestamp":"…" } }</pre>
+  <p>The page's "Payment Status" and "Source" columns are intentionally blank for now, so they are not returned.</p>
+</div>
+
+<div class="ep" id="patient-transaction">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/transactions/:id</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>One transaction's full detail for the detail modal, <strong>owner-checked</strong>: the payment's order must belong to one of the session person's patient records in the tenant, else <code>404 TRANSACTION_NOT_FOUND</code> (no info leak). <code>order.appointmentAt</code> is the ORDER's appointment date/time (null for non-appointment orders) — never the transaction timestamp. <code>refundDate</code> is the order's latest refund date, or null.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "id":"uuid", "amount":11100, "transactionId":"uuid",
+  "transactionType":"ORDER", "transactionTypeLabel":"Lab Test / Order",
+  "billOrderId":"uuid",
+  "order": { "patientName":"Sahu Kumar", "patientId":"PAT-…", "appointmentAt":null,
+             "orderId":"ORD-00323", "billStatus":"PAID", "billStatusLabel":"Paid",
+             "branchName":"Main" },
+  "payment": { "transactionId":"uuid", "paidOn":"2026-11-03T00:00:00.000Z",
+               "amount":11100, "paidVia":"Cash", "refundDate":null }
+}, "meta": { "timestamp": "…" } }</pre>
 </div>
 
 <div class="ep" id="patient-change-password">

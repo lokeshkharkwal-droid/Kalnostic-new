@@ -25,6 +25,7 @@
     "migrate:ezht": "ts-node --transpile-only -r tsconfig-paths/register scripts/migrate-ezhealthtrack.ts",
     "migrate:tenant-copy": "ts-node --transpile-only -r tsconfig-paths/register scripts/migrate-tenant-to-tenant.ts",
     "backfill:patient-persons": "ts-node --transpile-only -r tsconfig-paths/register scripts/backfill-patient-persons.ts",
+    "backfill:enable-patient-login": "ts-node --transpile-only -r tsconfig-paths/register scripts/enable-patient-login.ts",
     "backfill:user-department-assignments": "ts-node --transpile-only -r tsconfig-paths/register scripts/backfill-user-department-assignments.ts",
     "backfill:print-snapshots": "ts-node --transpile-only -r tsconfig-paths/register scripts/backfill-print-snapshots.ts",
     "migrate:s3-to-spaces": "ts-node --transpile-only -r tsconfig-paths/register scripts/migrate-s3-to-spaces.ts",
