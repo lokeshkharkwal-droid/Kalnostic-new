@@ -2549,18 +2549,20 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
 
 <div class="ep" id="registration-settings-get">
   <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:registration_settings__view_registration_settings</code></span></div>
   <p>The active branch's Registration settings (tenant from JWT, branch from the caller's active profile) —
   one row per branch, created with schema defaults on first access. Never 404s. ~50 fields grouped by
   heading: <code>General_*</code>, <code>Quotation_*</code>, <code>ChargesAndDeductions_*</code>,
   <code>CancellationAndRefund_*</code>, <code>ReferralAndStaffPermissions_*</code>, <code>BillingMenu_*</code>,
-  <code>Appointment_*</code>, <code>Patients_*</code>, <code>EmergencyPricing_*</code>. Gated by the <code>registration:settings</code>
-  permission (<code>PermissionGuard</code>); <code>business_admin</code>/<code>administrator</code> bypass.</p>
+  <code>Appointment_*</code>, <code>Patients_*</code>, <code>EmergencyPricing_*</code>. Read by the Registration
+  Settings page; gated by the view-registration-settings permission (<code>PermissionGuard</code>);
+  <code>business_admin</code>/<code>administrator</code> bypass. Operational screens read the same row via the
+  login-only <a href="#registration-settings-effective">effective settings</a> instead.</p>
 </div>
 
 <div class="ep" id="registration-settings-save">
   <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:registration_settings__update_registration_settings</code></span></div>
   <p>Upsert the active branch's Registration settings (partial patch — omitted fields keep their
   previously-saved value, or the schema default on first save). Cross-field rules: every
   <code>Minimum*Percent</code> must not exceed its paired <code>Maximum*Percent</code> (TDS, discount,
@@ -2590,9 +2592,23 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
   it from Create Order — no settings permission needed). No active branch → <code>active: false</code>.</p>
 </div>
 
+<div class="ep" id="registration-settings-effective">
+  <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/effective</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">login-only</span></div>
+  <p>The active branch's Registration settings <b>as they apply</b> — the read the operational screens use
+  (Create Order / Create Patient, Billings, Order Console, Quotations) to honour the saved toggles, e.g.
+  <code>Patients_AllowB2bPatientWithoutMobile</code> makes Mobile optional on B2B orders. Same row and shape as
+  <a href="#registration-settings-get">GET /registration-settings</a> — the row the backend enforces with
+  (<code>getForBranch</code>: the branch's own row, created with defaults on first access). Login-only: the
+  view/update-registration-settings permissions control who may open and change the settings page, never
+  whether the saved settings take effect, so a user without them still gets the real saved values (not the
+  defaults). Tenant + branch from the JWT / active profile; no active branch →
+  <span class="pill">404 BRANCH_NOT_FOUND</span>.</p>
+</div>
+
 <div class="ep" id="registration-settings-business-get">
   <div><span class="m get">GET</span><span class="path">/api/v1/registration-settings/business</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:registration_settings__view_registration_settings</code></span></div>
   <p>The tenant-level ("business") Registration settings — the single <code>branchId = null</code> row,
   created with defaults on first access. Branches that have not customised their own row fall back to
   this. Same field set as the branch row. Business Admins (no active branch) edit this tier.</p>
@@ -2600,7 +2616,7 @@ config (Order/Quotation/Appointment/Patient-UMID external ids) is a separate sib
 
 <div class="ep" id="registration-settings-business-save">
   <div><span class="m put">PUT</span><span class="path">/api/v1/registration-settings/business</span></div>
-  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:settings</code></span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>registration:registration_settings__update_registration_settings</code></span></div>
   <p>Save (partial patch) the tenant-level ("business") Registration settings (<code>branchId = null</code>).
   Same cross-field validation as the branch PUT. Audited under <code>AuditModule.REGISTRATION_SETTINGS</code>.</p>
 </div>
