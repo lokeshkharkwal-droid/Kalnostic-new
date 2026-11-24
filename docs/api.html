@@ -82,6 +82,17 @@
   <a href="#auth-logout">POST /auth/logout</a>
   <a href="#auth-me">GET /auth/me</a>
   <a href="#tenant-locale">GET /tenant/locale</a>
+  <h3>Patient portal auth</h3>
+  <a href="#patient-issue-credentials">POST /patients/:id/login-credentials</a>
+  <a href="#patient-login">POST /patient-portal/auth/login</a>
+  <a href="#patient-select-business">POST /patient-portal/auth/select-business</a>
+  <a href="#patient-refresh">POST /patient-portal/auth/refresh</a>
+  <a href="#patient-switch-business">POST /patient-portal/auth/switch-business</a>
+  <a href="#patient-home">GET /patient-portal/home</a>
+  <a href="#patient-businesses">GET /patient-portal/businesses</a>
+  <a href="#patient-change-password">POST /patient-portal/auth/change-password</a>
+  <a href="#patient-me">GET /patient-portal/auth/me</a>
+  <a href="#patient-logout">POST /patient-portal/auth/logout</a>
   <h3>Branches</h3>
   <a href="#branch-create">POST /branches</a>
   <a href="#branch-list">GET /branches</a>
@@ -444,6 +455,17 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /auth/logout</td><td>Business JWT</td><td>self</td></tr>
   <tr><td>GET /auth/me</td><td>Business JWT</td><td>self</td></tr>
   <tr><td>GET /tenant/locale</td><td>Business JWT</td><td>own tenant</td></tr>
+  <tr><td>POST /patients/:id/login-credentials</td><td>Business JWT</td><td>own tenant (staff enables patient login)</td></tr>
+  <tr><td>POST /patients/:id/login-credentials/reset</td><td>Business JWT</td><td>own tenant (staff resets patient password)</td></tr>
+  <tr><td>POST /patient-portal/auth/login</td><td>Public</td><td>—</td></tr>
+  <tr><td>POST /patient-portal/auth/select-business</td><td>Public</td><td>bootstrap token</td></tr>
+  <tr><td>POST /patient-portal/auth/refresh</td><td>Public</td><td>—</td></tr>
+  <tr><td>POST /patient-portal/auth/switch-business</td><td>Patient JWT</td><td>self (enrolled tenants)</td></tr>
+  <tr><td>GET /patient-portal/home</td><td>Patient JWT</td><td>self (own patient + tenant)</td></tr>
+  <tr><td>GET /patient-portal/businesses</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>POST /patient-portal/auth/change-password</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>GET /patient-portal/auth/me</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>POST /patient-portal/auth/logout</td><td>Patient JWT</td><td>self</td></tr>
   <tr><td>POST /branches</td><td>Business JWT</td><td>intended <code>staff:manage</code></td></tr>
   <tr><td>GET /branches</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
   <tr><td>GET /branches/:id</td><td>Business JWT</td><td>intended <code>staff:read</code></td></tr>
@@ -496,7 +518,7 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>GET /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:read</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>PATCH /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
   <tr><td>DELETE /siteadmin/lab-panels/:id</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ (global template)</td></tr>
-  <tr><td>POST /siteadmin/master-data/abnormal-flag-logic/reset-to-bold?tenantId=…</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ — for the <code>tenantId</code> query param, update all the tenant's reference ranges + values from Abnormal Flag Logic BOLD_AND_RED → BOLD_ONLY ("Bold"); other flags untouched</td></tr>
+  <tr><td>POST /siteadmin/master-data/abnormal-flag-logic/reset-to-bold?tenantId=…</td><td>SiteAdmin JWT</td><td><b>required</b> <code>master-data:write</code> · CONTENT_ADMIN+ — for the <code>tenantId</code> query param, update all the tenant's result parameters from Abnormal Flag Logic BOLD_AND_RED → BOLD_ONLY ("Bold") (returns <code>{ parametersUpdated }</code>); other styles untouched</td></tr>
   <tr><td>GET /master-data/tenant</td><td>Business JWT</td><td>get-or-create the tenant-level Tenant Master Data singleton (branchId NULL)</td></tr>
   <tr><td>GET /master-data/branch</td><td>Business JWT</td><td>get-or-create the active branch's Branch Master Data (branch from JWT)</td></tr>
   <tr><td>POST /master-data/branch/import-from-tenant</td><td>Business JWT</td><td>sync Tenant Master Data → active Branch Master Data (full overwrite, tests + panels); also carries each test/panel TAT into its Lab Test/Panel List copies in every list (empty or un-customised copies only — branch-customised TAT is kept). Branch Master Data test/panel update, bulk-edit and Excel update propagate TAT the same way</td></tr>
@@ -932,6 +954,121 @@ coherent example: SiteAdmin <i>owner@kalnostics.com</i> created tenant <b>City D
   "timezone": "Asia/Kolkata", "currency": "INR",
   "dateFormat": "DD/MM/YYYY", "timeFormat": "12h", "language": "en"
 }, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<!-- ───────────────────────── PATIENT PORTAL AUTH ───────────────────────── -->
+<h2>Patient Portal Authentication</h2>
+<p>A third, isolated auth system (separate <code>'jwt-patient'</code> strategy +
+<code>type: "patient"</code> token). Reuses the platform-level credential/refresh
+tables; a patient token is rejected on every business/SiteAdmin route by
+construction. Flow is two-step — <strong>login then pick business</strong>.
+Credentials are enabled by staff (below); patients never self-register here.</p>
+
+<div class="ep" id="patient-issue-credentials">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patients/:id/login-credentials</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Staff action. Enables patient-portal login: links the patient to a platform <code>Person</code> (creating/linking one when the patient has no <code>personId</code>), creates credentials with the fixed temp password <code>Password@123</code> (bcrypt-hashed, <code>isTempPassword</code>), and records a <code>PersonTenantEnrollment</code>. Tenant + actor come from the token. Idempotent on an existing login (a staff+patient hybrid's password is kept). <code>POST …/login-credentials/reset</code> forces the password back to the temp password.</p>
+  <p class="lbl">201 response</p>
+  <pre>{ "success": true, "data": {
+  "patientId": "uuid", "personId": "uuid", "loginIdentifier": "9876543210",
+  "tempPassword": "Password@123", "credentialsAlreadyExisted": false
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-login">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/login</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Step 1 — authenticate the platform identity (mobile/email + password). Returns a short-lived bootstrap token and the businesses the patient may enter. Shared lockout (10 fails → 15 min). <code>403 PATIENT_NO_LOGIN_ACCESS</code> when the identity isn't enrolled as a patient anywhere.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "identifier": "9876543210", "password": "Password@123" }</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "bootstrapToken": "eyJhbGciOi…", "mustChangePassword": true,
+  "businesses": [ { "tenantId":"uuid","tenantName":"Flow Lab","tenantSlug":"flow-lab",
+                    "shortName":null,"logoUrl":null } ]
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-select-business">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/select-business</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Step 2 — exchange the bootstrap token + a chosen <code>tenantId</code> (from the login response) for a tenant-scoped access (15m) + refresh (30d) pair. The tenant is validated against the person's enrolments (<code>403 PATIENT_TENANT_NOT_SELECTABLE</code> otherwise). When <code>mustChangePassword</code> is true the session is restricted to change-password.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "bootstrapToken": "eyJhbGciOi…", "tenantId": "uuid" }</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "accessToken": "eyJhbGciOi…", "refreshToken": "a1b2c3…",
+  "patient": { "patientId":"uuid","personId":"uuid","tenantId":"uuid",
+               "branchId":"uuid","platformMrn":"KAL-…","name":"Sample Patient" },
+  "mustChangePassword": true
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-refresh">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/refresh</span></div>
+  <div class="tags"><span class="tag pub">public</span></div>
+  <p>Rotate a patient refresh token (single-use). Audience-isolated: a business refresh token is rejected here and vice-versa (<code>token_type</code>). Stays scoped to the selected tenant.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "refreshToken": "a1b2c3…" }</pre>
+</div>
+
+<div class="ep" id="patient-switch-business">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/switch-business</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Switch an authenticated session to another of the patient's businesses — <strong>no re-login</strong> (mirrors business switch-profile). Returns a fresh access + refresh pair scoped to the target tenant. Blocked on a temp-password session. Powers the portal's lab switcher.</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "tenantId": "uuid" }</pre>
+</div>
+
+<div class="ep" id="patient-home">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/home</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Composed home summary for the authenticated patient + tenant: identity, stat tiles, next appointment, ready reports, recent messages. Best-effort (empty/zero where a source is thin). <code>403 PATIENT_PASSWORD_CHANGE_REQUIRED</code> on a temp-password session.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "patient": { "patientId":"uuid","name":"Sahu Kumar","initials":"SK","platformMrn":"KAL-…",
+               "photoUrl":null,"tenantId":"uuid","tenantName":"Flow Lab" },
+  "stats": { "upcomingAppointments":1,"reportsReady":3,"unreadMessages":0,"balanceDue":1250,"billsCount":2 },
+  "nextAppointment": { "orderCode":"…","appointmentAt":"…","appointmentType":"OPD",
+                       "doctorName":"Dr. Sunakshi","branchName":"Main","reason":"test","status":"NEW" },
+  "reportsReady": [ { "id":"uuid","testName":"FSH","orderCode":"…","publishedAt":"…" } ],
+  "recentMessages": []
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-businesses">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/businesses</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>The businesses (labs) this patient can switch into, for the lab switcher.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": [
+  { "tenantId":"uuid","tenantName":"Flow Lab","tenantSlug":"flow-lab","shortName":null,"logoUrl":null }
+], "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-change-password">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/change-password</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Change the patient's password (requires the current one). Reachable on a temp-password session — this is how a patient clears the staff-issued temp password. Clears the temp flag and revokes existing patient sessions (log in again afterwards).</p>
+  <p class="lbl">Request body</p>
+  <pre>{ "currentPassword": "Password@123", "newPassword": "MyNewPass2" }</pre>
+</div>
+
+<div class="ep" id="patient-me">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/auth/me</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Current patient session info. On a temp-password session returns <code>403 PATIENT_PASSWORD_CHANGE_REQUIRED</code> until the password is changed.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "person_id":"uuid","patient_id":"uuid","tenant_id":"uuid","active_branch_id":"uuid",
+  "platform_mrn":"KAL-…","is_patient_context":true,"must_change_password":false
+}, "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-logout">
+  <div><span class="m post">POST</span><span class="path">/api/v1/patient-portal/auth/logout</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>Revoke the person's patient refresh tokens (business sessions, if any, untouched).</p>
 </div>
 
 <!-- ───────────────────────── BRANCHES ───────────────────────── -->
@@ -1476,7 +1613,18 @@ tests never appear regardless of status.</div>
   member becomes the display label the sheet uses (<code>SINGLE_STEP</code> → <code>"Single Step"</code>).
   Applies to every field on the test/sample/result-parameter/reference-range/value DTOs.</p>
   <pre>{ "success": true, "data": { "created": 1, "updated": 1, "skipped": [
-  { "rowLabel": "Row 5", "errors": [ "Price Maximum must be ≤ Price MSRP" ] } ] } }</pre>
+  { "rowLabel": "Row 5", "errors": [ "Price Maximum must be ≤ Price MSRP" ] } ],
+  "unresolvedClassifications": [], "sampleNameNotices": [], "ignoredColumnNotices": [] } }</pre>
+  <p><b>Abnormal Flag Logic (v1.3).</b> The style is one optional column in the Result Parameter block,
+  <code>abnormal flag logic</code>, right after <code>result rounding type</code> — one of the 16 labels
+  (9 basic: Red, Bold, Italic, Bold Italic, Bold and Red, Italic and Red, Bold Italic and Red, Underline, Colour Highlight;
+  plus <code>… with High and Low</code> for the first 7, Quantitative only), any letter case, or the enum name. A blank cell
+  keeps an existing parameter's style (a new parameter with a blank cell is saved with no style; a style can only be
+  cleared on the Master Data screen). A word the system does not have, or a
+  High/Low style on a Semi-Quantitative / Qualitative parameter, skips the test; the messages name the typed word or
+  <code>Parameter "X" (CODE)</code>, and every such parameter of the test is listed. A file exported before the change has
+  <code>ABNORMAL FLAG LOGIC</code> columns in the Reference Range / Reference Value blocks: they are not read, and
+  <code>ignoredColumnNotices</code> (array of plain sentences, <code>[]</code> for a current file) says so.</p>
 </div>
 
 <div class="ep" id="lt-get">
@@ -3050,6 +3198,38 @@ tagged with the old name — there is no cascade or reference-count warning.</di
   <p>Soft delete (<code>deletedAt</code>). A report that already applied this template keeps its
   snapshotted <code>overallResultContent</code> — deleting the template does not retroactively
   blank existing reports, it only removes the template from future pickers.</p>
+</div>
+
+<div class="ep" id="lr-results">
+  <div><span class="m patch">PATCH</span><span class="path">/api/v1/lab-reports/:id/results</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span></div>
+  <p>Save a report's observed values. Body <code>{ "values": [ { resultParamId, observed1?, observed2?, unit?, methodology?,
+  referenceRangeId?, referenceDisplay?, flagOption?, highlightLogic? } ] }</code>.</p>
+  <p><b>Abnormal Flag Logic (v1.3).</b> <code>flagOption</code> is the technician's choice for the row —
+  <code>DEFAULT</code> (the system decides: a Quantitative value outside its range prints in the parameter's style;
+  everything else prints Normal, as does a parameter that has no style set), <code>HIGHLIGHT</code> (always prints in the chosen style) or <code>NOT_HIGHLIGHT</code> (always
+  Normal). <code>highlightLogic</code> is the Highlight style and is kept only under <code>HIGHLIGHT</code>; omitted/null
+  means "the parameter's own style" (Bold and Red when the parameter has none). It may be one of the 9 basic styles only — a <code>… with High and Low</code> style is
+  <span class="pill">422 VALIDATION_ERROR</span>. Omitting <code>flagOption</code> leaves the stored choice as it is (a new row
+  starts on <code>DEFAULT</code>). The old <code>highlightInReport</code> field is no longer accepted (400).</p>
+  <p><b>Finished reports do not change.</b> <code>POST /lab-reports/:id/validate</code> freezes how each reading prints
+  (Observed 1 and Observed 2 style, the High/Low word, the abnormal tag) plus the parameter's name, group, order, result type
+  and configured Note, in the same transaction as the status change. While the report is Result Done / Approved / Published
+  every print (single, Print All, shared and public) reads that frozen copy, so a later Master Data edit or branch sync cannot
+  change it; the technician's own parameter Note stays live. The Overall Result is locked from Validation Pending onwards
+  (<code>PATCH /lab-reports/:id/overall-result/:resultParamId</code> → <span class="pill">409 LAB_REPORT_OVERALL_RESULT_NOT_EDITABLE</span>),
+  like the values and the Notes. Edit Report, Re-run, a sample return and Error Reported drop the
+  frozen copy, and the next validate freezes it again under that day's rules. A finished report with no frozen copy (finished
+  before this feature and not yet backfilled) prints with the live rules and logs a warning;
+  <code>pnpm backfill:print-snapshots</code> (dry run by default, <code>-- --apply</code> to write) freezes those once, with
+  the rules they printed with before.</p>
+  <p>Picking a Highlight style other than the parameter's own (Bold and Red when the parameter has no style) needs the
+  <b>Change abnormal style</b> permission (<code>lab_operations:reporting__change_abnormal_style</code>, granted by default
+  to every role that has the Laboratory module); re-saving a style already saved on that row does not. Without the permission →
+  <span class="pill">403 ABNORMAL_STYLE_CHANGE_NOT_ALLOWED</span> and nothing is written. A Re-run or a return resets the
+  choice to <code>DEFAULT</code>. A value is a comparable number when it is an optional <code>+</code>/<code>-</code>, digits and
+  at most one decimal point (<code>135</code>, <code>-2.1</code>, <code>.5</code>); <code>&lt;5</code>, <code>1,200</code>,
+  <code>1e3</code> and text are not, and print Normal under Default.</p>
 </div>
 
 <div class="ep" id="ort-apply">

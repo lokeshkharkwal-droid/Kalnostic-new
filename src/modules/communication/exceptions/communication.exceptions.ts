@@ -95,3 +95,22 @@ export class ShareRecipientMissingException extends KaltrosException {
     );
   }
 }
+
+/**
+ * 403 — the tenant is not registered with the external Exchange gateway (its
+ * `exchangeRegisteredAt` is null). The Exchange delivers every Email/SMS/WhatsApp,
+ * so until the tenant is registered (SiteAdmin → Business → Exchange) no outbound
+ * message may be queued. Thrown from `CommunicationService.enqueue` — the single
+ * chokepoint for both manual shares and automatic notifications. The
+ * `TENANT_NOT_REGISTERED_WITH_EXCHANGE` code lets the frontend surface the snackbar.
+ */
+export class TenantNotRegisteredWithExchangeException extends KaltrosException {
+  constructor(tenantId: string) {
+    super(
+      'TENANT_NOT_REGISTERED_WITH_EXCHANGE',
+      'This tenant is not registered with the exchange.',
+      { tenantId },
+      HttpStatus.FORBIDDEN,
+    );
+  }
+}

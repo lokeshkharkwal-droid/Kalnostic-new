@@ -16,17 +16,22 @@ import { PERMISSION_KEYS } from '../permissions/constants/module-permissions.con
 import { AuditAction, AuditModule } from '@prisma/client';
 import type { Response } from 'express';
 import { PdfReportTemplateService } from './pdf-report-template.service';
+import { PdfTemplateConfigService } from './pdf-template-config.service';
 import { CreatePdfReportTemplateDto } from './dto/create-pdf-report-template.dto';
 import { UpdatePdfReportTemplateDto } from './dto/update-pdf-report-template.dto';
 import { ListPdfReportTemplateQueryDto } from './dto/list-pdf-report-template-query.dto';
 import { GeneratePdfDto } from './dto/generate-pdf.dto';
 import { CurrentTenant } from '../auth/decorators/current-tenant.decorator';
+import { CurrentProfile } from '../auth/decorators/current-profile.decorator';
+import type { ActiveProfile } from '../auth/decorators/current-profile.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
 import {
   PDF_REPORT_TEMPLATE_TYPES,
   PDF_REPORT_TEMPLATE_TYPE_LABELS,
   PdfReportTemplateType,
+  isPdfReportTemplateType,
 } from './constants/pdf-report-template-types.constant';
+import { InvalidPdfReportTemplateTypeException } from './exceptions/pdf-report-template.exceptions';
 
 /**
  * PDF report template endpoints (business-authenticated; tenant comes from the
@@ -37,7 +42,10 @@ import {
 @Controller('pdf-report-templates')
 @UseGuards(PermissionGuard)
 export class PdfReportTemplateController {
-  constructor(private readonly service: PdfReportTemplateService) {}
+  constructor(
+    private readonly service: PdfReportTemplateService,
+    private readonly configService: PdfTemplateConfigService,
+  ) {}
 
   /**
    * Create a PDF report template in the caller's tenant.
@@ -145,6 +153,48 @@ export class PdfReportTemplateController {
       types: PDF_REPORT_TEMPLATE_TYPES,
       labels: PDF_REPORT_TEMPLATE_TYPE_LABELS,
     };
+  }
+
+  /**
+   * Resolve the template mapped to a document `type` (the Configuration default
+   * for the caller's active branch, falling back to the first active template of
+   * that type) and render it to a PDF, streamed back as `application/pdf`.
+   *
+   * Lets another app render a document by TYPE without knowing a specific
+   * template id — e.g. the inventory app renders a sales invoice via
+   * `render-by-type/inventory_invoice`, honouring whatever template the tenant
+   * mapped on the Configuration screen. Declared before `:id` so `render-by-type`
+   * isn't captured as a template id.
+   */
+  @Post('render-by-type/:type')
+  @Audit({
+    module: AuditModule.PDF_REPORT_TEMPLATE,
+    action: AuditAction.OTHER,
+    description: 'Rendered a PDF for a document type via the mapped template',
+  })
+  async renderByType(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+    @Param('type') type: string,
+    @Body() dto: GeneratePdfDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!isPdfReportTemplateType(type)) {
+      throw new InvalidPdfReportTemplateTypeException(type);
+    }
+    const templateId = await this.configService.resolveTemplateIdForType(
+      tenantId,
+      profile.branchId,
+      type,
+    );
+    const pdf = await this.service.generatePdf(templateId, tenantId, dto);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${type}-${templateId}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdf.length);
+    res.end(pdf);
   }
 
   /**

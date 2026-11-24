@@ -103,6 +103,27 @@ export class LabReportParameterNoteNotEditableException extends KaltrosException
 }
 
 /**
+ * 409 — the Overall Result of a report can only be written while the report is Pending, Partial Pending or Saved,
+ * like its values and Notes. Once the result is validated the print is frozen, and the Overall Result is part of
+ * what prints; Edit Report sends the report back to Saved when a change is really needed.
+ */
+export class LabReportOverallResultNotEditableException extends KaltrosException {
+  constructor(id: string, currentStatus: string) {
+    const label = currentStatus
+      .toLowerCase()
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    super(
+      'LAB_REPORT_OVERALL_RESULT_NOT_EDITABLE',
+      `The Overall Result can no longer be changed: this report is ${label}. It can only be changed while the report is Pending, Partial Pending or Saved; use Edit Report to reopen it.`,
+      { id, currentStatus },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — a Re-run is only possible from Result Done, Result Rejected or Error Reported. The message says what to do
  * first for the statuses a technician is most likely to be on (Validation Pending, Approved, Published).
  */
@@ -568,6 +589,22 @@ export class ReportingWindowClosedException extends KaltrosException {
       `This report's result came in after today's reporting cutoff. Approval opens again at ${deferredUntil.toISOString()}.`,
       { deferredUntil: deferredUntil.toISOString() },
       HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  }
+}
+
+/**
+ * 403 — a Technician without the "Change abnormal style" permission tried to save a
+ * Highlight style other than the one derived from the parameter's own style (the screen
+ * locks the dropdown for them; this is the server-side enforcement).
+ */
+export class AbnormalStyleChangeNotAllowedException extends KaltrosException {
+  constructor(resultParamIds: string[]) {
+    super(
+      'ABNORMAL_STYLE_CHANGE_NOT_ALLOWED',
+      "You don't have permission to change the Abnormal Style. The style from the parameter's setup is used.",
+      { resultParamIds },
+      HttpStatus.FORBIDDEN,
     );
   }
 }

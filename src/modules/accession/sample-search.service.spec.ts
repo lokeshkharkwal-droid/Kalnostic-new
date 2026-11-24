@@ -1091,4 +1091,165 @@ describe('SampleSearchService', () => {
       expect(accepted.sections[0]!.actions).toEqual([]);
     });
   });
+  describe('the "Send / Forward / Outsource Details" column (routing of each test)', () => {
+    const hand = (over: Record<string, unknown> = {}) => ({
+      id: 'tr1',
+      kind: TransferKind.INTERNAL,
+      transferStatus: TransferStatus.IN_TRANSIT,
+      sampleId: 's1',
+      originBranchId: 'b1',
+      destinationBranchId: 'b2',
+      outsourceCenterId: null,
+      externalPartnerName: null,
+      sendDate: new Date('2026-11-06T00:00:00Z'),
+      sendTime: '10:40',
+      createdAt: new Date(),
+      ...over,
+    });
+    const when = { date: '2026-11-06T00:00:00.000Z', time: '10:40' };
+    const routingOf = (r: SampleSearchFound) =>
+      r.sections.flatMap((sec) => sec.rows.map((row) => row.routing));
+
+    it('In-House, a test that is here: "In-House", no destination, no date', async () => {
+      const r = found(await world({ samples: [sample()] }).search('IN_HOUSE'));
+      expect(routingOf(r)).toEqual([
+        { kind: 'IN_HOUSE', to: null, when: { date: null, time: null } },
+      ]);
+    });
+
+    it('In-House, a Sent test: the branch it went to and when', async () => {
+      const r = found(
+        await world({
+          samples: [sample({ status: SampleStatus.SENT_INTERNAL })],
+          transfers: [hand()],
+        }).search('IN_HOUSE'),
+      );
+      expect(routingOf(r)).toEqual([{ kind: 'SEND', to: 'Other', when }]);
+    });
+
+    it('In-House, a Forwarded test: the business it was forwarded to', async () => {
+      const r = found(
+        await world({
+          samples: [sample({ status: SampleStatus.FORWARD_EXTERNAL })],
+          transfers: [
+            hand({
+              kind: TransferKind.EXTERNAL,
+              destinationBranchId: null,
+              externalPartnerName: 'Pathkind',
+            }),
+          ],
+        }).search('IN_HOUSE'),
+      );
+      expect(routingOf(r)).toEqual([{ kind: 'FORWARD', to: 'Pathkind', when }]);
+    });
+
+    it('In-House, an Outsourced test: the center it went to', async () => {
+      const w = world({
+        samples: [sample({ status: SampleStatus.OUTSOURCED })],
+        transfers: [
+          hand({
+            kind: TransferKind.OUTSOURCE,
+            destinationBranchId: null,
+            outsourceCenterId: 'oc1',
+          }),
+        ],
+      });
+      w.tx.outsourceCenter.findMany.mockResolvedValue([
+        { id: 'oc1', name: 'ABC Reference Lab' },
+      ]);
+      const r = found(await w.search('IN_HOUSE'));
+      expect(routingOf(r)).toEqual([
+        { kind: 'OUTSOURCE', to: 'ABC Reference Lab', when },
+      ]);
+    });
+
+    it('In-House, a test that came back (Accepted) with an old hand-off still on record: "In-House", never the old destination', async () => {
+      const r = found(
+        await world({
+          samples: [sample({ status: SampleStatus.ACCEPTED })],
+          transfers: [hand()],
+        }).search('IN_HOUSE'),
+      );
+      expect(routingOf(r)).toEqual([
+        { kind: 'IN_HOUSE', to: null, when: { date: null, time: null } },
+      ]);
+    });
+
+    it('In-House, a Sent test whose latest hand-off is of another kind: still "Send", but with no destination (empty, not wrong)', async () => {
+      const r = found(
+        await world({
+          samples: [sample({ status: SampleStatus.SENT_INTERNAL })],
+          transfers: [
+            hand({
+              kind: TransferKind.EXTERNAL,
+              destinationBranchId: null,
+              externalPartnerName: 'Pathkind',
+            }),
+          ],
+        }).search('IN_HOUSE'),
+      );
+      expect(routingOf(r)).toEqual([
+        { kind: 'SEND', to: null, when: { date: null, time: null } },
+      ]);
+    });
+
+    it('In-House, one barcode with tests in different places: each test shows its own routing', async () => {
+      const r = found(
+        await world({
+          samples: [
+            sample({ id: 's1', status: SampleStatus.ACCEPTED }),
+            sample({ id: 's2', status: SampleStatus.SENT_INTERNAL }),
+          ],
+          transfers: [hand({ sampleId: 's2' })],
+        }).search('IN_HOUSE'),
+      );
+      const byStatus = Object.fromEntries(
+        r.sections.map((sec) => [sec.status, sec.rows[0]!.routing.kind]),
+      );
+      expect(byStatus).toEqual({
+        [SampleStatus.ACCEPTED]: 'IN_HOUSE',
+        [SampleStatus.SENT_INTERNAL]: 'SEND',
+      });
+    });
+
+    it('Internal Referral: the receiving branch (the destination of the transfer) and the send date', async () => {
+      const r = found(
+        await world({
+          referral: [
+            {
+              ...hand({
+                transferStatus: TransferStatus.RECEIVED,
+                originBranchId: 'b2',
+                destinationBranchId: 'b1',
+              }),
+              sample: sample(),
+            },
+          ],
+        }).search('INTERNAL'),
+      );
+      expect(routingOf(r)).toEqual([
+        { kind: 'INTERNAL_REFERRAL', to: 'Main', when },
+      ]);
+    });
+
+    it('External Referral: the partner it went to and the date', async () => {
+      const r = found(
+        await world({
+          referral: [
+            {
+              ...hand({
+                kind: TransferKind.EXTERNAL,
+                destinationBranchId: null,
+                externalPartnerName: 'Pathkind',
+              }),
+              sample: sample(),
+            },
+          ],
+        }).search('EXTERNAL'),
+      );
+      expect(routingOf(r)).toEqual([
+        { kind: 'EXTERNAL_REFERRAL', to: 'Pathkind', when },
+      ]);
+    });
+  });
 });

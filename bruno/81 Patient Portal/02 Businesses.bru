@@ -1,0 +1,25 @@
+meta {
+  name: 02 Businesses
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/businesses
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  The businesses (labs) this patient can switch into, for the portal's lab
+  switcher. Read from the platform-level `person_tenant_enrollments` index joined
+  to `tenants`. Requires a patient JWT.
+
+  Response `data`: `{ tenantId, tenantName, tenantSlug, shortName, logoUrl }[]`.
+  Pair with **Switch Business** (80 Patient Portal Auth) to change the active lab
+  without a re-login.
+}

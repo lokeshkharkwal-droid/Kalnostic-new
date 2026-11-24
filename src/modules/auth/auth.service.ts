@@ -21,11 +21,13 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import {
   AccountInactiveException,
   AccountLockedException,
+  BusinessLoginNotAllowedForPatientException,
   InvalidCredentialsException,
   InvalidPasswordException,
   InvalidRefreshTokenException,
   ProfileSwitchDeniedException,
 } from './exceptions/auth.exceptions';
+import { BUSINESS_TOKEN_TYPE } from '../patient-auth/constants/patient-auth.constant';
 
 const MAX_FAILED_ATTEMPTS = 10;
 const LOCK_DURATION_MINUTES = 15;
@@ -134,6 +136,15 @@ export class AuthService {
       throw new InvalidCredentialsException();
     }
 
+    // Patient Login hardening: a patient-only identity (a patient record with no
+    // staff identity) must use the patient portal, never business auth. Checked
+    // only after a correct password so account type isn't revealed to guessers.
+    // Staff always carry isStaff=true (users/tenant creation), so this can't lock
+    // out legitimate staff.
+    if (person.isPatient && !person.isStaff) {
+      throw new BusinessLoginNotAllowedForPatientException(person.id);
+    }
+
     await this.prisma.personCredentials.update({
       where: { id: credentials.id },
       data: {
@@ -180,6 +191,8 @@ export class AuthService {
     });
     if (
       !stored ||
+      // Patient refresh tokens must not be redeemable on business auth.
+      stored.tokenType !== BUSINESS_TOKEN_TYPE ||
       stored.isUsed ||
       stored.isRevoked ||
       stored.expiresAt < new Date()
@@ -197,10 +210,20 @@ export class AuthService {
     // assignment, a role change or a deleted branch can take effect.
     const person = await this.prisma.person.findFirst({
       where: { id: stored.personId, deletedAt: null },
-      select: { isActive: true, ownerTenantId: true },
+      select: {
+        isActive: true,
+        ownerTenantId: true,
+        isPatient: true,
+        isStaff: true,
+      },
     });
     if (!person || !person.isActive) {
       throw new AccountInactiveException(stored.personId);
+    }
+    // Mirror the login hardening: a patient-only identity can't refresh into a
+    // business session either.
+    if (person.isPatient && !person.isStaff) {
+      throw new BusinessLoginNotAllowedForPatientException(stored.personId);
     }
     const tenantId = person.ownerTenantId ?? '';
     await this.assertMembershipActive(stored.personId, tenantId);

@@ -1,0 +1,35 @@
+meta {
+  name: 01 Get Inventory Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/inventory-settings
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the two settings with correct types", function () {
+    const d = res.getBody().data;
+    expect(d.isAutomaticInventoryReductionEnabled).to.be.a("boolean");
+    expect(["ORDER_TYPE", "TEST_TYPE"]).to.include(d.manualAdjustmentMode);
+  });
+}
+
+docs {
+  The tenant's Inventory Settings. Created on first read with the defaults
+  (`isAutomaticInventoryReductionEnabled: false`, `manualAdjustmentMode: ORDER_TYPE`).
+
+  Read is ungated (any authenticated business user, including lab technicians, so the
+  Technician Reporting page can learn which manual-adjustment action to show). Tenant
+  comes from the JWT.
+}

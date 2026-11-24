@@ -39,6 +39,34 @@ export interface InventoryConsumeResult {
   saleId: string | null;
 }
 
+/** One product row in the manual inventory-adjustment view. */
+export interface InventoryAdjustmentProduct {
+  productId: string;
+  productName: string;
+  productCode: string | null;
+  plannedQty: number;
+  previouslyDeductedQty: number;
+  currentStock: number;
+  finalQtySuggestion: number;
+}
+
+/** The manual inventory-adjustment view for an order (ORDER) or one test (TEST). */
+export interface InventoryAdjustmentView {
+  scope: 'ORDER' | 'TEST';
+  kalnosticsOrderId: string;
+  labTestSourceId: string | null;
+  isAutoDeducted: boolean;
+  status: string;
+  totalPlannedQty: number;
+  products: InventoryAdjustmentProduct[];
+}
+
+/** Result of applying a manual inventory adjustment. */
+export interface InventoryAdjustmentSaveResult extends InventoryAdjustmentView {
+  saleId: string | null;
+  applied: Array<{ productId: string; difference: number }>;
+}
+
 /** Proforma + product/stock info for a single lab test (tooltip). */
 export interface InventoryProformaInfo {
   mapped: boolean;
@@ -116,11 +144,51 @@ export class InventoryConsumptionClient {
     patientId?: string;
     patientName?: string;
     date?: string;
+    scope?: 'ORDER' | 'TEST';
   }): Promise<InventoryConsumeResult | null> {
     if (!this.isEnabled) return null;
     return this.request<InventoryConsumeResult>(
       'POST',
       '/proforma-consumption/consume',
+      body,
+    );
+  }
+
+  /** Load the manual inventory-adjustment view (planned/deducted/stock per product). */
+  async loadAdjustment(body: {
+    kalnosticsOrderId: string;
+    branchId: string;
+    scope: 'ORDER' | 'TEST';
+    labTestSourceId?: string;
+    labTestSourceIds: string[];
+  }): Promise<InventoryAdjustmentView | null> {
+    if (!this.isEnabled) return null;
+    return this.request<InventoryAdjustmentView>(
+      'POST',
+      '/proforma-consumption/adjustment/load',
+      body,
+    );
+  }
+
+  /** Apply a manual inventory adjustment (set final deducted qty per product). */
+  async saveAdjustment(body: {
+    kalnosticsOrderId: string;
+    branchId: string;
+    scope: 'ORDER' | 'TEST';
+    labTestSourceId?: string;
+    labTestSourceIds: string[];
+    lines: Array<{ productId: string; finalQty: number }>;
+    reason?: string;
+    note?: string;
+    patientId?: string;
+    patientName?: string;
+    orderCode?: string;
+    date?: string;
+  }): Promise<InventoryAdjustmentSaveResult | null> {
+    if (!this.isEnabled) return null;
+    return this.request<InventoryAdjustmentSaveResult>(
+      'POST',
+      '/proforma-consumption/adjustment/save',
       body,
     );
   }

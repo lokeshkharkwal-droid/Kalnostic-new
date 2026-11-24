@@ -480,6 +480,17 @@ ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_decimals
 ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_critical_minmax;
 ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_critical_minmax
   CHECK (critical_min IS NULL OR critical_max IS NULL OR critical_min <= critical_max);
+-- Abnormal Flag Logic v1.3: a "...and High Low" style is Quantitative-only (defence in
+-- depth; the API rejects it first). Mirrors migration 20261119120100.
+ALTER TABLE lab_test_result_params DROP CONSTRAINT IF EXISTS chk_lab_test_param_high_low_quantitative;
+ALTER TABLE lab_test_result_params ADD CONSTRAINT chk_lab_test_param_high_low_quantitative
+  CHECK (
+    abnormal_flag_logic NOT IN (
+      'RED_HIGH_LOW', 'BOLD_HIGH_LOW', 'ITALIC_HIGH_LOW', 'BOLD_AND_ITALIC_HIGH_LOW',
+      'BOLD_AND_RED_HIGH_LOW', 'ITALIC_AND_RED_HIGH_LOW', 'BOLD_ITALIC_AND_RED_HIGH_LOW'
+    )
+    OR result_type = 'QUANTITATIVE'
+  );
 
 -- ── lab_test_reference_ranges ─────────────────────────────────────────────────────
 ALTER TABLE lab_test_reference_ranges ENABLE ROW LEVEL SECURITY;
@@ -2233,3 +2244,15 @@ CREATE POLICY branch_list_sync_jobs_tenant_isolation ON branch_list_sync_jobs
 -- sync may run together; two of the same kind on one branch may not).
 CREATE UNIQUE INDEX IF NOT EXISTS branch_list_sync_jobs_one_running_per_branch_kind
   ON branch_list_sync_jobs (tenant_id, branch_id, kind) WHERE status = 'RUNNING';
+
+-- ── business_inventory_settings ───────────────────────────────────────────────
+-- Business Settings › Inventory Settings. Tenant-scoped + tenant-level: one row
+-- per tenant. Plain tenant isolation. (Named `business_inventory_settings`, not
+-- `inventory_settings`, because the inventory app shares this DB + public schema
+-- and already owns `inventory_settings`.)
+ALTER TABLE business_inventory_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_inventory_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS business_inventory_settings_tenant_isolation ON business_inventory_settings;
+CREATE POLICY business_inventory_settings_tenant_isolation ON business_inventory_settings
+  USING (tenant_id = current_tenant_id())
+  WITH CHECK (tenant_id = current_tenant_id());

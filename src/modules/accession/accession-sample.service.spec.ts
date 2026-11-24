@@ -720,9 +720,11 @@ describe('OrderSampleService - a cancelled order freezes its samples', () => {
     );
     // The Store / Return "all tests published" gate has its own spec (it exempts a copy of a cancelled
     // order); here the freeze rules are under test, so the gate is stubbed as exempt.
-    jest
-      .spyOn(service, 'storeReturnGate')
-      .mockResolvedValue({ gated: false, unpublished: 0, unpublishedSampleIds: [] });
+    jest.spyOn(service, 'storeReturnGate').mockResolvedValue({
+      gated: false,
+      unpublished: 0,
+      unpublishedSampleIds: [],
+    });
     const transition = (action: string, note: object = {}) =>
       (
         service as unknown as {

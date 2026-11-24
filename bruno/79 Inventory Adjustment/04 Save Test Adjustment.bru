@@ -1,0 +1,50 @@
+meta {
+  name: 04 Save Test Adjustment
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/inventory/test-adjustment
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "orderId": "{{adjOrderId}}",
+    "labReportId": "{{adjLabReportId}}",
+    "lines": [
+      { "productId": "{{adjProductId}}", "finalQty": 1 }
+    ],
+    "reason": "Per-test correction"
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("applies the diff for this test and returns the updated view", function () {
+    const d = res.getBody().data;
+    expect(d.scope).to.equal("TEST");
+    expect(d).to.have.property("applied");
+  });
+}
+
+docs {
+  Set the final deducted quantity per product for ONE lab test. Each test's
+  deduction is tracked independently (its own ledger rows keyed on the test's master
+  source id), so adjusting one test never affects another. Only the difference is
+  applied to stock (idempotent). 409 `INSUFFICIENT_INVENTORY_STOCK` on a net
+  over-deduction. If the order was recorded at ORDER granularity, a TEST save is
+  rejected with 409 `INVENTORY_ADJUSTMENT_SCOPE_MISMATCH`.
+}

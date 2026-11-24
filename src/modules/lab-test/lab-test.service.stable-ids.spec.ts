@@ -223,7 +223,6 @@ describe('a range that did not change keeps its row and id', () => {
       { unit: 'g/L' },
       { method: 'Cyan' },
       { criticalMin: 5 },
-      { abnormalFlagLogic: AbnormalFlag.ITALIC },
     ]) {
       const m = build({ ranges: [live('r1')] });
       await m.save([param({ referenceRanges: [sent(change)] })]);

@@ -1,4 +1,4 @@
-import { AbnormalFlag } from '@prisma/client';
+import { AbnormalFlag, ResultFlagOption } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -49,20 +49,21 @@ export class ResultValueItemDto {
   referenceDisplay?: string;
 
   /**
-   * Technician request to highlight this parameter's observed value(s) in the
-   * generated report. Honoured only for QUALITATIVE / SEMI_QUANTITATIVE
-   * parameters — quantitative values are flagged automatically from their
-   * numeric reference range, so the print builder ignores this flag for them.
+   * The technician's choice for this parameter's observed value(s) in the printed report
+   * (Abnormal Flag Logic v1.3), for ALL three result types: `DEFAULT` (the system decides),
+   * `HIGHLIGHT` (print in `highlightLogic` whatever the value) or `NOT_HIGHLIGHT` (always
+   * Normal). Omitted = leave the stored choice as it is (a new row starts on `DEFAULT`).
    */
   @IsOptional()
-  @IsBoolean()
-  highlightInReport?: boolean;
+  @IsEnum(ResultFlagOption)
+  flagOption?: ResultFlagOption;
 
   /**
-   * Which styling to apply when `highlightInReport` is true. Reuses the
-   * `AbnormalFlag` palette; the Technician Reporting → Highlighted dropdown
-   * offers the six faithful styles that mirror Master Data → Abnormal Flag Logic
-   * (Bold, Italic, Bold and Red, Italic and Red, Italic Bold, Bold Italic and Red).
+   * The style chosen under `HIGHLIGHT`: one of the nine BASIC styles — never a
+   * "…and High Low" style (rejected). Omitted under `HIGHLIGHT` = the basic style of the
+   * parameter's own style. A user without the "Change abnormal style" permission may only
+   * send (or omit) that parameter-derived style. Ignored, and stored as null, under
+   * `DEFAULT` and `NOT_HIGHLIGHT`.
    */
   @IsOptional()
   @IsEnum(AbnormalFlag)

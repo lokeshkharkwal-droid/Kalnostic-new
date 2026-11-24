@@ -96,6 +96,9 @@ function ctxFor(
 ): Promise<Ctx> {
   const svc = Object.create(LabReportService.prototype) as LabReportService;
   Object.assign(svc, {
+    // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+    config: { get: jest.fn() },
+    logger: { warn: jest.fn(), log: jest.fn() },
     // the cancelled-order print check has its own spec (print-cancelled)
     assertReportOrderNotCancelledForPrint: jest
       .fn()
@@ -266,6 +269,9 @@ describe('LabReportService.print - single print follows the same order-owner rul
       sections: { results: [] },
     });
     Object.assign(svc, {
+      // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+      config: { get: jest.fn() },
+      logger: { warn: jest.fn(), log: jest.fn() },
       // the cancelled-order print check has its own spec (print-cancelled)
       assertReportOrderNotCancelledForPrint: jest
         .fn()
@@ -325,6 +331,9 @@ describe('LabReportService.printAllForOrder - skips what it cannot show, masks w
         : Promise.resolve(pdf),
     );
     Object.assign(svc, {
+      // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+      config: { get: jest.fn() },
+      logger: { warn: jest.fn(), log: jest.fn() },
       // the cancelled-order print check has its own spec (print-cancelled)
       assertReportOrderNotCancelledForPrint: jest
         .fn()
@@ -385,6 +394,9 @@ describe('LabReportService.getShareInfo - how many tests are still pending', () 
       .mockResolvedValueOnce(2); // validated / approved / published
     const svc = Object.create(LabReportService.prototype) as LabReportService;
     Object.assign(svc, {
+      // ConfigService: the print reads the public-link base URL (unset here, so the QR tags stay blank).
+      config: { get: jest.fn() },
+      logger: { warn: jest.fn(), log: jest.fn() },
       // the cancelled-order print check has its own spec (print-cancelled)
       assertReportOrderNotCancelledForPrint: jest
         .fn()

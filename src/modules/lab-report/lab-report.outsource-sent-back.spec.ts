@@ -95,7 +95,9 @@ describe('attachOutsourceSentBack', () => {
         { sampleId: 's0', transferStatus: TransferStatus.REPEAT },
       ]);
       const [out] = await m.attach([
-        row([SampleStatus.OUTSOURCED], { status } as Partial<LabReportWorklistRow>),
+        row([SampleStatus.OUTSOURCED], {
+          status,
+        }),
       ]);
       expect(out!.outsourceSentBack).toBe(false);
     },
@@ -106,15 +108,20 @@ describe('attachOutsourceSentBack', () => {
     LabReportStatus.SAVED,
     LabReportStatus.VALIDATION_PENDING,
     LabReportStatus.RESULT_REJECTED,
-  ])('a %s report is still marked when its outsourced sample is sent back', async (status) => {
-    const m = build([
-      { sampleId: 's0', transferStatus: TransferStatus.REPEAT },
-    ]);
-    const [out] = await m.attach([
-      row([SampleStatus.OUTSOURCED], { status } as Partial<LabReportWorklistRow>),
-    ]);
-    expect(out!.outsourceSentBack).toBe(true);
-  });
+  ])(
+    'a %s report is still marked when its outsourced sample is sent back',
+    async (status) => {
+      const m = build([
+        { sampleId: 's0', transferStatus: TransferStatus.REPEAT },
+      ]);
+      const [out] = await m.attach([
+        row([SampleStatus.OUTSOURCED], {
+          status,
+        }),
+      ]);
+      expect(out!.outsourceSentBack).toBe(true);
+    },
+  );
 
   it('a test with two containers: sent back + still waiting is marked; sent back + accepted is not', async () => {
     const m = build([

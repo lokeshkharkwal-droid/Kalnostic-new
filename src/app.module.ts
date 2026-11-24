@@ -57,6 +57,8 @@ import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AuthRoleModule } from './modules/auth-role/auth-role.module';
 import { SiteAdminModule } from './modules/siteadmin/siteadmin.module';
+import { PatientAuthModule } from './modules/patient-auth/patient-auth.module';
+import { PatientPortalModule } from './modules/patient-portal/patient-portal.module';
 import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module';
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
@@ -99,6 +101,7 @@ import { MessagingReportModule } from './modules/messaging-report/messaging-repo
 import { EmiModule } from './modules/emi/emi.module';
 import { PublicModule } from './modules/public/public.module';
 import { InventoryIntegrationModule } from './modules/inventory-integration/inventory-integration.module';
+import { InventorySettingsModule } from './modules/inventory-settings/inventory-settings.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { B2bModuleGuard } from './common/guards/b2b-module.guard';
 
@@ -182,6 +185,8 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     AuthModule,
     AuthRoleModule,
     SiteAdminModule,
+    PatientAuthModule,
+    PatientPortalModule,
     PaymentRulesModule,
     SupportInfoModule,
     ContactUsModule,
@@ -224,6 +229,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     EmiModule,
     PublicModule,
     InventoryIntegrationModule,
+    InventorySettingsModule,
   ],
   providers: [
     // Global business authentication. SiteAdmin routes use @Public() + their

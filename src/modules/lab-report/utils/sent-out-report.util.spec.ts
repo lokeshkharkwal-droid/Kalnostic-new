@@ -271,7 +271,9 @@ describe('assertReportWritable - the one write lock', () => {
     outsourced.sampleTransfer.findMany.mockResolvedValue([
       { sampleId: 's0', transferStatus: TransferStatus.REPEAT },
     ]);
-    expect(await reportAwaitingKind(asDb(outsourced), 't1', key)).toBe('OUTSOURCED');
+    expect(await reportAwaitingKind(asDb(outsourced), 't1', key)).toBe(
+      'OUTSOURCED',
+    );
 
     const workable = makeDb();
     workable.orderSampleTest.findMany.mockResolvedValue([
@@ -509,9 +511,7 @@ describe('isReportAwaitingSample', () => {
 
     it('the exemption only concerns the outsourced case: a validated report whose sample is back on Repeat stays locked', async () => {
       const db = makeDb();
-      db.orderSampleTest.findMany.mockResolvedValue(
-        links(SampleStatus.REPEAT),
-      );
+      db.orderSampleTest.findMany.mockResolvedValue(links(SampleStatus.REPEAT));
       expect(
         await isReportAwaitingSample(asDb(db), 't1', {
           ...key,

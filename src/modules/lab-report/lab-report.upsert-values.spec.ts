@@ -1,9 +1,15 @@
-import { ResultValueSource } from '@prisma/client';
+import {
+  AbnormalFlag,
+  ResultFlagOption,
+  ResultValueSource,
+} from '@prisma/client';
 import { LabReportService } from './lab-report.service';
 import {
+  AbnormalStyleChangeNotAllowedException,
   InvalidResultParamException,
   LabReportValueChangedException,
 } from './exceptions/lab-report.exceptions';
+import { ValidationException } from '../../common/exceptions/kaltros.exception';
 import type { UpsertResultValuesDto } from './dto/upsert-result-values.dto';
 
 /**
@@ -121,6 +127,8 @@ function build(stored: StoredRow[] = [], ranges: RangeRow[] = []) {
     orderItem: {
       findUnique: jest.fn().mockResolvedValue({ branchLabPanelId: null }),
     },
+    // Rows already saved, read before the transaction (only to let an unchanged saved style through).
+    labReportResultValue: { findMany: jest.fn().mockResolvedValue([]) },
     withTenant: jest.fn((_t: string, fn: (t: typeof tx) => unknown) => fn(tx)),
   };
   const deps = Array(11).fill(undefined) as unknown[];
@@ -637,5 +645,439 @@ describe('upsertResultValues — a parameter with NO reference range configured 
     expect(updates).toHaveLength(1);
     expect(updates[0]!.data).toMatchObject({ referenceRangeId: 'rng-1' });
     expect(m.labReportResultValue.upsert).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Abnormal Flag Logic v1.3 — the technician's Default / Highlight / Not Highlight choice is saved with the
+ * value, for every result type and on every save path (including the analyzer paths, where it used to be
+ * dropped), and the Highlight style is checked on the server.
+ */
+describe('upsertResultValues — Default / Highlight / Not Highlight', () => {
+  const saveAs = (
+    m: ReturnType<typeof build>,
+    values: UpsertResultValuesDto['values'],
+    canChangeAbnormalStyle: boolean,
+  ) =>
+    m.service.upsertResultValues('r1', T, B, { values }, ACTOR, {
+      canChangeAbnormalStyle,
+    });
+
+  /** Give the report's parameters their Abnormal Flag Logic (P1 and P2 share `p1Style` / `p2Style`). */
+  const withStyles = (
+    m: ReturnType<typeof build>,
+    p1Style: AbnormalFlag | null,
+    p2Style: AbnormalFlag | null = AbnormalFlag.BOLD_AND_RED,
+  ) => {
+    (m.service as unknown as Record<string, jest.Mock>).getResultParams = jest
+      .fn()
+      .mockResolvedValue([
+        { id: P1, parameterName: 'Hemoglobin', abnormalFlagLogic: p1Style },
+        { id: P2, parameterName: 'WBC', abnormalFlagLogic: p2Style },
+      ]);
+  };
+
+  it('a new row stores Highlight with the chosen style', async () => {
+    const m = build();
+    await saveAs(
+      m,
+      [
+        {
+          resultParamId: P1,
+          observed1: '12',
+          flagOption: ResultFlagOption.HIGHLIGHT,
+          highlightLogic: AbnormalFlag.ITALIC,
+        },
+      ],
+      true,
+    );
+    const call = m.labReportResultValue.upsert.mock.calls[0]![0];
+    expect(call.create).toMatchObject({
+      flagOption: 'HIGHLIGHT',
+      highlightLogic: 'ITALIC',
+    });
+    expect(call.update).toMatchObject({
+      flagOption: 'HIGHLIGHT',
+      highlightLogic: 'ITALIC',
+    });
+    // the retired boolean is no longer written
+    expect(call.create).not.toHaveProperty('highlightInReport');
+  });
+
+  it('Default and Not Highlight store no style, even if one was sent', async () => {
+    for (const option of [
+      ResultFlagOption.DEFAULT,
+      ResultFlagOption.NOT_HIGHLIGHT,
+    ]) {
+      const m = build();
+      await saveAs(
+        m,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: option,
+            highlightLogic: AbnormalFlag.BOLD_ONLY,
+          },
+        ],
+        true,
+      );
+      const call = m.labReportResultValue.upsert.mock.calls[0]![0];
+      expect(call.create).toMatchObject({
+        flagOption: option,
+        highlightLogic: null,
+      });
+    }
+  });
+
+  it('Highlight with no style chosen stores no style (print then uses the parameter style)', async () => {
+    const m = build();
+    await saveAs(
+      m,
+      [
+        {
+          resultParamId: P1,
+          observed1: '12',
+          flagOption: ResultFlagOption.HIGHLIGHT,
+        },
+      ],
+      false,
+    );
+    expect(
+      m.labReportResultValue.upsert.mock.calls[0]![0].create,
+    ).toMatchObject({ flagOption: 'HIGHLIGHT', highlightLogic: null });
+  });
+
+  it('a save that sends no choice starts a new row on DEFAULT and leaves an existing row alone', async () => {
+    const created = build();
+    await save(created, [{ resultParamId: P1, observed1: '12' }]);
+    expect(
+      created.labReportResultValue.upsert.mock.calls[0]![0].create,
+    ).toMatchObject({ flagOption: 'DEFAULT', highlightLogic: null });
+    expect(
+      created.labReportResultValue.upsert.mock.calls[0]![0].update,
+    ).not.toHaveProperty('flagOption');
+    expect(
+      created.labReportResultValue.upsert.mock.calls[0]![0].update,
+    ).not.toHaveProperty('highlightLogic');
+  });
+
+  it('an explicit null flagOption counts as "no choice" (the DTO lets null through; the column is NOT NULL)', async () => {
+    const m = build();
+    await save(m, [
+      {
+        resultParamId: P1,
+        observed1: '12',
+        flagOption: null as unknown as ResultFlagOption,
+        highlightLogic: AbnormalFlag.BOLD_ONLY,
+      },
+    ]);
+    const call = m.labReportResultValue.upsert.mock.calls[0]![0];
+    // the existing row keeps its choice: a null must never reach the update (that was a Prisma error, HTTP 500)
+    expect(call.update).not.toHaveProperty('flagOption');
+    expect(call.update).not.toHaveProperty('highlightLogic');
+    // a new row starts on DEFAULT as for a missing choice
+    expect(call.create).toMatchObject({
+      flagOption: 'DEFAULT',
+      highlightLogic: null,
+    });
+  });
+
+  it('an analyzer value the technician left alone still saves the choice (it used to be dropped)', async () => {
+    const m = build([machine(P1)]);
+    await saveAs(
+      m,
+      [
+        {
+          resultParamId: P1,
+          observed1: '130',
+          flagOption: ResultFlagOption.HIGHLIGHT,
+          highlightLogic: AbnormalFlag.BOLD_ONLY,
+        },
+      ],
+      true,
+    );
+    expect(m.labReportResultValue.upsert).not.toHaveBeenCalled();
+    const update = m.labReportResultValue.update.mock.calls[0]![0];
+    expect(update.data).toMatchObject({
+      flagOption: 'HIGHLIGHT',
+      highlightLogic: 'BOLD_ONLY',
+    });
+    // the analyzer's own record is still untouched
+    expect(update.data).not.toHaveProperty('source');
+    expect(update.data).not.toHaveProperty('observed1');
+  });
+
+  it('an analyzer value the technician overwrote saves the choice too', async () => {
+    const m = build([machine(P1)]);
+    await saveAs(
+      m,
+      [
+        {
+          resultParamId: P1,
+          observed1: '99',
+          overridesAnalyzer: true,
+          flagOption: ResultFlagOption.NOT_HIGHLIGHT,
+        },
+      ],
+      true,
+    );
+    const update = m.labReportResultValue.update.mock.calls[0]![0];
+    expect(update.data).toMatchObject({
+      observed1: '99',
+      flagOption: 'NOT_HIGHLIGHT',
+      highlightLogic: null,
+    });
+  });
+
+  it('refuses a "…and High Low" style as a Highlight style, and writes nothing', async () => {
+    const m = build();
+    await expect(
+      saveAs(
+        m,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: AbnormalFlag.BOLD_AND_RED_HIGH_LOW,
+          },
+        ],
+        true,
+      ),
+    ).rejects.toBeInstanceOf(ValidationException);
+    expect(m.prisma.withTenant).not.toHaveBeenCalled();
+  });
+
+  describe('without the "Change abnormal style" permission', () => {
+    it('may only use the style derived from the parameter style — anything else is refused and nothing is written', async () => {
+      const m = build();
+      withStyles(m, AbnormalFlag.BOLD_AND_RED);
+      await expect(
+        saveAs(
+          m,
+          [
+            {
+              resultParamId: P1,
+              observed1: '12',
+              flagOption: ResultFlagOption.HIGHLIGHT,
+              highlightLogic: AbnormalFlag.ITALIC,
+            },
+          ],
+          false,
+        ),
+      ).rejects.toBeInstanceOf(AbnormalStyleChangeNotAllowedException);
+      expect(m.prisma.withTenant).not.toHaveBeenCalled();
+    });
+
+    it('may Highlight with no style sent (an explicit null too): it means "use the parameter style", so it is not refused', async () => {
+      const m = build();
+      withStyles(m, AbnormalFlag.BOLD_AND_RED);
+      await saveAs(
+        m,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: null as unknown as AbnormalFlag,
+          },
+        ],
+        false,
+      );
+      expect(m.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('may Highlight in the parameter style', async () => {
+      const m = build();
+      withStyles(m, AbnormalFlag.BOLD_AND_RED);
+      await saveAs(
+        m,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: AbnormalFlag.BOLD_AND_RED,
+          },
+        ],
+        false,
+      );
+      expect(m.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('may re-save a style a colleague with the permission already chose (unchanged), but not a different one', async () => {
+      const m = build();
+      withStyles(m, AbnormalFlag.BOLD_AND_RED);
+      m.prisma.labReportResultValue.findMany.mockResolvedValue([
+        { resultParamId: P1, highlightLogic: AbnormalFlag.ITALIC },
+      ]);
+      await saveAs(
+        m,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: AbnormalFlag.ITALIC,
+          },
+        ],
+        false,
+      );
+      expect(m.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+      // …but swapping it for another style is still refused
+      await expect(
+        saveAs(
+          m,
+          [
+            {
+              resultParamId: P1,
+              observed1: '12',
+              flagOption: ResultFlagOption.HIGHLIGHT,
+              highlightLogic: AbnormalFlag.UNDERLINE,
+            },
+          ],
+          false,
+        ),
+      ).rejects.toBeInstanceOf(AbnormalStyleChangeNotAllowedException);
+    });
+
+    it('for a High Low parameter style the derived style is its basic style', async () => {
+      const allowed = build();
+      withStyles(allowed, AbnormalFlag.RED_HIGH_LOW);
+      await saveAs(
+        allowed,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: AbnormalFlag.RED_ONLY,
+          },
+        ],
+        false,
+      );
+      expect(allowed.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+
+      const refused = build();
+      withStyles(refused, AbnormalFlag.RED_HIGH_LOW);
+      await expect(
+        saveAs(
+          refused,
+          [
+            {
+              resultParamId: P1,
+              observed1: '12',
+              flagOption: ResultFlagOption.HIGHLIGHT,
+              highlightLogic: AbnormalFlag.BOLD_AND_RED,
+            },
+          ],
+          false,
+        ),
+      ).rejects.toBeInstanceOf(AbnormalStyleChangeNotAllowedException);
+    });
+
+    it('a parameter with NO style: Bold and Red is the fallback, so only that style (or none) is allowed', async () => {
+      const allowed = build();
+      withStyles(allowed, null);
+      await saveAs(
+        allowed,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: AbnormalFlag.BOLD_AND_RED,
+          },
+        ],
+        false,
+      );
+      expect(allowed.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+
+      const noChoice = build();
+      withStyles(noChoice, null);
+      await saveAs(
+        noChoice,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+          },
+        ],
+        false,
+      );
+      expect(noChoice.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+
+      const refused = build();
+      withStyles(refused, null);
+      await expect(
+        saveAs(
+          refused,
+          [
+            {
+              resultParamId: P1,
+              observed1: '12',
+              flagOption: ResultFlagOption.HIGHLIGHT,
+              highlightLogic: AbnormalFlag.ITALIC,
+            },
+          ],
+          false,
+        ),
+      ).rejects.toBeInstanceOf(AbnormalStyleChangeNotAllowedException);
+    });
+
+    it('a user WITH the permission may pick any basic style on a parameter with no style', async () => {
+      const m = build();
+      withStyles(m, null);
+      await saveAs(
+        m,
+        [
+          {
+            resultParamId: P1,
+            observed1: '12',
+            flagOption: ResultFlagOption.HIGHLIGHT,
+            highlightLogic: AbnormalFlag.UNDERLINE,
+          },
+        ],
+        true,
+      );
+      expect(m.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('can still choose Default and Not Highlight', async () => {
+      for (const option of [
+        ResultFlagOption.DEFAULT,
+        ResultFlagOption.NOT_HIGHLIGHT,
+      ]) {
+        const m = build();
+        await saveAs(
+          m,
+          [{ resultParamId: P1, observed1: '12', flagOption: option }],
+          false,
+        );
+        expect(m.labReportResultValue.upsert).toHaveBeenCalledTimes(1);
+      }
+    });
+  });
+
+  it('with the permission any basic style may be picked', async () => {
+    const m = build();
+    withStyles(m, AbnormalFlag.BOLD_AND_RED);
+    await saveAs(
+      m,
+      [
+        {
+          resultParamId: P1,
+          observed1: '12',
+          flagOption: ResultFlagOption.HIGHLIGHT,
+          highlightLogic: AbnormalFlag.COLOUR_HIGHLIGHT,
+        },
+      ],
+      true,
+    );
+    expect(
+      m.labReportResultValue.upsert.mock.calls[0]![0].create,
+    ).toMatchObject({ highlightLogic: 'COLOUR_HIGHLIGHT' });
   });
 });

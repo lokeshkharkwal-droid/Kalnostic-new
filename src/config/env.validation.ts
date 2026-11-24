@@ -17,6 +17,12 @@ export const envValidationSchema = Joi.object({
   JWT_ACCESS_TTL: Joi.string().default('15m'),
   JWT_REFRESH_TTL_DAYS: Joi.number().default(30),
   SITEADMIN_TOKEN_TTL: Joi.string().default('8h'),
+  // Patient-portal tokens (separate 'jwt-patient' auth system). Access + refresh
+  // mirror the business defaults; the bootstrap token is the short-lived
+  // "login then pick business" handoff exchanged at select-business.
+  PATIENT_ACCESS_TTL: Joi.string().default('15m'),
+  PATIENT_REFRESH_TTL_DAYS: Joi.number().default(30),
+  PATIENT_BOOTSTRAP_TTL: Joi.string().default('10m'),
   BCRYPT_ROUNDS: Joi.number().default(12),
   // AES-256-GCM key for at-rest encryption of sensitive fields (e.g. Aadhaar).
   // 32 bytes encoded as 64 hex characters. Optional so the app still boots

@@ -151,6 +151,15 @@ export const PDF_TEMPLATE_CONFIG_SLOT_GROUPS: PdfTemplateConfigSlotGroup[] = [
       },
     ],
   },
+  {
+    label: 'Inventory',
+    slots: [
+      { key: 'inventory_invoice', label: 'Inventory Sales Invoice' },
+      { key: 'inventory_requisition', label: 'Inventory Requisition' },
+      { key: 'inventory_transfer', label: 'Inventory Transfer Note' },
+      { key: 'inventory_delivery', label: 'Inventory Delivery Note' },
+    ],
+  },
 ];
 
 /** Flat set of valid slot keys (defence-in-depth validation in the service). */

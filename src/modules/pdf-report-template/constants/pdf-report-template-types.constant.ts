@@ -68,6 +68,11 @@ export const PDF_REPORT_TEMPLATE_TYPES = [
   // ── Other ──
   'duty_roster_report',
   'pharmacy_sales_invoice_print',
+  // ── Inventory (the separate inventory monorepo renders via render-by-type) ──
+  'inventory_invoice',
+  'inventory_requisition',
+  'inventory_transfer',
+  'inventory_delivery',
   // ── Original Kalnostics keys (kept for existing templates) ──
   'invoice',
   'prescription',
@@ -140,6 +145,11 @@ export const PDF_REPORT_TEMPLATE_TYPE_LABELS: Record<
   // Other
   duty_roster_report: 'Duty Roster Report',
   pharmacy_sales_invoice_print: 'Pharmacy Sales Invoice',
+  // Inventory
+  inventory_invoice: 'Inventory Sales Invoice',
+  inventory_requisition: 'Inventory Requisition',
+  inventory_transfer: 'Inventory Transfer Note',
+  inventory_delivery: 'Inventory Delivery Note',
   // Original Kalnostics keys
   invoice: 'Invoice / Receipt',
   prescription: 'Prescription',

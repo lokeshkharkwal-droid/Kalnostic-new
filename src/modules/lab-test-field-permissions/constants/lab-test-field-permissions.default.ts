@@ -100,6 +100,7 @@ export const DEFAULT_LAB_TEST_FIELD_PERMISSIONS: LabTestFieldPermissionsMap = {
     'NABL',
     'CAP',
     'Result Rounding Type',
+    'Abnormal Flag Logic',
     'Icon Settings',
     'Image Settings',
     'Reflex Test',
@@ -120,7 +121,6 @@ export const DEFAULT_LAB_TEST_FIELD_PERMISSIONS: LabTestFieldPermissionsMap = {
     'Critical Minimum',
     'Critical Maximum',
     'Display of Reference Range',
-    'Abnormal Flag Logic',
   ]),
   'Reference Value': allTrue([
     'Parameter Name',
@@ -131,7 +131,6 @@ export const DEFAULT_LAB_TEST_FIELD_PERMISSIONS: LabTestFieldPermissionsMap = {
     'Age To',
     'Age To Unit',
     'Display of Reference Value',
-    'Abnormal Flag Logic',
   ]),
   'Version Control': allTrue([
     'Version',
