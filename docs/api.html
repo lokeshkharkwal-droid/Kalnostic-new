@@ -3464,6 +3464,37 @@ rules). Business-authenticated; tenant from the JWT, branch from the active prof
   Read-only. No active branch → <span class="pill">404 BRANCH_NOT_FOUND</span>.</p>
 </div>
 
+<h2 id="technician-settings">Technician — Laboratory Settings</h2>
+<div class="note">Per-branch Technician (Laboratory) settings: Analytical TAT thresholds, worklist icon toggles, signatory
+authorities, Notes / Overall Result editability and the Adjust TAT reasons. Business-authenticated; tenant from the JWT,
+branch from the active profile. Bruno: <code>bruno/63 Technician Settings</code>, requests 01-03.</div>
+
+<div class="ep" id="technician-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/technician-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>lab_operations:laboratory_settings__view_laboratory_settings</code></span></div>
+  <p>The active branch's settings for the Laboratory Settings page (<code>/technician/settings</code>); a branch that
+  never saved gets its row created with the module defaults. Gated by the view-laboratory-settings permission
+  (<code>PermissionGuard</code>); <code>business_admin</code>/<code>administrator</code> bypass. The technician screens read
+  the same object via the login-only <a href="#technician-settings-effective">effective settings</a> instead.</p>
+</div>
+
+<div class="ep" id="technician-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/technician-settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>lab_operations:laboratory_settings__update_laboratory_settings</code></span></div>
+  <p>Upsert the active branch's settings and return them. Audited under <code>AuditModule.TECHNICIAN_SETTINGS</code>.</p>
+</div>
+
+<div class="ep" id="technician-settings-effective">
+  <div><span class="m get">GET</span><span class="path">/api/v1/technician-settings/effective</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">login-only</span></div>
+  <p>The active branch's settings <b>as they apply</b> — the read the technician screens use: result entry (Useful For /
+  Interpretation / Limitations / Remarks / References / Overall Result editability), the worklist's Approve dialog
+  (number of signatory authorities) and TAT Details (Adjust TAT reasons). Same object as
+  <a href="#technician-settings-get">GET /technician-settings</a>. Login-only: the view/update-laboratory-settings
+  permissions control who may open and change the settings page, never whether the saved settings take effect, so a
+  user without them still gets the real saved values (not the defaults). Never changes saved values.</p>
+</div>
+
 <h2 id="accession-sample-search">Accession — Sample Search &amp; Discard / Return flags</h2>
 <div class="note">Added for the Sample Search popup (In-House, Internal Referral and External Referral Orders). Business-authenticated;
 tenant from the JWT, branch from the active profile. Full field notes are in the Bruno collection

@@ -1,0 +1,46 @@
+meta {
+  name: 03 Get Effective Technician Settings
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/technician-settings/effective
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the same effective technician settings as GET /technician-settings", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("tatWarningMinutes");
+    expect(d).to.have.property("authoritySignatures");
+    expect(d).to.have.property("signatoryBasis");
+    expect(d).to.have.property("tatAdjustmentReasons");
+    expect(d).to.have.property("isUsefulForEditable");
+    expect(d).to.have.property("isOverallResultEditable");
+  });
+}
+
+docs {
+  Effective technician (laboratory) settings for the active branch, for the
+  screens that APPLY them: the technician worklist (Approve signatory count),
+  result entry (Notes / Overall Result editability) and TAT details (Adjust TAT
+  reasons). Same object as `GET /technician-settings`.
+
+  **Login-only - no permission required.** The `View Laboratory Settings` /
+  `Update Laboratory Settings` permissions guard only the Laboratory Settings
+  page (`GET` / `PUT /technician-settings`). They control access to that page,
+  never whether the saved settings apply: a user without them still gets the
+  saved values here (not a 403 that made the screens fall back to defaults).
+
+  Never changes saved values. Like `GET /technician-settings`, a branch that has
+  never saved settings gets its row created with the module defaults.
+}
