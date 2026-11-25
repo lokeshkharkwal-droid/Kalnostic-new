@@ -42,10 +42,14 @@ describe('RegistrationSettingsController — permissions control access, not the
     expect(guards('getEffectiveSettings')).not.toContain(PermissionGuard);
     // Nor gated at class level.
     expect(
-      Reflect.getMetadata(BUSINESS_PERMISSIONS_KEY, RegistrationSettingsController),
+      Reflect.getMetadata(
+        BUSINESS_PERMISSIONS_KEY,
+        RegistrationSettingsController,
+      ),
     ).toBeUndefined();
     expect(
-      Reflect.getMetadata(GUARDS_METADATA, RegistrationSettingsController) ?? [],
+      Reflect.getMetadata(GUARDS_METADATA, RegistrationSettingsController) ??
+        [],
     ).not.toContain(PermissionGuard);
   });
 

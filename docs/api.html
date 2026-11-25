@@ -3429,6 +3429,41 @@ length of the matching notes list.</p>
   test of an order shows the same counts. Drives the Sample / Technician Notes icons beside Report Status.</p>
 </div>
 
+<h2 id="accession-settings">Accession — Module Settings</h2>
+<div class="note">Per-branch Accession Module Settings (Master Data lists, Sample/Order Barcode settings, acceptance
+rules). Business-authenticated; tenant from the JWT, branch from the active profile. Bruno:
+<code>bruno/50 Accession</code>, requests 34, 35 and 54.</div>
+
+<div class="ep" id="accession-settings-get">
+  <div><span class="m get">GET</span><span class="path">/api/v1/accession/settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>accession:accession_settings__view_accession_settings</code></span></div>
+  <p>The active branch's effective settings for the Accession Settings page: the stored row merged over the module
+  defaults, plus the tenant-wide barcode counters and previews. Gated by the view-accession-settings permission
+  (<code>PermissionGuard</code>); <code>business_admin</code>/<code>administrator</code> bypass. Operational screens read
+  the same object via the login-only <a href="#accession-settings-effective">effective settings</a> instead.
+  No active branch → <span class="pill">404 BRANCH_NOT_FOUND</span>.</p>
+</div>
+
+<div class="ep" id="accession-settings-save">
+  <div><span class="m put">PUT</span><span class="path">/api/v1/accession/settings</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">requires <code>accession:accession_settings__update_accession_settings</code></span></div>
+  <p>Save a partial patch of the active branch's settings and return the effective settings. An omitted Master
+  Data list keeps its last-saved value; min/max accept-time and warning/critical thresholds are cross-validated
+  (<span class="pill">422 VALIDATION_ERROR</span>). Audited under <code>AuditModule.ACCESSION</code>.</p>
+</div>
+
+<div class="ep" id="accession-settings-effective">
+  <div><span class="m get">GET</span><span class="path">/api/v1/accession/settings/effective</span></div>
+  <div class="tags"><span class="tag biz">business JWT</span><span class="tag biz">login-only</span></div>
+  <p>The active branch's settings <b>as they apply</b> — the read the operational screens use (In-House / Internal
+  Referral / External Referral / Outsource worklists, Sample Search, Order Overview) for the Master Data lists
+  (tube types, sample conditions, repeat / rejection reasons, discard methods, logistics types) and acceptance
+  rules. Same object as <a href="#accession-settings-get">GET /accession/settings</a>. Login-only: the
+  view/update-accession-settings permissions control who may open and change the settings page, never whether the
+  saved settings take effect, so a user without them still gets the real saved values (not the defaults).
+  Read-only. No active branch → <span class="pill">404 BRANCH_NOT_FOUND</span>.</p>
+</div>
+
 <h2 id="accession-sample-search">Accession — Sample Search &amp; Discard / Return flags</h2>
 <div class="note">Added for the Sample Search popup (In-House, Internal Referral and External Referral Orders). Business-authenticated;
 tenant from the JWT, branch from the active profile. Full field notes are in the Bruno collection
