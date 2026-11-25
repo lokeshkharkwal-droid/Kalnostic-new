@@ -1,0 +1,51 @@
+meta {
+  name: 03 Patient Login
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/patient-portal/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "identifier": "{{patientLoginIdentifier}}",
+    "password": "Password@123"
+  }
+}
+
+script:post-response {
+  const body = res.getBody();
+  const data = body && body.data;
+  if (data && data.bootstrapToken) {
+    bru.setEnvVar("patientBootstrapToken", data.bootstrapToken);
+  }
+}
+
+docs {
+  **Patient portal — step 1 of 2 ("login then pick business").** Authenticates the
+  platform identity (no tenant yet). Separate `'jwt-patient'` auth system; a
+  patient token is rejected on every business/SiteAdmin route by construction.
+
+  Fields:
+  - `identifier` (required) — registered mobile or email (precedence mobile →
+    email).
+  - `password` (required) — the staff-issued temp password on first login
+    (`Password@123`), or the patient's chosen password afterwards.
+
+  Returns `data`: `{ bootstrapToken, mustChangePassword, businesses[] }`, where
+  `businesses` is `{ tenantId, tenantName, tenantSlug, shortName, logoUrl }[]`.
+  Captures `patientBootstrapToken`. Exchange it at **Select Business**.
+
+  Enforces the shared lockout (10 fails → 15 min). Errors: `401
+  PATIENT_INVALID_CREDENTIALS`; `423 PATIENT_ACCOUNT_LOCKED`; `403
+  PATIENT_ACCOUNT_INACTIVE`; `403 PATIENT_NO_LOGIN_ACCESS` (identity not enrolled
+  as a patient anywhere — staff must run **Issue Patient Credentials** first).
+}

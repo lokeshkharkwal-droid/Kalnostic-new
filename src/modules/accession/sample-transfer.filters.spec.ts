@@ -1,4 +1,9 @@
-import { LabReportStatus, OrderType, Prisma, SampleStatus } from '@prisma/client';
+import {
+  LabReportStatus,
+  OrderType,
+  Prisma,
+  SampleStatus,
+} from '@prisma/client';
 import { SampleTransferService } from './sample-transfer.service';
 import { ListTransfersDto } from './dto/list-transfers.dto';
 

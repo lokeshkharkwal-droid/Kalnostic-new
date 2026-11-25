@@ -441,6 +441,18 @@ export class LabTestService {
    * optionally filtered by `branchId` and a case-insensitive `testName` search.
    * Returns the full array when `page` is omitted, or a paginated envelope when
    * `page` is supplied (mirrors `BranchService.findOptionsForTenant`).
+   *
+   * **Canonical de-duplication.** The `LabTest` table holds *several* rows for the
+   * same logical test — the Tenant Master Data original plus one per-branch copy
+   * materialized by the Tenant→Branch Master Data sync (each sharing `testName`).
+   * When **no `branchId`** is given (the proforma "Lab Test" mapping picker), we
+   * return only the **originals** — `sourceMasterLabTestId IS NULL`, i.e. Tenant
+   * Master Data tests and branch-only tests that have no tenant parent — so a
+   * logical test appears exactly once instead of once per branch. This mirrors the
+   * consumption-time canonicalization in
+   * `InventoryConsumptionService.resolveSourceLabTestIds`, so the id stored by a
+   * mapping made here matches an ordered test's resolved source id. A `branchId`
+   * filter (branch-scoped callers) keeps the full per-branch snapshot.
    * @param tenantId tenant scope
    * @param filters optional `branchId`, `search`, and opt-in `page`/`limit`
    */
@@ -463,6 +475,10 @@ export class LabTestService {
     };
     if (filters.branchId) {
       where.branchId = filters.branchId;
+    } else {
+      // No branch scope → collapse per-branch synced copies to their single
+      // canonical original (see method doc).
+      where.sourceMasterLabTestId = null;
     }
     const search = filters.search?.trim();
     if (search) {

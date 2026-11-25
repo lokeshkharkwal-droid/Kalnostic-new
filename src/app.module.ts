@@ -57,6 +57,8 @@ import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AuthRoleModule } from './modules/auth-role/auth-role.module';
 import { SiteAdminModule } from './modules/siteadmin/siteadmin.module';
+import { PatientAuthModule } from './modules/patient-auth/patient-auth.module';
+import { PatientPortalModule } from './modules/patient-portal/patient-portal.module';
 import { PaymentRulesModule } from './modules/payment-rules/payment-rules.module';
 import { SupportInfoModule } from './modules/support-info/support-info.module';
 import { ContactUsModule } from './modules/contact-us/contact-us.module';
@@ -182,6 +184,8 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     AuthModule,
     AuthRoleModule,
     SiteAdminModule,
+    PatientAuthModule,
+    PatientPortalModule,
     PaymentRulesModule,
     SupportInfoModule,
     ContactUsModule,

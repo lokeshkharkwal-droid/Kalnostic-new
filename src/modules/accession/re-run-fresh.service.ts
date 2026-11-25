@@ -395,7 +395,8 @@ export class ReRunFreshService {
         });
       }
 
-      for (const p of plan) if (p.kind === 'COPY') await createRequest(p.report.id);
+      for (const p of plan)
+        if (p.kind === 'COPY') await createRequest(p.report.id);
 
       for (const id of [...outsourced.keys()].sort()) {
         // the outsource transfer is closed as Repeat; the sample stays Outsourced until the sender confirms Repeat

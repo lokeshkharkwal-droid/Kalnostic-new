@@ -57,8 +57,16 @@ function makeClient(enabled: boolean) {
   };
 }
 
-/** Fake prisma whose branchLabTest.findMany maps branch ids → source ids. */
-function makePrisma(map: Record<string, string | null>) {
+/**
+ * Fake prisma mapping branch lab test ids → Branch Master Data source ids
+ * (`branchLabTest`), then Branch Master Data ids → Tenant Master Data originals
+ * (`labTest.sourceMasterLabTestId`). A branch id absent from `masterMap` resolves
+ * to itself (a branch-only test with no tenant parent).
+ */
+function makePrisma(
+  map: Record<string, string | null>,
+  masterMap: Record<string, string | null> = {},
+) {
   return {
     branchLabTest: {
       findMany: jest.fn(({ where }: { where: { id: { in: string[] } } }) =>
@@ -66,6 +74,16 @@ function makePrisma(map: Record<string, string | null>) {
           where.id.in
             .filter((id) => id in map)
             .map((id) => ({ sourceLabTestId: map[id] })),
+        ),
+      ),
+    },
+    labTest: {
+      findMany: jest.fn(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(
+          where.id.in.map((id) => ({
+            id,
+            sourceMasterLabTestId: masterMap[id] ?? null,
+          })),
         ),
       ),
     },
@@ -97,6 +115,7 @@ describe('InventoryConsumptionService', () => {
 
   it('resolves branch lab tests to source ids and validates', async () => {
     const { client, validate } = makeClient(true);
+    // Branch-only tests (no tenant parent) resolve to themselves.
     const prisma = makePrisma({ blt1: 'lt1', blt2: 'lt2' });
     const svc = new InventoryConsumptionService(prisma, client, makeSettings());
 
@@ -107,6 +126,27 @@ describe('InventoryConsumptionService', () => {
     expect(validate).toHaveBeenCalledWith({
       branchId: 'b1',
       labTestSourceIds: ['lt1', 'lt2'],
+    });
+  });
+
+  it('canonicalizes branch-master tests onto their tenant-master original', async () => {
+    const { client, validate } = makeClient(true);
+    // blt1 → branch-master bmd1 → tenant-master tmd1; blt2 → branch-master bmd2
+    // → tenant-master tmd1 (same logical test at a second branch). Both collapse
+    // to the single canonical id tmd1 — the id the picker stores.
+    const prisma = makePrisma(
+      { blt1: 'bmd1', blt2: 'bmd2' },
+      { bmd1: 'tmd1', bmd2: 'tmd1' },
+    );
+    const svc = new InventoryConsumptionService(prisma, client, makeSettings());
+
+    await svc.validateForOrder('t1', 'b1', [
+      { branchLabTestId: 'blt1' },
+      { branchLabTestId: 'blt2' },
+    ]);
+    expect(validate).toHaveBeenCalledWith({
+      branchId: 'b1',
+      labTestSourceIds: ['tmd1'],
     });
   });
 

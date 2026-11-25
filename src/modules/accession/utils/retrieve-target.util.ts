@@ -1,5 +1,8 @@
 import { SampleStatus } from '@prisma/client';
-import { BARCODE_REMOVED_ACTION, barcodeRemovedFrom } from './repeat-barcode.util';
+import {
+  BARCODE_REMOVED_ACTION,
+  barcodeRemovedFrom,
+} from './repeat-barcode.util';
 
 /** The slice of a sample history row the Retrieve rule reads. */
 export interface RetrieveHistoryRow {
@@ -58,20 +61,36 @@ interface Entry {
  *     If the chain cannot be followed (a gap), the database order is kept for the rest.
  * Rows must be given in the database order (createdAt, id); when a row has no timestamp (a test double) nothing is reordered.
  */
-export function sortHistoryRows<T extends RetrieveHistoryRow>(rows: readonly T[]): T[] {
+export function sortHistoryRows<T extends RetrieveHistoryRow>(
+  rows: readonly T[],
+): T[] {
   if (rows.some((r) => r.createdAt == null)) return [...rows];
   const time = (r: T) => new Date(r.createdAt as Date | string).getTime();
-  const noChange = (r: T) => (r.fromStatus !== null && r.fromStatus === r.toStatus ? 1 : 0);
+  const noChange = (r: T) =>
+    r.fromStatus !== null && r.fromStatus === r.toStatus ? 1 : 0;
   const indexed = rows.map((r, i) => ({ r, i }));
-  indexed.sort((a, b) => time(a.r) - time(b.r) || noChange(a.r) - noChange(b.r) || a.i - b.i);
+  indexed.sort(
+    (a, b) =>
+      time(a.r) - time(b.r) || noChange(a.r) - noChange(b.r) || a.i - b.i,
+  );
   const sorted = indexed.map((x) => x.r);
   // step 2: reorder every run of status-changing lines that share one instant by following the status chain
   const out: T[] = [];
   let i = 0;
   while (i < sorted.length) {
     let j = i + 1;
-    while (j < sorted.length && noChange(sorted[i]!) === 0 && noChange(sorted[j]!) === 0 && time(sorted[j]!) === time(sorted[i]!)) j++;
-    out.push(...(j - i > 1 && noChange(sorted[i]!) === 0 ? followChain(sorted.slice(i, j)) : sorted.slice(i, j)));
+    while (
+      j < sorted.length &&
+      noChange(sorted[i]!) === 0 &&
+      noChange(sorted[j]!) === 0 &&
+      time(sorted[j]!) === time(sorted[i]!)
+    )
+      j++;
+    out.push(
+      ...(j - i > 1 && noChange(sorted[i]!) === 0
+        ? followChain(sorted.slice(i, j))
+        : sorted.slice(i, j)),
+    );
     i = j;
   }
   return out;
@@ -85,7 +104,9 @@ function followChain<T extends RetrieveHistoryRow>(run: T[]): T[] {
   const takeStart = (): T => {
     const born = remaining.findIndex((r) => r.fromStatus === null);
     if (born >= 0) return remaining.splice(born, 1)[0]!;
-    const start = remaining.findIndex((r) => !remaining.some((o) => o !== r && o.toStatus === r.fromStatus));
+    const start = remaining.findIndex(
+      (r) => !remaining.some((o) => o !== r && o.toStatus === r.fromStatus),
+    );
     return remaining.splice(start >= 0 ? start : 0, 1)[0]!;
   };
   result.push(takeStart());
@@ -132,7 +153,13 @@ export function resolveRetrieveTarget(
     if (r.action === 'order-cancelled') continue;
     if (r.action === BARCODE_REMOVED_ACTION) {
       const t = top();
-      if (repeatLineOpen && t && t.real && t.status === SampleStatus.REPEAT && t.barcode === null) {
+      if (
+        repeatLineOpen &&
+        t &&
+        t.real &&
+        t.status === SampleStatus.REPEAT &&
+        t.barcode === null
+      ) {
         t.barcode = barcodeRemovedFrom(r.notes);
       }
       repeatLineOpen = false;
@@ -146,14 +173,18 @@ export function resolveRetrieveTarget(
       repeatLineOpen = false;
       continue;
     }
-    if (top()?.status !== r.fromStatus) stack.push({ status: r.fromStatus, barcode: null, real: false });
+    if (top()?.status !== r.fromStatus)
+      stack.push({ status: r.fromStatus, barcode: null, real: false });
     if (r.action === 'retrieve') {
       if (stack.length > 1) stack.pop(); // the move being undone
-      if (top()?.status !== r.toStatus) stack.push({ status: r.toStatus, barcode: null, real: false });
+      if (top()?.status !== r.toStatus)
+        stack.push({ status: r.toStatus, barcode: null, real: false });
       repeatLineOpen = false;
     } else {
       stack.push({ status: r.toStatus, barcode: null, real: true });
-      repeatLineOpen = r.toStatus === SampleStatus.REPEAT && r.fromStatus !== SampleStatus.REPEAT;
+      repeatLineOpen =
+        r.toStatus === SampleStatus.REPEAT &&
+        r.fromStatus !== SampleStatus.REPEAT;
     }
   }
   const t = top();

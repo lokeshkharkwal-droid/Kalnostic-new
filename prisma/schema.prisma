@@ -1166,6 +1166,15 @@ model RefreshToken {
   issuedToIp String?   @map("issued_to_ip")
   userAgent  String?   @map("user_agent")
 
+  // Audience discriminator: 'business' (staff) or 'patient'. A patient refresh
+  // token must not be redeemable on the business refresh endpoint and vice-versa;
+  // each refresh endpoint filters on this. Defaults to 'business' so every
+  // existing row keeps its meaning without a data backfill.
+  tokenType String  @default("business") @map("token_type")
+  // Selected tenant for a patient session ("login then pick business"). Null for
+  // business sessions, which derive the tenant from the person's ownerTenantId.
+  tenantId  String? @map("tenant_id")
+
   expiresAt DateTime @map("expires_at")
   isUsed    Boolean  @default(false) @map("is_used")
   isRevoked Boolean  @default(false) @map("is_revoked")
@@ -1176,15 +1185,20 @@ model RefreshToken {
 
   @@index([personId])
   @@index([authRoleId])
+  @@index([tenantId])
   @@map("refresh_tokens")
 }
 
-/// Cross-business patient linkage (each business keeps its own tenant_mrn).
+/// Cross-business patient linkage (each business keeps its own tenant_mrn). Also
+/// the platform-level (RLS-exempt) index used by patient-portal login to list the
+/// tenants a person can sign into without reading the RLS-scoped `patients` table.
 model PersonTenantEnrollment {
   id        String  @id @default(uuid())
   personId  String  @map("person_id")
   tenantId  String  @map("tenant_id")
-  branchId  String  @map("branch_id")
+  // Nullable: a patient enrolled for portal access may be tenant-level (no
+  // registration branch). The row only needs (person, tenant) to drive login.
+  branchId  String? @map("branch_id")
   tenantMrn String? @map("tenant_mrn")
 
   enrolledAt DateTime @default(now()) @map("enrolled_at")
@@ -6547,6 +6561,21 @@ enum PaymentEntryType {
   REFUND
 }
 
+/// What a payment was collected FOR — stamped once at creation so the patient
+/// transaction page can tell apart the three contexts a payment can belong to
+/// without ever double-classifying one. Set in the two write paths
+/// (OrderService.create inline payments vs. the standalone PaymentDetailsService
+/// "Make Payment"); the read layer additionally overrides to APPOINTMENT from the
+/// order's appointment FK, so it is always authoritative.
+/// - APPOINTMENT — collected while the order is an appointment booking.
+/// - ORDER       — collected inline during order creation (a normal lab order).
+/// - BILL        — collected later against an existing bill (Make Payment).
+enum TransactionType {
+  APPOINTMENT
+  ORDER
+  BILL
+}
+
 /// B2B client billing type on an order.
 enum B2bClientType {
   CASH
@@ -8394,6 +8423,12 @@ model PaymentDetails {
   /// Null on rows written before this field existed (no retroactive backfill
   /// possible — historical payments never captured who collected them).
   collectedBy String? @map("collected_by")
+
+  /// What this payment was collected FOR (see `TransactionType`). Stamped once at
+  /// creation: APPOINTMENT (order was an appointment), ORDER (inline at order
+  /// creation) or BILL (standalone Make Payment / dues settlement). Legacy rows
+  /// default to BILL and are backfilled deterministically in the migration.
+  transactionType TransactionType @default(BILL) @map("transaction_type")
 
   /// Ledger entry kind. PAYMENT (default) = money collected (`paidAmount`).
   /// REFUND = money returned to the patient (`refundAmount`, `paidAmount` stays 0).

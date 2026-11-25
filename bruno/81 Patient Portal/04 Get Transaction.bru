@@ -1,0 +1,45 @@
+meta {
+  name: 04 Get Transaction
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/transactions/{{patientTransactionId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  One transaction's full detail for the detail modal, owner-checked: the payment's
+  order must belong to one of the session person's patient records in the tenant,
+  else `404 TRANSACTION_NOT_FOUND` (no info leak — a patient can never reach
+  another patient's transaction by changing the id). `{{patientTransactionId}}` is
+  captured by **List Transactions**.
+
+  Requires a patient JWT (`{{patientAccessToken}}`).
+
+  Response `data`:
+  - `id`, `transactionId` — PaymentDetails id (unique transaction identifier)
+  - `amount` — amount collected (rupees; shown in the modal heading)
+  - `transactionType` / `transactionTypeLabel` — see **List Transactions**
+  - `billOrderId` — internal order UUID this payment belongs to; the modal uses it
+    to download that order's bill PDF (`GET /patient-portal/bills/:orderId/pdf`)
+  - `order`:
+    - `patientName`, `patientId` — patient UMID (PAT…), `—` when none
+    - `appointmentAt` — ISO appointment date/time from the ORDER (null for
+      non-appointment orders). NEVER the transaction timestamp.
+    - `orderId` — user-facing order code
+    - `billStatus` / `billStatusLabel`
+    - `branchName`
+  - `payment`:
+    - `transactionId` — PaymentDetails id
+    - `paidOn` — ISO actual payment date/time
+    - `amount` — amount received (rupees)
+    - `paidVia` — payment-method label (Cash / UPI / Debit Card / …)
+    - `refundDate` — ISO date of the order's latest refund, or `null` when none
+}

@@ -7,7 +7,13 @@ import { OrderSampleService } from './accession-sample.service';
  * the note of a Re-run with a fresh sample on a tube that keeps its status (an outsourced tube). Other no-status-change lines
  * (an assigned barcode, an edited note) stay hidden.
  */
-const row = (id: string, action: string, from: SampleStatus, to: SampleStatus, minute: number) => ({
+const row = (
+  id: string,
+  action: string,
+  from: SampleStatus,
+  to: SampleStatus,
+  minute: number,
+) => ({
   id,
   action,
   fromStatus: from,
@@ -35,7 +41,9 @@ async function trailOf(rows: ReturnType<typeof row>[]) {
   priv.findById = jest.fn().mockResolvedValue({ id: 's1' });
   priv.orderCancelledEntry = jest.fn().mockResolvedValue(null);
   priv.enrichHistoryActors = jest.fn((r: unknown[]) => Promise.resolve(r));
-  return ((await service.findHistory('s1', 't1', 'A')) as Array<{ id: string }>).map((r) => r.id);
+  return (
+    (await service.findHistory('s1', 't1', 'A')) as Array<{ id: string }>
+  ).map((r) => r.id);
 }
 
 const R = SampleStatus.REPEAT;
@@ -46,12 +54,22 @@ describe('findHistory shows the barcode and Re-run lines', () => {
   it.each(['barcode-removed', 'barcode-restored', 'barcode-restore-skipped'])(
     'shows %s although it changes no status',
     async (action) => {
-      expect(await trailOf([row('h1', action, R, R, 2), row('h0', 'repeat', A, R, 1)])).toEqual(['h1', 'h0']);
+      expect(
+        await trailOf([
+          row('h1', action, R, R, 2),
+          row('h0', 'repeat', A, R, 1),
+        ]),
+      ).toEqual(['h1', 'h0']);
     },
   );
 
   it('shows the Re-run note of a tube that keeps its status (an outsourced tube)', async () => {
-    expect(await trailOf([row('h1', 're-run-fresh', O, O, 2), row('h0', 'outsource', A, O, 1)])).toEqual(['h1', 'h0']);
+    expect(
+      await trailOf([
+        row('h1', 're-run-fresh', O, O, 2),
+        row('h0', 'outsource', A, O, 1),
+      ]),
+    ).toEqual(['h1', 'h0']);
   });
 
   it('keeps every removed barcode: three Repeats leave three lines', async () => {

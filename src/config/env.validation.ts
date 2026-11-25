@@ -17,6 +17,12 @@ export const envValidationSchema = Joi.object({
   JWT_ACCESS_TTL: Joi.string().default('15m'),
   JWT_REFRESH_TTL_DAYS: Joi.number().default(30),
   SITEADMIN_TOKEN_TTL: Joi.string().default('8h'),
+  // Patient-portal tokens (separate 'jwt-patient' auth system). Access + refresh
+  // mirror the business defaults; the bootstrap token is the short-lived
+  // "login then pick business" handoff exchanged at select-business.
+  PATIENT_ACCESS_TTL: Joi.string().default('15m'),
+  PATIENT_REFRESH_TTL_DAYS: Joi.number().default(30),
+  PATIENT_BOOTSTRAP_TTL: Joi.string().default('10m'),
   BCRYPT_ROUNDS: Joi.number().default(12),
   // AES-256-GCM key for at-rest encryption of sensitive fields (e.g. Aadhaar).
   // 32 bytes encoded as 64 hex characters. Optional so the app still boots
@@ -72,8 +78,12 @@ export const envValidationSchema = Joi.object({
   // this attempt fast rather than blocking the queue worker. Default 15s.
   EXCHANGE_TIMEOUT_MS: Joi.number().integer().min(1000).default(15000),
   // Origin of the business frontend — stamped as peer_server_url and used to
-  // build links inside message bodies.
+  // build links inside message bodies (and the patient-portal login URL in the
+  // auto-generated credentials email).
   FRONTEND_URL: Joi.string().uri().allow('').optional(),
+  // Absolute URL of the Kalnostics logo shown in transactional emails. Optional:
+  // falls back to `${FRONTEND_URL}/logo.png` when unset.
+  BRAND_LOGO_URL: Joi.string().uri().allow('').optional(),
   // Background communication queue worker. Enable on ONE instance per env.
   COMMUNICATION_WORKER_ENABLED: Joi.boolean().default(false),
   COMMUNICATION_WORKER_BATCH: Joi.number().integer().min(1).default(50),

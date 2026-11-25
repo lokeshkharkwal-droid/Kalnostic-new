@@ -1,0 +1,32 @@
+meta {
+  name: 01 Home
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/home
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  Composed home-summary for the patient portal, scoped to the session's patient +
+  tenant (from the patient JWT). Read-only; best-effort (a thin/absent source
+  yields a zero/empty value rather than failing the page).
+
+  Response `data`:
+  - `patient`: `{ patientId, name, initials, platformMrn, photoUrl, tenantId, tenantName }`
+  - `stats`: `{ upcomingAppointments, reportsReady, unreadMessages, balanceDue, billsCount }`
+    (`balanceDue` is whole rupees; `unreadMessages` is `0` until a patient inbox exists)
+  - `nextAppointment`: `{ orderCode, appointmentAt, appointmentType, doctorName, branchName, reason, status }` or `null`
+  - `reportsReady`: up to 5 `{ id, testName, orderCode, publishedAt }` (PUBLISHED reports)
+  - `recentMessages`: `[]` (no patient inbox model yet)
+
+  Requires a patient JWT; on a temp-password session returns `403
+  PATIENT_PASSWORD_CHANGE_REQUIRED`.
+}

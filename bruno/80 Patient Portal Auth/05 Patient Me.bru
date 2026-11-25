@@ -1,0 +1,25 @@
+meta {
+  name: 05 Patient Me
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/auth/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  Current patient-portal session info from the token: `{ person_id, patient_id,
+  tenant_id, active_branch_id, platform_mrn, is_patient_context,
+  must_change_password }`.
+
+  Protected by `PatientJwtGuard`. On a temp-password session this returns `403
+  PATIENT_PASSWORD_CHANGE_REQUIRED` (only **Patient Change Password** is reachable
+  until the password is changed).
+}

@@ -1355,7 +1355,11 @@ describe('SampleTransferService — Retrieve (one-step-back undo)', () => {
     await expect(
       svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}),
     ).rejects.toBeInstanceOf(TransferRetrieveBlockedException);
-    expect(samples.hasStartedReport).toHaveBeenCalledWith(expect.anything(), TENANT, expect.objectContaining({ id: 'copy1' }));
+    expect(samples.hasStartedReport).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      expect.objectContaining({ id: 'copy1' }),
+    );
     expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
     expect(finalWrites(tx)).toHaveLength(0);
   });
@@ -1374,7 +1378,14 @@ describe('SampleTransferService — Retrieve (one-step-back undo)', () => {
             : { id: 'sA', branchId: 'A', status: SampleStatus.SENT_INTERNAL },
         ),
     );
-    const r = await svc.retrieveTransfer(['tr1'], TENANT, PERSON, 'B', {}, true);
+    const r = await svc.retrieveTransfer(
+      ['tr1'],
+      TENANT,
+      PERSON,
+      'B',
+      {},
+      true,
+    );
     expect(r.skipped).toHaveLength(1);
     expect(r.skipped[0]!.code).toBe('TRANSFER_RETRIEVE_BLOCKED');
     expect(samples.removeTransferCloneInTx).not.toHaveBeenCalled();
