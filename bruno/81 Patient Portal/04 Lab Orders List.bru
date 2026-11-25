@@ -1,0 +1,62 @@
+meta {
+  name: 04 Lab Orders List
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/lab-orders?page=1&limit=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 10
+  ~patientId:
+  ~search:
+  ~dateFrom:
+  ~dateTo:
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+script:post-response {
+  const rows = res.getBody() && res.getBody().data;
+  if (Array.isArray(rows) && rows[0]) bru.setEnvVar("patientLabOrderId", rows[0].orderId);
+}
+
+docs {
+  The patient's lab orders (orders that carry a lab/diagnostics section), newest
+  first, across every branch of the session's lab. Read-only.
+
+  Scope comes from the patient JWT (tenant + person): the person's own record plus
+  linked family members. Drafts, quotes and appointments never appear; cancelled
+  orders do.
+
+  Query (all optional):
+  - `page` (default 1), `limit` (default 10, max 100)
+  - `patientId` — narrow to ONE viewable patient (the "Viewing" dropdown). It is only
+    ever intersected with the viewable patients: an id outside the scope returns an
+    empty list, never someone else's orders.
+  - `search` — order number, external order id, or a test/panel name
+  - `dateFrom` / `dateTo` — inclusive ISO dates on the order date
+
+  Response `data[]`:
+  `{ orderId, orderNo, orderDate, patientId, patientName, branchName, branchCity,
+     tests[], status, reportStatus, publishedReportCount, canDownloadReports, billStatus }`
+  plus `meta: { total, page, limit, totalPages }`.
+
+  - `orderNo` = external order id, else the order code.
+  - `status` (testing progress, NOT publish state): `PENDING` (no test has reached
+    reporting) | `IN_PROGRESS` | `PARTIALLY_COMPLETE` | `COMPLETE` (every test line is
+    approved or published; a line with no report yet counts as unfinished) | `CANCELLED`.
+  - `reportStatus`: `NOT_PUBLISHED` | `PARTIALLY_PUBLISHED` | `PUBLISHED`.
+  - `canDownloadReports` is true only with at least one PUBLISHED report on a
+    non-cancelled order.
+
+  Requires a patient JWT (`403 PATIENT_PASSWORD_CHANGE_REQUIRED` on a temp-password
+  session). A staff token gets `401`.
+}
