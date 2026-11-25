@@ -14,6 +14,11 @@ export interface PatientBillRow {
   netAmount: number;
   paidAmount: number;
   balanceAmount: number;
+  /** The business (tenant) this bill belongs to — the detail/PDF key for
+   *  cross-business aggregation (a patient enrolled in many labs sees them all). */
+  tenantId: string;
+  /** Display name of that business (lab). */
+  tenantName: string;
 }
 
 /** One line in the bill's order-items table. */
@@ -53,15 +58,11 @@ export interface PatientBillDetail {
   patientName: string;
   orderDate: string;
   branchName: string | null;
+  /** The business (lab) this bill belongs to — shown in the detail modal. */
+  tenantName: string | null;
   billStatus: BillStatus;
   billStatusLabel: string;
   items: PatientBillItem[];
   transactions: PatientBillTransaction[];
   summary: PatientBillSummary;
-}
-
-/** One branch option for the (paginated, searchable) branch filter. */
-export interface PatientBranchOption {
-  id: string;
-  name: string;
 }

@@ -29,13 +29,23 @@ const BILLABLE_ORDER_STATUSES: OrderStatus[] = [
 
 const MAX_REPORTS = 5;
 
+/** One business's slice of the home summary (before cross-business merge). */
+interface TenantHomeSlice {
+  upcoming: number;
+  next: PatientPortalNextAppointment | null;
+  reports: { total: number; items: PatientPortalReport[] };
+  balance: { balanceDue: number; billsCount: number };
+}
+
 /**
- * Read-only data for the patient portal, scoped to the authenticated patient
- * within their active tenant. Every read filters `{ tenantId, …, deletedAt: null }`
- * (and the patient's own `patientId`); the request already carries the patient's
- * RLS tenant context (set from the patient JWT), so isolation is enforced twice.
- * The home summary is best-effort — a thin/absent source yields a zero/empty
- * value rather than failing the whole page.
+ * Read-only data for the patient portal. **Person-scoped, cross-business.** The
+ * portal no longer pins to a single selected tenant — a patient enrolled in more
+ * than one business sees their records from EVERY business consolidated in one
+ * view. For each enrolled tenant the reads run inside that tenant's RLS context
+ * (`runWithTenant`) and still filter `{ tenantId, …, deletedAt: null }` (and the
+ * person's own `patientId`), so isolation is enforced twice; results are merged
+ * in the app layer. The home summary is best-effort — a thin/absent source
+ * yields a zero/empty value rather than failing the whole page.
  */
 @Injectable()
 export class PatientPortalService {
@@ -44,94 +54,111 @@ export class PatientPortalService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Compose the patient-portal home summary: identity, the four stat tiles, the
-   * next appointment, recent ready reports, and recent messages.
-   *
-   * **Tenant-level, all-branches consolidation.** The portal has no branch filter:
-   * once a tenant is selected, the dashboard shows the patient's records from
-   * EVERY branch of that tenant. Patients are tenant-scoped (their orders /
-   * appointments / reports carry their own `branchId`), so this filters only by
-   * the person's patient record(s) + `tenantId` — never by branch. It also
-   * aggregates across **all** patient rows the person holds in the tenant, so a
-   * person registered at more than one branch is still consolidated into one view.
-   *
-   * @param tenantId active tenant (from the patient JWT)
-   * @param personId the authenticated platform person (from the patient JWT)
-   * @param patientId the patient row the session acts as (identity display)
-   * @throws NotFoundException when the patient doesn't exist in the tenant
+   * The businesses (id + name) a person is enrolled in — the basis for every
+   * cross-business aggregation in the portal. Read from the platform-level
+   * (RLS-exempt) `person_tenant_enrollments` index joined to `tenants`, so no
+   * tenant context is required.
+   * @param personId the authenticated patient's platform person id
    */
-  async getHome(
-    tenantId: string,
+  async getEnrolledTenants(
     personId: string,
-    patientId: string,
-  ): Promise<PatientPortalHome> {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: patientId, tenantId, deletedAt: null },
+  ): Promise<{ tenantId: string; tenantName: string }[]> {
+    const enrolments = await this.prisma.personTenantEnrollment.findMany({
+      where: { personId, deletedAt: null },
+      select: { tenantId: true },
+    });
+    const tenantIds = [...new Set(enrolments.map((e) => e.tenantId))];
+    if (tenantIds.length === 0) {
+      return [];
+    }
+    const tenants = await this.prisma.tenant.findMany({
+      where: { id: { in: tenantIds }, deletedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    return tenants.map((t) => ({ tenantId: t.id, tenantName: t.name }));
+  }
+
+  /**
+   * Compose the patient-portal home summary: identity, the four stat tiles, the
+   * next appointment, recent ready reports, and recent messages — **consolidated
+   * across every business the person is enrolled in** (and, within each, every
+   * branch). Identity comes from the platform `Person`; the stats aggregate each
+   * tenant's slice (counts/balances summed, the single earliest next appointment,
+   * the most-recent published reports across all businesses).
+   *
+   * @param personId the authenticated platform person (from the patient JWT)
+   * @throws NotFoundException when the person no longer exists
+   */
+  async getHome(personId: string): Promise<PatientPortalHome> {
+    const person = await this.prisma.person.findFirst({
+      where: { id: personId, deletedAt: null },
       select: {
         id: true,
         salutation: true,
         firstName: true,
         middleName: true,
         lastName: true,
+        platformMrn: true,
         photoUrl: true,
-        person: { select: { platformMrn: true, photoUrl: true } },
       },
     });
-    if (!patient) {
-      throw new NotFoundException('Patient', patientId);
+    if (!person) {
+      throw new NotFoundException('Patient', personId);
     }
 
-    // Every patient record this person holds in the tenant (normally one, but a
-    // person registered across branches may have more). Scoped to the person +
-    // tenant from the token — never cross-patient — and never filtered by branch.
-    const patientRows = await this.prisma.patient.findMany({
-      where: { tenantId, personId, deletedAt: null },
-      select: { id: true },
-    });
-    const patientIds = [
-      ...new Set([patient.id, ...patientRows.map((p) => p.id)]),
-    ];
+    const tenants = await this.getEnrolledTenants(personId);
+    const slices = await Promise.all(
+      tenants.map((t) => this.getTenantHomeSlice(t.tenantId, personId)),
+    );
 
-    const [tenant, upcomingAppointments, nextAppointment, reports, balance] =
-      await Promise.all([
-        this.prisma.tenant.findFirst({
-          where: { id: tenantId },
-          select: { name: true },
-        }),
-        this.countUpcomingAppointments(tenantId, patientIds),
-        this.findNextAppointment(tenantId, patientIds),
-        this.findReadyReports(tenantId, patientIds),
-        this.computeBalance(tenantId, patientIds),
-      ]);
+    const upcomingAppointments = slices.reduce((s, r) => s + r.upcoming, 0);
+    const reportsReadyTotal = slices.reduce((s, r) => s + r.reports.total, 0);
+    const balanceDue = slices.reduce((s, r) => s + r.balance.balanceDue, 0);
+    const billsCount = slices.reduce((s, r) => s + r.balance.billsCount, 0);
 
-    const name = this.composeName(patient);
+    const nextAppointment =
+      slices
+        .map((r) => r.next)
+        .filter((n): n is PatientPortalNextAppointment => n !== null)
+        .sort((a, b) => this.apptTime(a) - this.apptTime(b))[0] ?? null;
+
+    const reportsReady = slices
+      .flatMap((r) => r.reports.items)
+      .sort((a, b) => this.publishedTime(b) - this.publishedTime(a))
+      .slice(0, MAX_REPORTS);
+
+    const name = this.composeName(person);
     return {
       patient: {
-        patientId: patient.id,
+        patientId: '',
         name,
-        initials: this.initials(patient.firstName, patient.lastName),
-        platformMrn: patient.person?.platformMrn ?? null,
-        photoUrl: patient.photoUrl ?? patient.person?.photoUrl ?? null,
-        tenantId,
-        tenantName: tenant?.name ?? '',
+        initials: this.initials(person.firstName, person.lastName),
+        platformMrn: person.platformMrn,
+        photoUrl: person.photoUrl ?? null,
+        // No single active tenant any more — the view spans all businesses.
+        tenantId: '',
+        tenantName:
+          tenants.length === 1
+            ? (tenants[0]?.tenantName ?? '')
+            : 'All businesses',
       },
       stats: {
         upcomingAppointments,
-        reportsReady: reports.total,
+        reportsReady: reportsReadyTotal,
         unreadMessages: 0, // no patient inbox model yet — surfaced as empty.
-        balanceDue: balance.balanceDue,
-        billsCount: balance.billsCount,
+        balanceDue,
+        billsCount,
       },
       nextAppointment,
-      reportsReady: reports.items,
+      reportsReady,
       recentMessages: [],
     };
   }
 
   /**
-   * List the businesses (labs) this patient can switch into, for the portal's
-   * lab switcher. Read from the platform-level `person_tenant_enrollments` index
-   * joined to `tenants`.
+   * List the businesses (labs) this patient belongs to. Read from the
+   * platform-level `person_tenant_enrollments` index joined to `tenants`.
    * @param personId the authenticated patient's person id
    */
   async getBusinesses(personId: string): Promise<PatientPortalBusiness[]> {
@@ -164,6 +191,49 @@ export class PatientPortalService {
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * One business's home slice, read under that tenant's RLS context and scoped to
+   * the person's patient record(s) in it (all branches). A person not actually
+   * registered in the tenant yields an empty slice.
+   */
+  private getTenantHomeSlice(
+    tenantId: string,
+    personId: string,
+  ): Promise<TenantHomeSlice> {
+    return this.prisma.runWithTenant(tenantId, async () => {
+      const patientRows = await this.prisma.patient.findMany({
+        where: { tenantId, personId, deletedAt: null },
+        select: { id: true },
+      });
+      const patientIds = patientRows.map((p) => p.id);
+      if (patientIds.length === 0) {
+        return {
+          upcoming: 0,
+          next: null,
+          reports: { total: 0, items: [] },
+          balance: { balanceDue: 0, billsCount: 0 },
+        };
+      }
+      const [upcoming, next, reports, balance] = await Promise.all([
+        this.countUpcomingAppointments(tenantId, patientIds),
+        this.findNextAppointment(tenantId, patientIds),
+        this.findReadyReports(tenantId, patientIds),
+        this.computeBalance(tenantId, patientIds),
+      ]);
+      return { upcoming, next, reports, balance };
+    });
+  }
+
+  /** Sort key for the earliest upcoming appointment (nulls sort last). */
+  private apptTime(a: PatientPortalNextAppointment): number {
+    return a.appointmentAt ? new Date(a.appointmentAt).getTime() : Infinity;
+  }
+
+  /** Sort key for the most-recently published report (nulls sort last). */
+  private publishedTime(r: PatientPortalReport): number {
+    return r.publishedAt ? new Date(r.publishedAt).getTime() : 0;
+  }
 
   /**
    * Count the patient's upcoming (non-terminal, future-dated) appointments,

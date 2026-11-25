@@ -19,6 +19,11 @@ export interface PatientTransactionRow {
   totalPayment: number;
   transactionType: TransactionType;
   transactionTypeLabel: string;
+  /** The business (tenant) this transaction belongs to — the detail/PDF key for
+   *  cross-business aggregation (a patient enrolled in many labs sees them all). */
+  tenantId: string;
+  /** Display name of that business (lab). */
+  tenantName: string;
 }
 
 /** The order context shown in the transaction detail modal. */
@@ -34,6 +39,8 @@ export interface PatientTransactionOrderInfo {
   billStatus: BillStatus;
   billStatusLabel: string;
   branchName: string | null;
+  /** The business (lab) this order belongs to — shown in the detail modal. */
+  tenantName: string | null;
 }
 
 /** The payment facts shown in the transaction detail modal. */

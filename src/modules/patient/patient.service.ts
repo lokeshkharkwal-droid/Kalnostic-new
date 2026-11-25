@@ -384,13 +384,24 @@ export class PatientService {
       dto,
       ctx,
     );
-    return this.createWithAllocatedUmId(
+    const patient = await this.createWithAllocatedUmId(
       tenantId,
       dto,
       ctx,
       personLink,
       options,
     );
+    // Fire-and-forget: auto-provision the patient's portal login and email the
+    // temporary credentials. Handled by PatientOnboardingService
+    // (patient.created). Emitted post-commit and decoupled on purpose, so a
+    // login/email failure can never roll back (or duplicate) the registration.
+    void this.eventEmitter.emitAsync('patient.created', {
+      tenantId,
+      branchId: ctx.branchId ?? null,
+      patientId: patient.id,
+      actorId: ctx.actorId ?? null,
+    });
+    return patient;
   }
 
   /**
