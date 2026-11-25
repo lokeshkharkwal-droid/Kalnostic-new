@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { OrderStatus, PaymentEntryType, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentEntryType,
+  Prisma,
+  TransactionType,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReferralPanelAccessDeniedException } from '../../common/exceptions/referral-panel-access.exception';
 import { getReferralPanelId } from '../../prisma/tenant-context';
@@ -204,6 +209,14 @@ export class PaymentDetailsService {
           tenantId,
           branchId: order.branchId,
           paymentDate: paymentDate ? new Date(paymentDate) : null,
+          // What this payment was collected FOR (patient transaction page). A
+          // standalone collection on an appointment order is still APPOINTMENT;
+          // on a normal order it's a later BILL payment (vs. the inline ORDER
+          // payment stamped at order creation).
+          transactionType:
+            order.status === OrderStatus.APPOINTMENT
+              ? TransactionType.APPOINTMENT
+              : TransactionType.BILL,
         },
       });
       await this.recomputePaymentStatus(tx, tenantId, dto.orderId);

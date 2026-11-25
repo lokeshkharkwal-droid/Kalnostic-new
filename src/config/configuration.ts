@@ -42,6 +42,12 @@ export const configuration = () => ({
     // Default delivery attempts before a message is marked FAILED.
     maxRetry: parseInt(process.env.COMMUNICATION_MAX_RETRY ?? '3', 10),
   },
+  branding: {
+    // Absolute URL of the Kalnostics logo used in transactional emails (e.g. the
+    // patient-login credentials email). Optional: when unset the logo falls back
+    // to `${FRONTEND_URL}/logo.png` (the frontend serves the brand logo there).
+    logoUrl: process.env.BRAND_LOGO_URL,
+  },
   encryption: {
     // AES-256-GCM key (64 hex chars) for at-rest field encryption (e.g. Aadhaar).
     key: process.env.ENCRYPTION_KEY,
