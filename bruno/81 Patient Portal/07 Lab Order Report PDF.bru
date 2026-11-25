@@ -1,0 +1,26 @@
+meta {
+  name: 07 Lab Order Report PDF
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/lab-orders/{{patientLabOrderId}}/reports/{{patientLabReportId}}/pdf
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  One PUBLISHED report as a PDF (`application/pdf`, inline). The report must be
+  PUBLISHED and must sit on THIS order, and the order must be in the patient's
+  scope — a report id alone is never enough.
+
+  Take `reportId` from the order detail's `testRows`.
+
+  Errors: same as "06 Lab Order All Reports PDF"; an unpublished report id, or a
+  report that belongs to another order, is `404 PATIENT_REPORT_NOT_AVAILABLE`.
+}

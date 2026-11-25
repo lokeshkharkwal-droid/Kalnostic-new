@@ -8,8 +8,9 @@ import { PATIENT_ACCESS_TOKEN_TYPE } from '../constants/patient-auth.constant';
 /**
  * Patient-portal JWT strategy (`'jwt-patient'`). Shares `JWT_SECRET` but a
  * separate strategy name; the `type: 'patient'` check stops a business or
- * SiteAdmin token being accepted here — and, conversely, a patient token is
- * rejected by the global business `'jwt'` guard (CLAUDE.md §5 pattern). No DB
+ * SiteAdmin token being accepted here. The reverse is enforced in
+ * `JwtStrategy.validate`, which rejects `patient` / `patient_bootstrap` token
+ * types on the global business `'jwt'` guard. No DB
  * lookup: the token is self-contained. The validated payload becomes `req.user`.
  */
 @Injectable()

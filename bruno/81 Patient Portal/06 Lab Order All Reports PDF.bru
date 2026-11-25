@@ -1,0 +1,32 @@
+meta {
+  name: 06 Lab Order All Reports PDF
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/lab-orders/{{patientLabOrderId}}/reports.pdf
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  All of the order's PUBLISHED reports as one merged PDF (`application/pdf`, served
+  inline; binary, so no JSON envelope). Uses the branch's QR-scan report template
+  when one is configured.
+
+  Errors (JSON envelope):
+  - `404 PATIENT_LAB_ORDER_NOT_FOUND` — the order is not in the patient's scope
+  - `404 PATIENT_REPORT_NOT_AVAILABLE` — nothing is published yet
+  - `403 PATIENT_REPORT_NOT_AVAILABLE` — cancelled order, or the lab's rules withhold
+    the report (for example a referrer's credit restriction). The message is always
+    the neutral "Report not available. Please contact the lab." — the lab's private
+    figures are never returned.
+  - `503 PATIENT_REPORT_NOT_AVAILABLE` — the lab has no usable print template
+
+  The client must fetch this with the Authorization header (a plain link cannot).
+}

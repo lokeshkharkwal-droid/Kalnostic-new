@@ -1,0 +1,40 @@
+meta {
+  name: 05 Lab Order Detail
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/lab-orders/{{patientLabOrderId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+script:post-response {
+  const d = res.getBody() && res.getBody().data;
+  const row = d && Array.isArray(d.testRows) ? d.testRows.find((r) => r.reportId) : null;
+  if (row) bru.setEnvVar("patientLabReportId", row.reportId);
+}
+
+docs {
+  One lab order with its per-test report rows. The order must be a lab order of a
+  patient in the session's scope; every other case (not yours, not a lab order,
+  unknown id) is the same `404 PATIENT_LAB_ORDER_NOT_FOUND`.
+
+  Response `data`: everything in the list row, plus
+  - `orderTime`, `referringDoctorName` (or `null`), `billNo` (per-tenant bill id, or `null`)
+  - `testRows[]`: `{ reportId, testName, groupName, isPublished, publishedAt }`
+    - a panel expands into its member tests (`groupName` = the panel name),
+      including members whose report does not exist yet
+    - `reportId` is present ONLY for a published report on a non-cancelled order
+      (it is what the PDF routes take); an unpublished test is just
+      "awaiting publish" — its internal status is never exposed
+    - `publishedAt` can be `null` for a published report with no publish time
+  - `locale`: `{ timeZone, dateFormat, timeFormat }` — the business's display locale
+
+  Requires a patient JWT.
+}

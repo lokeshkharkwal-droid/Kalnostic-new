@@ -1,0 +1,29 @@
+meta {
+  name: 03 Viewable Patients
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/patient-portal/patients
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{patientAccessToken}}
+}
+
+docs {
+  The patients this session may view in the active lab: the logged-in person's own
+  record(s) first (`isSelf: true`, `relationship: "SELF"`), then the family members
+  linked to them (staff-managed `PatientFamilyLink`; a family member is a patient
+  row with no login of its own, so only the head can see them). Feeds the portal's
+  "Viewing" dropdown; every patient-portal list/detail/PDF read is limited to
+  exactly these patients.
+
+  Response `data`: `[{ patientId, name, relationship, isSelf }]`
+
+  Requires a patient JWT; on a temp-password session returns `403
+  PATIENT_PASSWORD_CHANGE_REQUIRED`.
+}
