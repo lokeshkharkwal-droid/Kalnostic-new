@@ -78,8 +78,12 @@ export const envValidationSchema = Joi.object({
   // this attempt fast rather than blocking the queue worker. Default 15s.
   EXCHANGE_TIMEOUT_MS: Joi.number().integer().min(1000).default(15000),
   // Origin of the business frontend — stamped as peer_server_url and used to
-  // build links inside message bodies.
+  // build links inside message bodies (and the patient-portal login URL in the
+  // auto-generated credentials email).
   FRONTEND_URL: Joi.string().uri().allow('').optional(),
+  // Absolute URL of the Kalnostics logo shown in transactional emails. Optional:
+  // falls back to `${FRONTEND_URL}/logo.png` when unset.
+  BRAND_LOGO_URL: Joi.string().uri().allow('').optional(),
   // Background communication queue worker. Enable on ONE instance per env.
   COMMUNICATION_WORKER_ENABLED: Joi.boolean().default(false),
   COMMUNICATION_WORKER_BATCH: Joi.number().integer().min(1).default(50),

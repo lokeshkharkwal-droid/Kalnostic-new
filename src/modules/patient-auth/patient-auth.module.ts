@@ -4,8 +4,10 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { SecurityModule } from '../security/security.module';
+import { CommunicationModule } from '../communication/communication.module';
 import { PatientAuthService } from './patient-auth.service';
 import { PatientCredentialService } from './patient-credential.service';
+import { PatientOnboardingService } from './patient-onboarding.service';
 import { PatientAuthController } from './patient-auth.controller';
 import { PatientCredentialController } from './patient-credential.controller';
 import { JwtPatientStrategy } from './strategies/jwt-patient.strategy';
@@ -22,6 +24,10 @@ import { JwtPatientStrategy } from './strategies/jwt-patient.strategy';
   imports: [
     PrismaModule,
     SecurityModule,
+    ConfigModule,
+    // Exchange-backed email pipeline used to deliver the credentials email when
+    // a patient's portal login is auto-provisioned on registration.
+    CommunicationModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -32,7 +38,16 @@ import { JwtPatientStrategy } from './strategies/jwt-patient.strategy';
     }),
   ],
   controllers: [PatientAuthController, PatientCredentialController],
-  providers: [PatientAuthService, PatientCredentialService, JwtPatientStrategy],
-  exports: [PatientAuthService, PatientCredentialService],
+  providers: [
+    PatientAuthService,
+    PatientCredentialService,
+    PatientOnboardingService,
+    JwtPatientStrategy,
+  ],
+  exports: [
+    PatientAuthService,
+    PatientCredentialService,
+    PatientOnboardingService,
+  ],
 })
 export class PatientAuthModule {}

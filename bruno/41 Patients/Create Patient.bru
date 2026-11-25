@@ -138,4 +138,29 @@ docs {
   
   `tenantId`/`branchId` are NEVER accepted in the body. A duplicate active
   `mobile` in the tenant → 409 `PATIENT_MOBILE_CONFLICT`.
+
+  ## Side effect — automatic patient-portal login
+
+  On a successful registration the server auto-provisions a **patient-portal
+  login** for the new patient (fire-and-forget, after the patient commits — it
+  never affects this response or rolls back the registration). It reuses the
+  patient-auth architecture: links/creates the shared `Person`, creates
+  `person_credentials` with the temporary password `Password@123` (bcrypt, forced
+  change on first login), and enrols the patient's business.
+
+  - **Idempotent** — a person who already has a login (e.g. already a patient at
+    another business) is only enrolled in this tenant; their password is never
+    changed and NO email is sent.
+  - When a NEW login is generated AND the patient has an `email`, a credentials
+    email (login URL `FRONTEND_URL/patient/login`, login id, temp password,
+    change-password reminder) is queued via the Exchange gateway
+    (`communication_logs`, worker-delivered + retried).
+  - No email on record → the login is still created; the email is skipped and the
+    reason logged. A patient with neither phone nor email gets no login (logged).
+  - Delivery requires the tenant to be registered with the Exchange and the
+    communication worker enabled; otherwise the email is logged for later retry.
+
+  Same behaviour applies to the quotation patient route and the Create-Order
+  inline patient (all funnel through this creation path). Existing patients and
+  their existing logins are unaffected.
 }
