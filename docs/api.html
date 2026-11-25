@@ -90,6 +90,11 @@
   <a href="#patient-switch-business">POST /patient-portal/auth/switch-business</a>
   <a href="#patient-home">GET /patient-portal/home</a>
   <a href="#patient-businesses">GET /patient-portal/businesses</a>
+  <a href="#patient-viewable">GET /patient-portal/patients</a>
+  <a href="#patient-lab-orders">GET /patient-portal/lab-orders</a>
+  <a href="#patient-lab-order-detail">GET /patient-portal/lab-orders/:orderId</a>
+  <a href="#patient-lab-order-reports-pdf">GET /patient-portal/lab-orders/:orderId/reports.pdf</a>
+  <a href="#patient-lab-order-report-pdf">GET /patient-portal/lab-orders/:orderId/reports/:reportId/pdf</a>
   <a href="#patient-change-password">POST /patient-portal/auth/change-password</a>
   <a href="#patient-me">GET /patient-portal/auth/me</a>
   <a href="#patient-logout">POST /patient-portal/auth/logout</a>
@@ -454,6 +459,11 @@ additionally enforces an <b>ownership rule</b> in the service.</div>
   <tr><td>POST /patient-portal/auth/switch-business</td><td>Patient JWT</td><td>self (enrolled tenants)</td></tr>
   <tr><td>GET /patient-portal/home</td><td>Patient JWT</td><td>self (own patient + tenant)</td></tr>
   <tr><td>GET /patient-portal/businesses</td><td>Patient JWT</td><td>self</td></tr>
+  <tr><td>GET /patient-portal/patients</td><td>Patient JWT</td><td>self + linked family members</td></tr>
+  <tr><td>GET /patient-portal/lab-orders</td><td>Patient JWT</td><td>self + linked family members (own tenant)</td></tr>
+  <tr><td>GET /patient-portal/lab-orders/:orderId</td><td>Patient JWT</td><td>self + linked family members</td></tr>
+  <tr><td>GET /patient-portal/lab-orders/:orderId/reports.pdf</td><td>Patient JWT</td><td>self + linked family members; PUBLISHED reports only</td></tr>
+  <tr><td>GET /patient-portal/lab-orders/:orderId/reports/:reportId/pdf</td><td>Patient JWT</td><td>self + linked family members; PUBLISHED report on that order only</td></tr>
   <tr><td>POST /patient-portal/auth/change-password</td><td>Patient JWT</td><td>self</td></tr>
   <tr><td>GET /patient-portal/auth/me</td><td>Patient JWT</td><td>self</td></tr>
   <tr><td>POST /patient-portal/auth/logout</td><td>Patient JWT</td><td>self</td></tr>
@@ -1035,6 +1045,84 @@ Credentials are enabled by staff (below); patients never self-register here.</p>
   <pre>{ "success": true, "data": [
   { "tenantId":"uuid","tenantName":"Flow Lab","tenantSlug":"flow-lab","shortName":null,"logoUrl":null }
 ], "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-viewable">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/patients</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>The patients this session may view in the active lab: the person's own record first, then linked family members (a family member is a patient row with no login, so only the head sees them). Feeds the "Viewing" dropdown. Every patient-portal list, detail and PDF read is limited to exactly these patients.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": [
+  { "patientId":"uuid","name":"Sahu Kumar","relationship":"SELF","isSelf":true },
+  { "patientId":"uuid","name":"Shree Kumar","relationship":"DAUGHTER","isSelf":false }
+], "meta": { "timestamp": "…" } }</pre>
+</div>
+
+<div class="ep" id="patient-lab-orders">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/lab-orders</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>The patient's lab orders (orders with a lab/diagnostics section), newest first, across every branch of the active lab. Read-only. Scope = the token's tenant + the person's own record and linked family members; drafts, quotes and appointments never appear, cancelled orders do.</p>
+  <p class="lbl">Query (all optional)</p>
+  <pre>page (default 1) · limit (default 10, max 100)
+patientId  narrow to ONE viewable patient; only ever intersected with the scope — an id outside it returns an empty list
+search     order number, external order id, or a test/panel name
+dateFrom / dateTo   inclusive ISO dates on the order date</pre>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": [
+  { "orderId":"uuid","orderNo":"ORD2026/11/16/0006","orderDate":"2026-11-16",
+    "patientId":"uuid","patientName":"Amit Sharma",
+    "branchName":"Main Branch","branchCity":"Pune",
+    "tests":["Complete Urine Examination","BUN, Body Fluid"],
+    "status":"PARTIALLY_COMPLETE","reportStatus":"PARTIALLY_PUBLISHED",
+    "publishedReportCount":2,"canDownloadReports":true,"billStatus":"PAID" }
+], "meta": { "total":13,"page":1,"limit":10,"totalPages":2,"timestamp":"…" } }</pre>
+  <p><code>status</code> is testing progress, not publish state: <code>PENDING</code> (no test has reached reporting) · <code>IN_PROGRESS</code> · <code>PARTIALLY_COMPLETE</code> · <code>COMPLETE</code> (every test line is approved or published; a line with no report yet counts as unfinished) · <code>CANCELLED</code>. <code>reportStatus</code>: <code>NOT_PUBLISHED</code> · <code>PARTIALLY_PUBLISHED</code> · <code>PUBLISHED</code>. <code>orderNo</code> is the external order id, else the order code. <code>403 PATIENT_PASSWORD_CHANGE_REQUIRED</code> on a temp-password session; a staff token gets <code>401</code>.</p>
+</div>
+
+<div class="ep" id="patient-lab-order-detail">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/lab-orders/:orderId</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>One lab order with per-test report rows. Any order that is not a lab order of a patient in the scope (not yours, unknown id) is the same <code>404 PATIENT_LAB_ORDER_NOT_FOUND</code>.</p>
+  <p class="lbl">200 response</p>
+  <pre>{ "success": true, "data": {
+  "…every list field…",
+  "orderTime":"10:30","referringDoctorName":null,"billNo":"DIG-720",
+  "testRows": [
+    { "reportId":"uuid","testName":"Complete Urine Examination","groupName":null,
+      "isPublished":true,"publishedAt":"2026-11-16T19:49:09.890Z" },
+    { "reportId":null,"testName":"BUN, Body Fluid","groupName":null,
+      "isPublished":false,"publishedAt":null }
+  ],
+  "locale": { "timeZone":"Asia/Kolkata","dateFormat":"DD/MM/YYYY","timeFormat":"12h" }
+}, "meta": { "timestamp": "…" } }</pre>
+  <p>A panel expands into its member tests (<code>groupName</code> = the panel), including members with no report yet. <code>reportId</code> is present only for a published report on a non-cancelled order; an unpublished test's internal status is never exposed. <code>publishedAt</code> can be <code>null</code> on a published report.</p>
+</div>
+
+<div class="ep" id="patient-lab-order-reports-pdf">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/lab-orders/:orderId/reports.pdf</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>All of the order's <b>PUBLISHED</b> reports as one merged PDF (<code>application/pdf</code>, inline, binary — no JSON envelope). Fetch it with the Authorization header (a plain link cannot send it).</p>
+  <p class="lbl">Errors</p>
+  <pre>404 PATIENT_LAB_ORDER_NOT_FOUND     order not in the patient's scope
+404 PATIENT_REPORT_NOT_AVAILABLE    nothing published yet
+403 PATIENT_REPORT_NOT_AVAILABLE    cancelled order, or withheld by the lab's rules (e.g. a referrer's credit restriction)
+503 PATIENT_REPORT_NOT_AVAILABLE    the lab has no usable print template
+(message is always "Report not available. Please contact the lab." — the lab's private figures are never returned)</pre>
+</div>
+
+<div class="ep" id="patient-lab-order-report-pdf">
+  <div><span class="m get">GET</span><span class="path">/api/v1/patient-portal/lab-orders/:orderId/reports/:reportId/pdf</span></div>
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>One <b>PUBLISHED</b> report as a PDF. The report must be published and must sit on this order, and the order must be in the patient's scope — a report id alone is never enough. Take <code>reportId</code> from the order detail's <code>testRows</code>. Errors as above; an unpublished report id, or one from another order, is <code>404 PATIENT_REPORT_NOT_AVAILABLE</code>.</p>
+</div>
+
+  <div class="tags"><span class="tag biz">patient JWT</span></div>
+  <p>The bill as a PDF (<code>application/pdf</code>, inline, binary — no JSON envelope). It goes through the staff print path, so the lab's "print bill only for paid billings" branch setting applies. Fetch it with the Authorization header (a plain link cannot send it).</p>
+  <p class="lbl">Errors</p>
+  <pre>404 PATIENT_BILL_NOT_FOUND         not a bill in the patient's scope
+403 PATIENT_BILL_NOT_AVAILABLE     the lab only allows paid bills to be printed
+503 PATIENT_BILL_NOT_AVAILABLE     the lab has no usable bill template
+(message is always "Bill not available. Please contact the lab.")</pre>
 </div>
 
 <div class="ep" id="patient-change-password">
