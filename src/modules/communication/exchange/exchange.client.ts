@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as http from 'node:http';
+import * as https from 'node:https';
 
 /**
  * Exchange messaging gateway client — a faithful port of the legacy Kishan
@@ -300,6 +302,180 @@ export class ExchangeClient {
   }
 
   /**
+   * List the messages the Exchange holds for one tenant and channel
+   * (`GET /notifications/items`) — the data behind the legacy WhatsApp / SMS
+   * reports (`BusinessController::actionWhatsAppReport` / `actionSmsReport`).
+   *
+   * The Exchange reads its filters from a JSON body on this GET and matches rows
+   * on the INNER `data.data.peer_tenant_id` (the outer one only routes/authenticates;
+   * without the inner one it falls back to an empty scope). The page size is fixed
+   * by the Exchange (`per_page` in the response).
+   * @param peer tenant context; `peer.tenantId` is the integer `exchangeTenantId`
+   * @param filters channel, page, inclusive local-time period and optional status
+   * @returns the parsed response, or null when unconfigured/errored
+   */
+  async listNotificationItems(
+    peer: ExchangePeer,
+    filters: ExchangeNotificationItemsFilter,
+  ): Promise<ExchangeNotificationItemsResponse | null> {
+    const peerTenantId = Number(peer.tenantId);
+    const inner: Record<string, unknown> = {
+      peer_tenant_id: peerTenantId,
+      context_type: filters.contextType,
+      page: filters.page,
+      period_from: filters.periodFrom,
+      period_to: filters.periodTo,
+      date_range: filters.dateRange,
+    };
+    if (filters.status) inner.status = filters.status;
+    return this.reportRequest<ExchangeNotificationItemsResponse>(
+      '/notifications/items',
+      peer,
+      inner,
+    );
+  }
+
+  /**
+   * Fetch one message the Exchange holds (`GET /notifications/itemDetail`) — the
+   * legacy "Message Detail" pop-up (`BusinessController::actionNotificationDetail`).
+   * @param peer tenant context; `peer.tenantId` is the integer `exchangeTenantId`
+   * @param id the Exchange notification id
+   * @returns the parsed response, or null when unconfigured/errored
+   */
+  async getNotificationItemDetail(
+    peer: ExchangePeer,
+    id: number,
+  ): Promise<ExchangeNotificationItemDetailResponse | null> {
+    return this.reportRequest<ExchangeNotificationItemDetailResponse>(
+      '/notifications/itemDetail',
+      peer,
+      { peer_tenant_id: Number(peer.tenantId), id },
+    );
+  }
+
+  /**
+   * Did a report call (`/notifications/items*`) succeed? The Exchange answers
+   * `s` (older builds: `status`) === '200'.
+   * @param resp a report response (or null)
+   */
+  isReportOk(resp: ExchangeReportResponse | null): boolean {
+    return !!resp && String(resp.s ?? resp.status) === '200';
+  }
+
+  /**
+   * Shared envelope for the report calls — the legacy `_exchangeApi` shape:
+   * `{ data: { key, secret, peer_tenant_id, peer_branch_id: 0, …, data: <inner> } }`
+   * sent as the body of a GET, with the same credentials repeated as headers.
+   * @param path resource path under the gateway base (e.g. `/notifications/items`)
+   * @param peer tenant context
+   * @param inner the filter object the Exchange actually matches on
+   */
+  private async reportRequest<T>(
+    path: string,
+    peer: ExchangePeer,
+    inner: Record<string, unknown>,
+  ): Promise<T | null> {
+    const url = this.config.get<string>('exchange.url');
+    const key = this.config.get<string>('exchange.key');
+    const secret = this.config.get<string>('exchange.secret');
+    if (!url || !key || !secret) return null;
+
+    const envelope = {
+      data: {
+        key,
+        secret,
+        peer_tenant_id: Number(peer.tenantId),
+        peer_branch_id: 0,
+        peer_tenant_info: peer.tenantInfo ?? '',
+        peer_server_url:
+          peer.serverUrl ??
+          this.config.get<string>('exchange.frontendUrl') ??
+          '',
+        peer_branch_info: '',
+        data: inner,
+      },
+    };
+    return this.requestWithBody<T>(
+      'GET',
+      `${this.baseUrl(url)}${path}`,
+      peer.tenantId,
+      envelope,
+    );
+  }
+
+  /**
+   * Transport for calls that need a JSON body on a GET. `fetch` refuses a body on
+   * GET/HEAD, so this goes through `node:http(s)` directly. Sends the signed
+   * headers, bounds the attempt by `EXCHANGE_TIMEOUT_MS`, and never throws
+   * (returns null on any transport/parse error) so callers degrade gracefully.
+   * @param method HTTP method
+   * @param endpoint fully-built URL
+   * @param peerTenantId the integer tenant id, stamped as the `peer_tenant_id` header
+   * @param body JSON body
+   */
+  private requestWithBody<T>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    peerTenantId: string,
+    body: unknown,
+  ): Promise<T | null> {
+    const key = this.config.get<string>('exchange.key') ?? '';
+    const secret = this.config.get<string>('exchange.secret') ?? '';
+    const timeoutMs = this.config.get<number>('exchange.timeoutMs', 15000);
+    let target: URL;
+    try {
+      target = new URL(endpoint);
+    } catch {
+      this.logger.warn(`Exchange ${method} skipped: invalid URL ${endpoint}`);
+      return Promise.resolve(null);
+    }
+    const payload = JSON.stringify(body);
+    const transport = target.protocol === 'https:' ? https : http;
+
+    return new Promise<T | null>((resolve) => {
+      let settled = false;
+      const finish = (value: T | null): void => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const req = transport.request(
+        target,
+        {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload),
+            key,
+            secret,
+            peer_tenant_id: peerTenantId,
+          },
+          signal: AbortSignal.timeout(timeoutMs),
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            try {
+              finish(JSON.parse(Buffer.concat(chunks).toString('utf8')) as T);
+            } catch {
+              finish(null);
+            }
+          });
+          res.on('error', () => finish(null));
+        },
+      );
+      req.on('error', (err: Error) => {
+        this.logger.warn(
+          `Exchange ${method} failed (${target.origin}${target.pathname}): ${err.message}`,
+        );
+        finish(null);
+      });
+      req.end(payload);
+    });
+  }
+
+  /**
    * Shared transport for the `/clients*` endpoints: sends the signed headers,
    * bounds the attempt by `EXCHANGE_TIMEOUT_MS`, and never throws (returns null
    * on any transport/parse error) so callers degrade gracefully.
@@ -359,6 +535,67 @@ export interface ExchangeClientResponse {
   m?: string;
   data?: { original?: Record<string, unknown> } & Record<string, unknown>;
   [key: string]: unknown;
+}
+
+/** Filters for `GET /notifications/items` (the legacy WhatsApp / SMS report). */
+export interface ExchangeNotificationItemsFilter {
+  /** Channel the Exchange keys rows by (`context_type`). */
+  contextType: 'whatsapp' | 'sms';
+  /** 1-based page; the page size is fixed by the Exchange. */
+  page: number;
+  /** Inclusive lower bound, gateway-local `YYYY-MM-DD HH:mm:ss`. */
+  periodFrom: string;
+  /** Inclusive upper bound, gateway-local `YYYY-MM-DD HH:mm:ss`. */
+  periodTo: string;
+  /** Human range as the legacy screen sent it (`1 Jan 2026 - 23 Nov 2026`). */
+  dateRange: string;
+  /** Provider delivery status (lower-case), omitted for "All". */
+  status?: string;
+}
+
+/** One message row as the Exchange returns it (loosely typed upstream). */
+export interface ExchangeNotificationItem {
+  id?: number | string | null;
+  /** Recipient (mobile number) on legacy rows. */
+  context_id?: string | number | null;
+  context_type?: string | null;
+  /** Gateway acceptance: 100 Pending / 200 Success / 300 Retry / 400 Error. */
+  n_status?: number | string | null;
+  /** Provider delivery status (delivered / read / sent / pending / failed / undelivered / NOT-SENT …). */
+  status?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  /** JSON string (or object) with `template_id`, `msg`, and SMS `response.part`. */
+  response?: string | Record<string, unknown> | null;
+  peer_tenant_id?: number | string | null;
+  [key: string]: unknown;
+}
+
+/** Common status fields of the report responses. */
+export interface ExchangeReportResponse {
+  s?: string | number;
+  status?: string | number;
+  m?: string;
+  [key: string]: unknown;
+}
+
+/** Laravel-style page returned by `GET /notifications/items`. */
+export interface ExchangeNotificationItemsResponse extends ExchangeReportResponse {
+  data?: {
+    data?: ExchangeNotificationItem[];
+    total?: number | string;
+    per_page?: number | string;
+    current_page?: number | string;
+    contextPartCount?: { sms_count?: number | string | null } | null;
+    [key: string]: unknown;
+  } | null;
+  /** SMS only: parts summed over the filtered set. */
+  contextPartCount?: { sms_count?: number | string | null } | null;
+}
+
+/** Response of `GET /notifications/itemDetail`. */
+export interface ExchangeNotificationItemDetailResponse extends ExchangeReportResponse {
+  data?: ExchangeNotificationItem | null;
 }
 
 /** `/clients` registration parameters (the inner `data` object of the envelope). */

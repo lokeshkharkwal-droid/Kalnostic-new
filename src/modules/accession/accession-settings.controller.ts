@@ -33,6 +33,32 @@ export class AccessionSettingsController {
     return this.settings.getForBranch(tenantId, profile.branchId ?? '');
   }
 
+  /**
+   * The active branch's accession settings **as they apply** — read by the
+   * operational screens (In-House / Referral / Outsource worklists, Sample
+   * Search, Order Overview) for the Master Data lists (tube types, sample
+   * conditions, rejection/repeat reasons, discard methods, logistics types)
+   * and acceptance rules.
+   *
+   * Login-only on purpose (no `@RequirePermission`; the class-level
+   * `PermissionGuard` is opt-in): the `view/update accession settings`
+   * permissions control who may open and change the Accession Settings PAGE,
+   * never whether the saved settings take effect. Gating this read made every
+   * screen fall back to the defaults / empty lists for a user without the view
+   * permission, although nothing had changed in the database.
+   *
+   * Same effective object as the gated `GET` (stored row merged over the
+   * module defaults, plus the tenant barcode counters). Tenant + branch come
+   * only from the JWT; read-only.
+   */
+  @Get('effective')
+  getEffective(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.settings.getForBranch(tenantId, profile.branchId ?? '');
+  }
+
   /** Save (upsert) the active branch's accession settings. */
   @Put()
   @RequirePermission(PERMISSION_KEYS.ACC_SETTINGS_UPDATE)

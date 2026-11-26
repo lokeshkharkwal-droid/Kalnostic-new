@@ -1,0 +1,49 @@
+meta {
+  name: 54 Get Effective Accession Settings
+  type: http
+  seq: 54
+}
+
+get {
+  url: {{baseUrl}}/accession/settings/effective
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns the effective Accession Module Settings (same shape as 34)", function () {
+    const d = res.getBody().data;
+    expect(d).to.have.property("MasterData_TubeTypes");
+    expect(d).to.have.property("MasterData_RejectionReasons");
+    expect(d).to.have.property("MasterData_LogisticsTypes");
+    expect(d).to.have.property("SampleBarcodeSettings_Preview");
+    expect(d).to.have.property("Accession_MaximumTimeToAcceptSampleMinutes");
+  });
+}
+
+docs {
+  The active branch's Accession Module Settings **as they apply** — the read
+  the operational screens use (In-House / Internal Referral / External
+  Referral / Outsource worklists, Sample Search, Order Overview) for the Master
+  Data lists (tube types, sample conditions, repeat / rejection reasons,
+  discard methods, logistics types) and the acceptance rules.
+
+  Login-only (no settings permission needed). The
+  `accession:accession_settings__view_accession_settings` /
+  `__update_accession_settings` permissions control who may open and change
+  the Accession Settings page (`GET`/`PUT /accession/settings`, requests 34/35),
+  never whether the saved settings take effect — so a user without them still
+  gets the real saved values here, not the defaults.
+
+  Same effective object as request 34: the branch's stored settings merged over
+  the module defaults, plus the tenant-wide barcode counters/previews. Read-only.
+  Tenant + branch come from the JWT / active profile. A caller with no active
+  branch gets 404 (`BRANCH_NOT_FOUND`), like request 34.
+}
