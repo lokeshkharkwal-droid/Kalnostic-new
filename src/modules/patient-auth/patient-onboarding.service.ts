@@ -211,8 +211,8 @@ export class PatientOnboardingService {
     tenantId: string,
     patientId: string,
   ): Promise<PatientEmailContact> {
-    const patient = await this.prisma.runWithTenant(tenantId, () =>
-      this.prisma.patient.findFirst({
+    const patient = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.patient.findFirst({
         where: { id: patientId, tenantId, deletedAt: null },
         select: {
           email: true,
