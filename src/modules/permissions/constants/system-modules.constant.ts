@@ -59,7 +59,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
   // still enablement-only: their FE pages are placeholders (Coming Soon), so they
   // stay out of the permission catalogue until a real page ships.
   { key: 'registration', label: 'Registration', order: 10 },
-  { key: 'lab_operations', label: 'Laboratory', order: 11 },
+  { key: 'lab_operations', label: 'Reporting', order: 11 },
   {
     key: 'patient_management',
     label: 'Patient Management',

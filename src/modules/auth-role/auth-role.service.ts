@@ -257,7 +257,7 @@ export class AuthRoleService {
   }
 
   // ── Global (SiteAdmin) role management ───────────────────────────────────────
-  // Operate on the shared catalogue (tenant_id NULL): the 24 seeded built-ins
+  // Operate on the shared catalogue (tenant_id NULL): the 27 seeded built-ins
   // (isSystem) plus SiteAdmin-created global roles. These run GUC-less on the base
   // client — a SiteAdmin connection has no tenant context, and the auth_roles RLS
   // permits NULL-tenant reads/writes then (mirrors DepartmentService.createTemplate).

@@ -7,6 +7,7 @@ describe('role → module assignment access', () => {
   // real limiter, enforced elsewhere).
   it.each([
     'b2b_referring_panel',
+    'typist',
     'patient',
     'receptionist',
     'doctor',

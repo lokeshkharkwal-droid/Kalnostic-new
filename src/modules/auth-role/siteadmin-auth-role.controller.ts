@@ -21,7 +21,7 @@ import { Audit } from '../../common/decorators/audit.decorator';
 
 /**
  * SiteAdmin management of the **global** role catalogue (`/siteadmin/roles`) —
- * the roles shared by every tenant (`tenant_id = null`): the 24 seeded built-ins
+ * the roles shared by every tenant (`tenant_id = null`): the 27 seeded built-ins
  * plus SiteAdmin-created global roles. Distinct from the tenant-scoped `/roles`
  * (business JWT) where a tenant manages only its own custom roles.
  *

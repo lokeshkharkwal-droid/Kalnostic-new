@@ -101,6 +101,7 @@ JWT; `branchId` in the body is validated against your tenant, never trusted blin
 | `radiology_assistant` | RADIOLOGY, **COMBINED** | radiology |
 | `nursing_staff` | OPD, IPD, **COMBINED** | opd, ipd |
 | `nursing_incharge` | OPD, IPD, **COMBINED** | opd, ipd |
+| `typist` | DIAGNOSTIC, RADIOLOGY, BLOOD_BANK, TECHNICIAN, **COMBINED** | lab_operations, registration (whole modules by default) |
 
 **Tenant-level roles** (`business_admin`, `administrator`, `patient`) have
 `branchId = NULL` and **must not** appear in `branches[]` — they apply to the
@@ -112,7 +113,7 @@ whole tenant.
 `consultant_doctor`, `reporting_doctor`, `phlebotomist`, `marketing_executive`,
 `marketing_manager`, `inventory_manager`, `chemist`, `chemist_assistant`,
 `finance_manager`, `finance_assistant`, `logistics_executive`, `opd_assistant`,
-`radiology_assistant`, `nursing_staff`, `nursing_incharge`.
+`radiology_assistant`, `nursing_staff`, `nursing_incharge`, `typist`.
 
 > Per the matrix, `lab_technician`, `doctor`, and `receptionist` were **not**
 > listed for `COMBINED` — but since the branch-type restriction is now lifted,

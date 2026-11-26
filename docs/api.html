@@ -350,7 +350,7 @@ Pagination metadata is returned in <code>meta</code>.</p>
   <tr><td>SiteAdminRole</td><td>CONTENT_ADMIN, OPERATIONS_ADMIN, FULL_ADMIN, SUPER_OWNER (cumulative)</td></tr>
   <tr><td>Gender</td><td>MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY</td></tr>
   <tr><td>BloodGroup</td><td>A_POS, A_NEG, B_POS, B_NEG, O_POS, O_NEG, AB_POS, AB_NEG, UNKNOWN</td></tr>
-  <tr><td>Profile keys</td><td>business_admin, branch_admin, doctor, lab_technician, receptionist, patient</td></tr>
+  <tr><td>Profile keys</td><td>business_admin, branch_admin, doctor, lab_technician, receptionist, patient (+ the User Management v2.0 roles, incl. <code>typist</code>; full list: <code>GET /users/manage/roles</code>)</td></tr>
 </table>
 
 <h2 id="profiles">Business profiles &amp; branches</h2>
@@ -364,6 +364,7 @@ profiles have <code>branch_id = NULL</code>.</p>
   <tr><td><code>doctor</code></td><td>Doctor</td><td>Branch</td><td>OPD, IPD, DIAGNOSTIC</td></tr>
   <tr><td><code>lab_technician</code></td><td>Lab Technician</td><td>Branch</td><td>DIAGNOSTIC, IPD</td></tr>
   <tr><td><code>receptionist</code></td><td>Receptionist</td><td>Branch</td><td>DIAGNOSTIC, OPD, IPD, PHARMACY, FRANCHISE</td></tr>
+  <tr><td><code>typist</code></td><td>Typist</td><td>Branch</td><td>DIAGNOSTIC, RADIOLOGY, BLOOD_BANK, COMBINED, TECHNICIAN (default modules: lab_operations + registration)</td></tr>
   <tr><td><code>patient</code></td><td>Patient</td><td>Tenant-level</td><td>— (no branch)</td></tr>
 </table>
 
@@ -3290,7 +3291,7 @@ tagged with the old name — there is no cascade or reference-count warning.</di
   defaults <code>ACTIVE</code>). <code>content</code> is rich-text HTML (Tiptap editor on the
   frontend), sanitized on render, not on write. <span class="pill">409
   OVERALL_RESULT_TEMPLATE_NAME_CONFLICT</span> if <code>name</code> already exists (active rows,
-  this tenant). Requires the Technician/Laboratory module's write permission — a technician-only
+  this tenant). Requires the Reporting (lab_operations) module's write permission — a technician-only
   token is rejected with <span class="pill">403</span>.</p>
 </div>
 
@@ -3366,7 +3367,7 @@ tagged with the old name — there is no cascade or reference-count warning.</di
   the rules they printed with before.</p>
   <p>Picking a Highlight style other than the parameter's own (Bold and Red when the parameter has no style) needs the
   <b>Change abnormal style</b> permission (<code>lab_operations:reporting__change_abnormal_style</code>, granted by default
-  to every role that has the Laboratory module); re-saving a style already saved on that row does not. Without the permission →
+  to every role that has the Reporting (lab_operations) module); re-saving a style already saved on that row does not. Without the permission →
   <span class="pill">403 ABNORMAL_STYLE_CHANGE_NOT_ALLOWED</span> and nothing is written. A Re-run or a return resets the
   choice to <code>DEFAULT</code>. A value is a comparable number when it is an optional <code>+</code>/<code>-</code>, digits and
   at most one decimal point (<code>135</code>, <code>-2.1</code>, <code>.5</code>); <code>&lt;5</code>, <code>1,200</code>,

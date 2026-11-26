@@ -165,7 +165,7 @@ Three constant files in `src/modules/permissions/constants/`:
 
 - `PROFILE_REGISTRY` — the predefined role keys (6 original + v2.0 roles such as
   `junior_lab_technician`, `consultant_doctor`, `phlebotomist`, `chemist`,
-  `finance_manager`, …).
+  `finance_manager`, `typist`, …).
 - `STAFF_ROLE_KEYS` — everything except `patient`; what the role inputs validate against.
 - `PROFILE_BRANCH_MATRIX` — **which branch types each role is valid at.** Empty array
   = tenant-level (no branch), e.g. `business_admin`, `administrator`. Example:

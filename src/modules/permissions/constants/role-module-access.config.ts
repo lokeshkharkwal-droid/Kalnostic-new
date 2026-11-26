@@ -78,6 +78,9 @@ export const ROLE_BASELINE_MODULES: Record<ProfileKey, string[]> = {
   radiology_assistant: [],
   nursing_staff: [],
   nursing_incharge: [],
+  // Typist — types lab-report results; defaults to the whole Laboratory and
+  // Registration modules (admins narrow it per branch/user via overrides).
+  typist: ['lab_operations', 'registration'],
   // B2B Referral Panel login — the three modules whose screens the panel may see.
   // The baseline is narrowed to five navigation keys in module-permissions.constant.ts.
   b2b_referring_panel: ['registration', 'finance', 'lab_operations'],

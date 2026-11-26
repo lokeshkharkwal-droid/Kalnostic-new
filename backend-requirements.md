@@ -658,12 +658,12 @@ search + classification/status filters and projected columns.
 pharmacy, opd, ipd, finance, phlebotomist, assistant, operation` + consoles
 `business_admin, branch_admin`.
 
-`GET /users/manage/roles` → 21 role keys including `business_admin, administrator,
+`GET /users/manage/roles` → 26 staff role keys including `business_admin, administrator,
 branch_admin, junior_lab_technician, senior_lab_technician, consultant_doctor,
 reporting_doctor, phlebotomist, marketing_executive, marketing_manager,
 inventory_manager, chemist, chemist_assistant, finance_manager, finance_assistant,
 logistics_executive, opd_assistant, radiology_assistant, nursing_staff,
-nursing_incharge`.
+nursing_incharge, typist, b2b_referring_panel`.
 
 Tenant-level roles (`business_admin, administrator, patient`) have `branchId = null`;
 branch-level roles must match the branch's type per `PROFILE_BRANCH_MATRIX`.

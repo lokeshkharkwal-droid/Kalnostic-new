@@ -39,6 +39,7 @@ export const PROFILE_REGISTRY = [
   'radiology_assistant',
   'nursing_staff',
   'nursing_incharge',
+  'typist',
   // ── B2B Referral Panel login ──
   'b2b_referring_panel',
 ] as const;
@@ -80,6 +81,7 @@ export const PROFILE_LABELS: Record<ProfileKey, string> = {
   radiology_assistant: 'Radiology Assistant',
   nursing_staff: 'Nursing Staff',
   nursing_incharge: 'Nursing Incharge',
+  typist: 'Typist',
   b2b_referring_panel: 'B2B Referring Panel',
 };
 
@@ -205,6 +207,16 @@ export const PROFILE_BRANCH_MATRIX: Record<ProfileKey, BranchType[]> = {
   radiology_assistant: [BranchType.RADIOLOGY, BranchType.COMBINED],
   nursing_staff: [BranchType.OPD, BranchType.IPD, BranchType.COMBINED],
   nursing_incharge: [BranchType.OPD, BranchType.IPD, BranchType.COMBINED],
+  // Typist — types lab-report results; offered on the lab branch types (as in
+  // the legacy system: Lab/Diagnostic, Radiology, Combined, Blood Bank) plus the
+  // Technician branch where results are entered.
+  typist: [
+    BranchType.DIAGNOSTIC,
+    BranchType.RADIOLOGY,
+    BranchType.BLOOD_BANK,
+    BranchType.COMBINED,
+    BranchType.TECHNICIAN,
+  ],
   // B2B Referral Panel login — branch-level; allowed on the broad set of branch
   // types a referral panel can attach to (same list as branch_admin).
   b2b_referring_panel: [

@@ -19,6 +19,7 @@ const ALL_BRANCH_MODULES = [
   'registration',
   'accession',
   'finance',
+  'lab_operations',
 ];
 
 /** Every catalogue key of a module, as allowed overrides. */
@@ -42,17 +43,19 @@ function makeService(opts: {
   branchRoleOverrides?: { permissionKey: string; allowed: boolean }[];
   hasProfile?: boolean;
   defaultModuleId?: string | null;
+  role?: { key: string; name: string };
 }) {
+  const role = opts.role ?? { key: 'branch_admin', name: 'Branch Admin' };
   const profile = {
     id: 'ubp1',
     tenantId: TENANT,
     personId: PERSON,
     branchId: BRANCH,
-    authRoleId: 'role-branch-admin',
+    authRoleId: `role-${role.key}`,
     authRole: {
-      id: 'role-branch-admin',
-      key: 'branch_admin',
-      name: 'Branch Admin',
+      id: `role-${role.key}`,
+      key: role.key,
+      name: role.name,
     },
     enabledModules: opts.enabledModules,
     defaultModuleId: opts.defaultModuleId ?? null,
@@ -178,6 +181,38 @@ describe('UsersService permissions — assigned modules are the ceiling', () => 
       // branch_admin's template is ['branch_admin'].
       expect(moduleKeysOf(res)).toEqual(['branch_admin']);
     });
+    it('typist with no modules assigned gets the whole Laboratory + Registration modules', async () => {
+      const { service } = makeService({
+        enabledModules: [],
+        role: { key: 'typist', name: 'Typist' },
+      });
+
+      const res = await service.getMyPermissions(TENANT, PERSON, BRANCH);
+
+      expect(moduleKeysOf(res)).toEqual(['lab_operations', 'registration']);
+      const expected = MODULE_PERMISSION_CATALOG.filter(
+        (e) =>
+          e.moduleKey === 'lab_operations' || e.moduleKey === 'registration',
+      ).map((e) => e.permissionKey);
+      expect([...res.allowed].sort()).toEqual([...expected].sort());
+    });
+
+    it('typist still honours a branch-role deny override (e.g. Approve off)', async () => {
+      const approve = 'lab_operations:reporting__access_to_result_done';
+      const { service } = makeService({
+        enabledModules: ['lab_operations', 'registration'],
+        role: { key: 'typist', name: 'Typist' },
+        branchRoleOverrides: [{ permissionKey: approve, allowed: false }],
+      });
+
+      const res = await service.getMyPermissions(TENANT, PERSON, BRANCH);
+
+      expect(res.allowed).not.toContain(approve);
+      expect(res.allowed).toContain(
+        'lab_operations:reporting__access_to_enter_result',
+      );
+    });
+
     describe('defaultModule (where the app opens after login)', () => {
       it('returns the Default Module saved on the assignment', async () => {
         const { service } = makeService({

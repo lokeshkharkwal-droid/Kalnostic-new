@@ -110,7 +110,7 @@ environment and no manual edits:
   profile permissions, list roles (built-in catalogue), list modules
 - **Roles** (`/roles`): list (system + tenant custom), create / get / update /
   delete a tenant **custom** role. Roles are a first-class entity (`AuthRole`):
-  the 24 built-in **system** roles are seeded and have immutable `name`/`key`
+  the 27 built-in **system** roles are seeded and have immutable `name`/`key`
   (only `description`/`isActive` are editable); tenants define their own custom
   roles here. `roleKey`/`profileKey` in other requests resolve to one of these.
 - **Patients** (`/patients`): list, get (with medical histories), create (with
@@ -175,7 +175,8 @@ environment and no manual edits:
   reporting_doctor, phlebotomist, marketing_executive, marketing_manager,
   inventory_manager, chemist, chemist_assistant, finance_manager,
   finance_assistant, logistics_executive, opd_assistant, radiology_assistant,
-  nursing_staff, nursing_incharge. Tenants may also define **custom** role keys
+  nursing_staff, nursing_incharge, typist; B2B login — b2b_referring_panel.
+  Tenants may also define **custom** role keys
   via `/roles` (auto-generated slug of the role name). Any request taking a
   `roleKey`/`profileKey` accepts either; an unknown key → 404 ROLE_NOT_FOUND.
 - System modules (`moduleKey`): accession, inventory, sales, finance,
