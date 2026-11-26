@@ -190,9 +190,13 @@ export class ExchangeRegistrationService {
 
   /**
    * Load a tenant and build the Exchange peer context from its `exchangeTenantId`.
+   * Public so the messaging reports scope their Exchange queries to the caller's
+   * own tenant the same way registration does.
    * @param tenantId the tenant's UUID
+   * @throws NotFoundException when the tenant does not exist
+   * @throws ExchangeTenantIdMissingException when it has no `exchangeTenantId`
    */
-  private async resolvePeer(
+  async resolvePeer(
     tenantId: string,
   ): Promise<{ exchangeTenantId: number; peer: ExchangePeer }> {
     const tenant = await this.prisma.tenant.findFirst({

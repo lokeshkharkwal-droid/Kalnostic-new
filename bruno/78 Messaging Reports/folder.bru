@@ -1,0 +1,45 @@
+meta {
+  name: 78 Messaging Reports
+  seq: 78
+}
+
+docs {
+  # Messaging Reports
+
+  Business Admin › REPORT › **WhatsApp Report** / **SMS Report**. Every WhatsApp and
+  SMS the tenant sent, with the provider's delivery status, read live from the
+  external **Exchange** messaging gateway. This is the same data source as the legacy
+  `business.kalnostic.com/subscription/business/whatsAppReport` / `smsReport` screens.
+
+  In the app:
+  - `/business-admin/report/whatsapp-report`
+  - `/business-admin/report/sms-report`
+
+  How it works:
+  - The tenant is mapped to its integer `exchangeTenantId`, and every call is scoped
+    to that id. A tenant without one gets 409 `EXCHANGE_TENANT_ID_MISSING`.
+  - The backend calls `GET {EXCHANGE_API_URL}/notifications/items` and
+    `/notifications/itemDetail` with the legacy JSON-body-on-GET envelope.
+  - Nothing is stored locally. Local `communication_logs` rows, matched on
+    `exchange_id`, only fill in a missing recipient or template name.
+  - The page size is fixed by the gateway: `meta.limit` is usually 50. There is no
+    `limit` param, no search and no sort, as on the legacy screens.
+  - Dates are whole days in Indian local time, inclusive.
+
+  Permissions (module `business_admin`, section "Reports"):
+  - `business_admin:reports__view_whatsapp_report`
+  - `business_admin:reports__view_sms_report`
+
+  Business Admin holds both and bypasses the check anyway.
+
+  Errors:
+  - 400 validation or `MESSAGING_REPORT_INVALID_DATE_RANGE`
+  - 403 missing permission
+  - 404 `MESSAGE_NOT_FOUND`
+  - 409 `EXCHANGE_TENANT_ID_MISSING`
+  - 409 `MESSAGING_TENANT_NOT_REGISTERED`: the gateway answered "client not found!", meaning
+    the business was never registered with the Exchange (SiteAdmin → register-exchange)
+  - 502 `MESSAGING_GATEWAY_UNAVAILABLE`
+  - 503 `MESSAGING_GATEWAY_NOT_CONFIGURED`: no `EXCHANGE_API_*` env, the normal
+    state on a local dev box
+}

@@ -1,0 +1,36 @@
+meta {
+  name: WhatsApp Message Detail
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/messaging-reports/whatsapp/{{whatsappMessageId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK with the message", () => {
+    expect(res.getStatus()).to.equal(200);
+    const d = res.getBody().data;
+    expect(d).to.have.property("to");
+    expect(d).to.have.property("createdAt");
+    expect(d).to.have.property("message");
+  });
+}
+
+docs {
+  The "Message Detail" pop-up for one WhatsApp message:
+  `{ id, to, createdAt (ISO UTC), message }`. `message` is the full rendered text.
+
+  `whatsappMessageId` is captured automatically by **WhatsApp Report**.
+
+  Returns 404 `MESSAGE_NOT_FOUND` when the gateway has no such message for this
+  tenant. That includes a message the gateway reports as belonging to another
+  tenant or to the SMS channel. A non-integer or < 1 id gives 400.
+}
