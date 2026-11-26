@@ -8,8 +8,11 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { BranchService } from '../branch/branch.service';
 import { TemplateService } from '../template/template.service';
+import { MESSAGING_FEATURE_LABELS } from '../template/constants/feature-types';
+import { OrderNotificationView } from './entities/communication-log.entity';
 import {
   ExchangeAttachment,
   ExchangeClient,
@@ -36,6 +39,9 @@ const DELIVERABLE_CHANNELS: MessagingChannel[] = [
   MessagingChannel.WHATSAPP,
 ];
 
+/** `createdBy` of rows queued by the system (automatic event notifications). */
+export const SYSTEM_ACTOR = 'system';
+
 /** Channel-specific metadata snapshotted onto the queue row for dispatch. */
 interface ExchangeMeta {
   smsTemplateId?: string | null;
@@ -50,6 +56,8 @@ interface ExchangeMeta {
  * `NotificationTagsService`): `resolved` = the caller already resolved them
  * (used as-is); otherwise they are resolved from the tenant + scope branch +
  * `context` (order / patient / actor / appointment moment / recipient email).
+ * `context.orderId` is also persisted on each row (`orderId`) even when the tags
+ * come `resolved`, so pass the context whenever the send is about an order.
  */
 export interface EnqueueTagOptions {
   context?: Omit<NotificationTagContext, 'tenantId'>;
@@ -146,6 +154,9 @@ export class CommunicationService {
     const attachments = dto.attachments;
     const scheduledAt = dto.schedule ? new Date(dto.schedule) : null;
     const expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : null;
+    // The order the send is about (manual share / order event) — stamped on the
+    // row so the order's "Past Notifications" can be listed (`findForOrder`).
+    const orderId = tags?.context?.orderId ?? null;
 
     // Global tags: as resolved by the caller, else from tenant + scope branch +
     // the caller's context. Without an order/patient context (manual compose),
@@ -219,6 +230,7 @@ export class CommunicationService {
               status: CommunicationStatus.PENDING,
               feature: dto.feature ?? null,
               templateId: templateId ?? null,
+              orderId,
               recipientType: r.recipientType,
               recipientId: r.recipientId ?? null,
               recipientName: r.recipientName ?? null,
@@ -287,6 +299,66 @@ export class CommunicationService {
       orderBy: { createdAt: 'desc' },
     });
     const total = await this.prisma.communicationLog.count({ where });
+    return { data, total, page, limit };
+  }
+
+  /**
+   * An order's notification history (Share & Inform → "Past Notifications"):
+   * every Email / SMS / WhatsApp linked to the order — manual shares and
+   * automatic order notifications — newest first. A slim projection: `payload`
+   * (base64 PDF attachments) is never read. The caller must have checked the
+   * order itself is readable (exists in the tenant, B2B panel ownership).
+   * Deliberately not branch-filtered: a row's `branchId` is the template's
+   * branch (often null), so the order is the access boundary.
+   * @param tenantId tenant scope (from JWT)
+   * @param orderId the order whose messages are listed
+   * @param query offset pagination (default 20, max 100)
+   */
+  async findForOrder(
+    tenantId: string,
+    orderId: string,
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResult<OrderNotificationView>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const where: Prisma.CommunicationLogWhereInput = {
+      tenantId,
+      orderId,
+      deletedAt: null,
+      channel: { in: DELIVERABLE_CHANNELS },
+    };
+
+    const rows = await this.prisma.communicationLog.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        channel: true,
+        status: true,
+        feature: true,
+        recipientType: true,
+        recipientName: true,
+        toAddress: true,
+        subject: true,
+        body: true,
+        statusMessage: true,
+        scheduledAt: true,
+        sentAt: true,
+        createdAt: true,
+        createdBy: true,
+      },
+    });
+    const total = await this.prisma.communicationLog.count({ where });
+
+    const data = rows.map(({ createdBy, ...row }) => ({
+      ...row,
+      featureLabel: row.feature
+        ? (MESSAGING_FEATURE_LABELS[row.feature] ?? row.feature)
+        : null,
+      isAutomatic: createdBy === SYSTEM_ACTOR,
+    }));
     return { data, total, page, limit };
   }
 

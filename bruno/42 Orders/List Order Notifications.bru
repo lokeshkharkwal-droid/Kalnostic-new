@@ -1,0 +1,58 @@
+meta {
+  name: List Order Notifications
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/orders/{{orderId}}/notifications?page=1&limit=100
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  limit: 100
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns a page of notifications without attachment payloads", function () {
+    const body = res.getBody();
+    expect(body.data).to.be.an("array");
+    expect(body.meta.total).to.be.a("number");
+    body.data.forEach((n) => {
+      expect(n).to.not.have.property("payload");
+      expect(["EMAIL", "SMS", "WHATSAPP"]).to.include(n.channel);
+    });
+  });
+}
+
+docs {
+  The order's notification history — the Share & Inform popup's "Past
+  Notifications" (Registration → Order Console → Actions → Share & Inform).
+
+  Lists every Email / SMS / WhatsApp sent about this order, newest first: the
+  manual shares (lab report, bill, TRF, quotation, appointment) and the automatic
+  order notifications (order created, report published, payment received,
+  cancelled, refunded, appointment reminders, referral-panel sample alerts, …).
+  In-app (IAM) alerts are not included.
+
+  Each row: `{ id, channel, status (PENDING | SENT | FAILED | CANCELLED),
+  feature, featureLabel, recipientType, recipientName, toAddress, subject, body,
+  statusMessage, scheduledAt, sentAt, createdAt, isAutomatic }`. `SENT` means the
+  Exchange gateway accepted the message; provider delivered / read status is not
+  tracked here. The `payload` column (base64 PDF attachments) is never returned.
+
+  Paginated: `page` (default 1), `limit` (default 20, max 100); totals in `meta`.
+
+  404 `ORDER_NOT_FOUND` if the order is missing, soft-deleted, or owned by
+  another tenant. A B2B referral-panel session may only read its own panel's
+  orders (403 otherwise).
+}

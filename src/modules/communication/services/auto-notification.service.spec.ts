@@ -83,14 +83,15 @@ describe('AutoNotificationService — global tags', () => {
     ];
     expect(iamCall[2].body).toBe('IAM ORD-1 450.00 Kalnostic Labs');
 
-    // Each channel gets the same merged map, flagged as already resolved.
+    // Each channel gets the same merged map, flagged as already resolved, plus
+    // the spec context so the row is linked to its order (Past Notifications).
     expect(enqueue).toHaveBeenCalledTimes(2);
     type EnqueueCall = [
       string,
       string | null,
       { variables: Record<string, string> },
       string,
-      { resolved: Record<string, string> },
+      { resolved: Record<string, string>; context?: unknown },
     ];
     for (const call of enqueue.mock.calls as EnqueueCall[]) {
       const [, , dto, actor, tagOpts] = call;
@@ -100,7 +101,10 @@ describe('AutoNotificationService — global tags', () => {
         order_number: 'ORD-1',
         amount: '450.00',
       });
-      expect(tagOpts).toEqual({ resolved: dto.variables });
+      expect(tagOpts).toEqual({
+        resolved: dto.variables,
+        context: { orderId: 'o-1', at },
+      });
     }
   });
 

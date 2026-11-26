@@ -60,6 +60,8 @@ import { PatientService } from '../patient/patient.service';
 import { UserDepartmentScopeService } from '../department/user-department-scope.service';
 import type { GeneratePdfDto } from '../pdf-report-template/dto/generate-pdf.dto';
 import { PaginatedResult } from '../../common/dto/response.dto';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
+import type { OrderNotificationView } from '../communication/entities/communication-log.entity';
 import {
   addInterval,
   subtractInterval,
@@ -2233,6 +2235,35 @@ export class OrderService {
       source: 'ORDER',
       readonly: false,
     };
+  }
+
+  /**
+   * The order's notification history — the Share & Inform popup's "Past
+   * Notifications": every Email / SMS / WhatsApp sent about this order (manual
+   * shares of the report / bill / TRF / quote / appointment and the automatic
+   * order notifications), newest first, without attachment payloads.
+   * @param id order id
+   * @param tenantId tenant scope (from JWT)
+   * @param query offset pagination
+   * @throws OrderNotFoundException if the order is missing/soft-deleted/other tenant
+   * @throws ReferralPanelAccessDeniedException if a B2B panel session asks for
+   *   another panel's order
+   */
+  async findNotifications(
+    id: string,
+    tenantId: string,
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResult<OrderNotificationView>> {
+    const order = await this.prisma.order.findFirst({
+      where: { id, tenantId, deletedAt: null },
+      select: { id: true, referralPanelId: true },
+    });
+    if (!order) {
+      throw new OrderNotFoundException(id);
+    }
+    // B2B Referral Panel isolation: same rule as reading the order itself.
+    assertOrderPanelOwnership(order, getReferralPanelId());
+    return this.shareService.listOrderNotifications(tenantId, id, query);
   }
 
   /**

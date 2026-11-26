@@ -97,6 +97,7 @@ import { InvoiceModule } from './modules/invoice/invoice.module';
 import { SettlementModule } from './modules/settlement/settlement.module';
 import { FinancePaymentsModule } from './modules/finance-payments/finance-payments.module';
 import { CommunicationModule } from './modules/communication/communication.module';
+import { MessagingReportModule } from './modules/messaging-report/messaging-report.module';
 import { EmiModule } from './modules/emi/emi.module';
 import { PublicModule } from './modules/public/public.module';
 import { InventoryIntegrationModule } from './modules/inventory-integration/inventory-integration.module';
@@ -202,6 +203,7 @@ import { B2bModuleGuard } from './common/guards/b2b-module.guard';
     PaymentDetailsModule,
     FinancePaymentsModule,
     CommunicationModule,
+    MessagingReportModule,
     BillingSettingsModule,
     ConsoleSettingsModule,
     ReportSettingsModule,

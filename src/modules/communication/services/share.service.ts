@@ -7,6 +7,9 @@ import {
 } from '@prisma/client';
 import { CommunicationService } from '../communication.service';
 import { NotificationService } from '../notification.service';
+import { OrderNotificationView } from '../entities/communication-log.entity';
+import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+import { PaginatedResult } from '../../../common/dto/response.dto';
 import { TemplateService } from '../../template/template.service';
 import {
   NotificationTagContext,
@@ -306,6 +309,20 @@ export class ShareService {
         toAddress: contactFor(channel),
       })),
     );
+  }
+
+  /**
+   * The order's notification history for the Share & Inform popup ("Past
+   * Notifications"): every Email/SMS/WhatsApp linked to the order, newest first.
+   * The caller must already have checked the order is readable (tenant + B2B
+   * panel ownership) — this only filters by tenant + order.
+   */
+  listOrderNotifications(
+    tenantId: string,
+    orderId: string,
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResult<OrderNotificationView>> {
+    return this.communicationService.findForOrder(tenantId, orderId, query);
   }
 
   /**

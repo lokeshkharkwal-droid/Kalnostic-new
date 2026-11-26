@@ -1,0 +1,57 @@
+meta {
+  name: SMS Report
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/messaging-reports/sms?dateFrom=2026-11-01&dateTo=2026-11-23&page=1
+  body: none
+  auth: bearer
+}
+
+params:query {
+  dateFrom: 2026-11-01
+  dateTo: 2026-11-23
+  page: 1
+  ~status: undelivered
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const body = res.getBody();
+  if (body && body.success && Array.isArray(body.data) && body.data.length && body.data[0].id) {
+    // Capture the first row for "SMS Message Detail".
+    bru.setVar("smsMessageId", body.data[0].id);
+  }
+}
+
+tests {
+  test("200 OK with the parts total", () => {
+    expect(res.getStatus()).to.equal(200);
+    const b = res.getBody();
+    expect(b.data).to.be.an("array");
+    expect(b.meta).to.have.property("smsPartsCount");
+  });
+}
+
+docs {
+  One page of the tenant's SMS messages (newest first) from the Exchange gateway.
+  The query is the same as **WhatsApp Report**, except for `status`.
+
+  `status`: `sent` / `undelivered` / `not-sent` / `failed` / `pending`,
+  case-insensitive. The legacy dropdown only offered failed/pending/sent, but the
+  provider actually reports Sent / Undelivered / NOT-SENT, so all five are accepted.
+
+  **Row**: the same as WhatsApp, except:
+  - `template` is always null
+  - `smsParts` is the number of SMS parts billed for that message
+  - `deliveryStatus` is kept exactly as reported, e.g. `NOT-SENT`
+
+  **meta**: `total`, `page`, `limit`, `totalPages`, plus **`smsPartsCount`**, the
+  parts summed over the whole filtered set. It is null if the gateway did not
+  report it.
+}

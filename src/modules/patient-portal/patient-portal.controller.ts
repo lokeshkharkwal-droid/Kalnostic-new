@@ -22,19 +22,15 @@ export class PatientPortalController {
 
   /**
    * Home summary: identity, stat tiles, next appointment, ready reports and
-   * recent messages — consolidated across EVERY branch of the session's tenant
-   * (no branch filter), scoped to the session's person + tenant.
+   * recent messages — consolidated across EVERY business the person is enrolled in
+   * (and every branch within each), scoped to the session's person.
    */
   @Get('home')
-  home(
-    @CurrentPatient('tenant_id') tenantId: string,
-    @CurrentPatient('person_id') personId: string,
-    @CurrentPatient('patient_id') patientId: string,
-  ) {
-    return this.patientPortalService.getHome(tenantId, personId, patientId);
+  home(@CurrentPatient('person_id') personId: string) {
+    return this.patientPortalService.getHome(personId);
   }
 
-  /** The businesses (labs) this patient can switch into (for the lab switcher). */
+  /** The businesses (labs) this patient belongs to (for the Business filter). */
   @Get('businesses')
   businesses(@CurrentPatient('person_id') personId: string) {
     return this.patientPortalService.getBusinesses(personId);

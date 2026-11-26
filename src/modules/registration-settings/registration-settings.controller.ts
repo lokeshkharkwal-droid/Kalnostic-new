@@ -79,6 +79,34 @@ export class RegistrationSettingsController {
   }
 
   /**
+   * The active branch's Registration settings **as they apply** — read by the
+   * operational screens (Create Order / Create Patient, Billings, Order
+   * Console, Quotations) to honour the saved toggles in their UI.
+   *
+   * Login-only on purpose, like `emergency-pricing` / `external-id/preview`:
+   * the `view/update registration settings` permissions control who may open
+   * and change the Registration Settings PAGE — never whether the saved
+   * settings take effect. Gating this read made every screen fall back to the
+   * defaults for a user without the view permission (e.g. Mobile required again
+   * on B2B orders) although nothing had changed in the database.
+   *
+   * Returns the same row the backend enforces with (`getForBranch`), so the
+   * frontend gates and the server-side validation always agree (a branch with
+   * no row yet gets its default row, exactly as order creation would). Tenant +
+   * branch come only from the JWT.
+   */
+  @Get('effective')
+  getEffectiveSettings(
+    @CurrentTenant() tenantId: string,
+    @CurrentProfile() profile: ActiveProfile,
+  ) {
+    return this.registrationSettingsService.getForBranch(
+      tenantId,
+      profile.branchId ?? '',
+    );
+  }
+
+  /**
    * The tenant-level ("business") Registration settings — the `branchId = null`
    * row a Business Admin edits. Branches that have not customised their own row
    * fall back to this. Gated by `registration:settings` (Business Admin bypasses).

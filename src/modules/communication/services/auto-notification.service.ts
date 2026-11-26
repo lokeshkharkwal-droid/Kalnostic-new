@@ -5,7 +5,7 @@ import {
   RecipientType,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { CommunicationService } from '../communication.service';
+import { CommunicationService, SYSTEM_ACTOR } from '../communication.service';
 import { NotificationService } from '../notification.service';
 import { TemplateService } from '../../template/template.service';
 import { NotificationEnablementService } from './notification-enablement.service';
@@ -322,8 +322,10 @@ export class AutoNotificationService {
             recipients,
             variables,
           },
-          'system',
-          { resolved: variables },
+          SYSTEM_ACTOR,
+          // `context` links the row to its order (Past Notifications); the
+          // tags themselves still come from `resolved`.
+          { resolved: variables, context: spec.context },
         );
       } else if (emailFallbackBody !== null) {
         await this.communication.enqueue(
@@ -336,8 +338,8 @@ export class AutoNotificationService {
             body: emailFallbackBody,
             recipients,
           },
-          'system',
-          { resolved: variables },
+          SYSTEM_ACTOR,
+          { resolved: variables, context: spec.context },
         );
       }
       // else: no template for SMS/WhatsApp → skip silently.

@@ -1,0 +1,29 @@
+meta {
+  name: SMS Message Detail
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/messaging-reports/sms/{{smsMessageId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK with the message", () => {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().data).to.have.property("message");
+  });
+}
+
+docs {
+  The "Message Detail" pop-up for one SMS: `{ id, to, createdAt (ISO UTC), message }`.
+
+  `smsMessageId` is captured automatically by **SMS Report**. A message of another
+  tenant or of the WhatsApp channel gives 404 `MESSAGE_NOT_FOUND`.
+}
