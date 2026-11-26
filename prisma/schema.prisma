@@ -1920,6 +1920,10 @@ model CommunicationLog {
   feature    String?
   /// Resolved Template.id when a template drove the body; null for free-text.
   templateId String? @map("template_id")
+  /// Order the message is about (manual share or order event); null when the
+  /// send isn't order-related. Drives the Share & Inform "Past Notifications"
+  /// list. Plain id (no FK) so the log outlives the order, like `recipientId`.
+  orderId    String? @map("order_id")
 
   recipientType RecipientType @map("recipient_type")
   recipientId   String?       @map("recipient_id") // person/doctor id when known
@@ -1956,6 +1960,7 @@ model CommunicationLog {
   @@index([channel])
   @@index([scheduledAt])
   @@index([deletedAt])
+  @@index([tenantId, orderId])
   @@map("communication_logs")
 }
 

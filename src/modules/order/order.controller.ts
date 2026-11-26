@@ -24,6 +24,7 @@ import { BillingGroupedQueryDto } from './dto/billing-grouped-query.dto';
 import { BillingQueryDto } from './dto/billing-query.dto';
 import { CreateOrderNoteDto } from './dto/create-order-note.dto';
 import { ListOrderNotesDto } from './dto/list-order-notes.dto';
+import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { RefundOrderDto } from './dto/refund-order.dto';
 import { PatientDuesQueryDto } from './dto/patient-dues.dto';
@@ -619,6 +620,20 @@ export class OrderController {
     @Query() query: ListOrderNotesDto,
   ) {
     return this.orderService.findNotes(id, tenantId, query);
+  }
+
+  /**
+   * The order's notification history for the Share & Inform popup ("Past
+   * Notifications"): every Email / SMS / WhatsApp sent about the order, newest
+   * first (paginated; no attachment payloads).
+   */
+  @Get(':id/notifications')
+  findNotifications(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.orderService.findNotifications(id, tenantId, query);
   }
 
   /** Add a note to an order (append-only — never overwrites existing notes). */
