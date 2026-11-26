@@ -1,0 +1,46 @@
+meta {
+  name: 04 Change Plan
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/subscription/change-plan
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+body:json {
+  {
+    "planId": "1",
+    "isDefault": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Change the business's subscription plan (proxied `POST /orders`). Mirrors the
+  legacy `changeBusinessSubscriptionPlan`.
+
+  Body:
+  - `planId` (string, required) — the subscription server plan id to switch to.
+  - `planCode` (string, optional) — plan code/slug, when the server is keyed by code.
+  - `isDefault` (boolean, optional, default false) — make this the business default.
+
+  The `business_id` is resolved from the JWT tenant, never the body. Returns the
+  order result (`data.original`). Throws `SUBSCRIPTION_PLAN_CHANGE_FAILED` (502) if
+  the server rejects the change.
+}

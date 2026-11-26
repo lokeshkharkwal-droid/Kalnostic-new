@@ -1,0 +1,35 @@
+meta {
+  name: Register Tenant With Subscription
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/register-subscription
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  Register ONE tenant as a client on the external Subscription server
+  (`POST /clients`). SiteAdmin only — requires `business:create`. No request body;
+  the tenant is the `:id` path param (`{{tenantId}}`). The payload (name / address /
+  contact) is built server-side from the tenant record; the subscription server keys
+  the client by the tenant's `legacyTenantId ?? exchangeTenantId`.
+
+  Idempotent: if already registered (`subscriptionRegisteredAt` set) the current
+  record is returned without re-POSTing. On a fresh success the tenant's
+  `subscriptionRegisteredAt` / `subscriptionClientId` / `subscriptionRegistrationMeta`
+  are persisted.
+
+  Errors:
+  - 503 `SUBSCRIPTION_NOT_CONFIGURED` — SUBSCRIPTION_API_* not set.
+  - 409 `SUBSCRIPTION_BUSINESS_ID_MISSING` — tenant has no legacy/exchange id.
+  - 502 `SUBSCRIPTION_REGISTRATION_FAILED` — the server rejected the call.
+
+  Returns in `data` the created/current client record (`data.original`).
+}

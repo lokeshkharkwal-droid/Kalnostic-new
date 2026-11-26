@@ -13,6 +13,8 @@ import { AuditAction, AuditModule, SubscriptionStatus } from '@prisma/client';
 import { TenantService } from './tenant.service';
 import { ExchangeTenantIdService } from './exchange-tenant-id.service';
 import { ExchangeRegistrationService } from '../communication/exchange/exchange-registration.service';
+import { SubscriptionService } from '../subscription/subscription.service';
+import { ChangePlanDto } from '../subscription/dto/change-plan.dto';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { SetAdminPasswordDto } from './dto/set-admin-password.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -42,6 +44,7 @@ export class TenantController {
     private readonly tenantService: TenantService,
     private readonly exchangeTenantIdService: ExchangeTenantIdService,
     private readonly exchangeRegistrationService: ExchangeRegistrationService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   /**
@@ -149,6 +152,57 @@ export class TenantController {
   @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
   getExchangeUsage(@Param('id') id: string) {
     return this.exchangeRegistrationService.getUsage(id);
+  }
+
+  /**
+   * Register one tenant as a client on the external Subscription server
+   * (`POST /clients`). Idempotent (no-op if already registered); keys the client by
+   * the tenant's `legacyTenantId ?? exchangeTenantId`, and persists the
+   * registration state on the tenant.
+   */
+  @Post(':id/register-subscription')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Registered a business with the Subscription server',
+  })
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
+  registerSubscription(@Param('id') id: string) {
+    return this.subscriptionService.register(id);
+  }
+
+  /**
+   * The tenant's current Subscription client record (`GET /clients/show`), or null
+   * when the business is not yet registered on the Subscription server.
+   */
+  @Get(':id/subscription-status')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
+  getSubscriptionStatus(@Param('id') id: string) {
+    return this.subscriptionService.getSubscription(id);
+  }
+
+  /**
+   * The active plans the tenant can be assigned (`GET /plans`).
+   */
+  @Get(':id/subscription-plans')
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_READ)
+  getSubscriptionPlans(@Param('id') id: string) {
+    return this.subscriptionService.getPlans(id);
+  }
+
+  /**
+   * Assign / change the tenant's subscription plan (`POST /orders`) and persist the
+   * selected plan on the tenant.
+   */
+  @Post(':id/change-subscription-plan')
+  @Audit({
+    module: AuditModule.TENANT,
+    action: AuditAction.UPDATE,
+    description: 'Changed a business subscription plan',
+  })
+  @RequireSiteAdminPermission(SITE_ADMIN_PERM.BUSINESS_CREATE)
+  changeSubscriptionPlan(@Param('id') id: string, @Body() dto: ChangePlanDto) {
+    return this.subscriptionService.changePlan(id, dto);
   }
 
   /**

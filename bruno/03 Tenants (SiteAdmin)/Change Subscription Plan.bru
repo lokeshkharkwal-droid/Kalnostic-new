@@ -1,0 +1,46 @@
+meta {
+  name: Change Subscription Plan
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/change-subscription-plan
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+body:json {
+  {
+    "planId": "1",
+    "isDefault": false
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  Assign / change the tenant's subscription plan (`POST /orders`). SiteAdmin only —
+  requires `business:create`.
+
+  Body:
+  - `planId` (string, required) — the subscription server plan id to switch to.
+  - `planCode` (string, optional) — plan code/slug, when the server is keyed by code.
+  - `isDefault` (boolean, optional, default false) — make this the business default.
+
+  On success the tenant's `subscriptionPlanId` is persisted and `subscriptionStatus`
+  is set to `ACTIVE`. Throws `SUBSCRIPTION_PLAN_CHANGE_FAILED` (502) if the server
+  rejects the change.
+}

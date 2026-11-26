@@ -34,6 +34,18 @@ export const configuration = () => ({
     // Per-attempt HTTP timeout (ms) so a hung relay can't block the worker.
     timeoutMs: parseInt(process.env.EXCHANGE_TIMEOUT_MS ?? '15000', 10),
   },
+  subscription: {
+    // External subscription microservice powering the business-admin Subscription
+    // Plan screen (register / plans / change-plan / bills). When any of
+    // url/key/secret is missing the proxy returns SUBSCRIPTION_NOT_CONFIGURED.
+    url: process.env.SUBSCRIPTION_API_URL,
+    key: process.env.SUBSCRIPTION_API_KEY,
+    secret: process.env.SUBSCRIPTION_API_SECRET,
+    // Stamped as peer_server_url on signed writes (shared with the Exchange).
+    frontendUrl: process.env.FRONTEND_URL,
+    // Per-attempt HTTP timeout (ms) so a hung server can't block the request.
+    timeoutMs: parseInt(process.env.SUBSCRIPTION_API_TIMEOUT_MS ?? '15000', 10),
+  },
   communication: {
     // Enable the background queue worker on exactly one instance per environment.
     workerEnabled: process.env.COMMUNICATION_WORKER_ENABLED === 'true',

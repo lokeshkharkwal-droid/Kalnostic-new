@@ -1,0 +1,88 @@
+meta {
+  name: 08 Generate Business Feature Report
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/subscription/api/generate-business-feature-report?business_id={{subscriptionBusinessId}}&report_context=yesterday
+  body: none
+  auth: none
+}
+
+params:query {
+  business_id: {{subscriptionBusinessId}}
+  report_context: yesterday
+}
+
+headers {
+  key: {{subscriptionApiKey}}
+  secret: {{subscriptionApiSecret}}
+}
+
+vars:pre-request {
+  subscriptionBusinessId: 347
+  subscriptionApiKey: business_ezhealthtrack_com
+  subscriptionApiSecret: bus_ez_msg@123!
+}
+
+tests {
+  test("200 OK (HTTP)", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("EZHT envelope", function () {
+    expect(res.getBody().s).to.be.oneOf(["200", "500"]);
+  });
+}
+
+docs {
+  # Generate Business Feature Report (INBOUND — called by the subscription scheduler)
+
+  The **inbound** usage-reporting endpoint, ported from EzHealthTrack
+  `subscription/api/generateBusinessFeatureReport`. The external **subscription
+  scheduler** (not a browser) calls this per business, daily and monthly, to pull
+  that tenant's usage metrics.
+
+  - **Auth:** NOT a business JWT. The route is `@Public()` and authenticated by the
+    shared `key` / `secret` headers (must equal `SUBSCRIPTION_API_KEY` /
+    `SUBSCRIPTION_API_SECRET` on the server). Fail-closed: a missing/incorrect pair
+    → `401 SUBSCRIPTION_API_UNAUTHORIZED`. (Set the `subscriptionApiKey` /
+    `subscriptionApiSecret` pre-request vars to your local env values.)
+  - **`business_id`** (required) — the integer id the subscription service keys the
+    client by. Resolved server-side to a tenant via `Tenant.legacyTenantId` →
+    `exchangeTenantId`. A business id with no matching tenant returns HTTP 200 with
+    body `{ s: "500", m: "Business not found!" }` (legacy contract).
+  - **`report_context`** (optional, default `yesterday`): `yesterday` / `today` →
+    the **daily** feature set for that day; `monthly` → the **monthly** feature set
+    for the current calendar month.
+
+  Response is the raw EzHealthTrack envelope (NOT the Kalnostics `{ success, data,
+  meta }` wrapper — this route bypasses the global interceptor):
+
+  ```json
+  {
+    "s": "200",
+    "m": "Business feature report",
+    "data": {
+      "business_id": 347,
+      "report_type": "daily",
+      "report_context": "yesterday",
+      "date_from": "2026-11-25 00:00:00",
+      "date_to": "2026-11-25 23:59:59",
+      "features": {
+        "order_count": { "count": 12 },
+        "order_amount": { "value": 48200 },
+        "sms": { "count": 30 },
+        "transaction_successful": { "count": 9 },
+        "transaction_failed": { "count": 0 }
+      }
+    }
+  }
+  ```
+
+  Each feature carries a `count` (integer metric) or a `value` (money/aggregate).
+  **Send-only:** nothing is persisted locally — the data lives only in this
+  response. Metrics with no Kalnostics source yet are emitted as `0`:
+  `transaction_failed`, `transaction_commission_ez`/`_pg`, `whatsapp_marketing`,
+  `cms`, `user-app-sales`/`user-app-phlebo`, `adapter_filled`.
+}

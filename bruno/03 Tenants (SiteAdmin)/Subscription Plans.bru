@@ -1,0 +1,22 @@
+meta {
+  name: Subscription Plans
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/subscription-plans
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  The active subscription plans the tenant can be assigned (`GET /plans`). SiteAdmin
+  only — requires `business:read`. Returns an array in `data`; each plan carries
+  `id`, `title`, `slug`, `price`, `features_json`. Returns `[]` when the server has
+  no active plans.
+}

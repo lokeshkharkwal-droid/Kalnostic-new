@@ -94,4 +94,14 @@ export const envValidationSchema = Joi.object({
   INVENTORY_API_BASE_URL: Joi.string().uri().allow('').optional(),
   // Per-attempt HTTP timeout (ms) for inventory calls. Default 15s.
   INVENTORY_API_TIMEOUT_MS: Joi.number().integer().min(1000).default(15000),
+  // External subscription microservice base URL (e.g.
+  // https://subscription.ezhealthtrack.com/subscription/api/v1) powering the
+  // business-admin Subscription Plan screen. All optional: when any of
+  // url/key/secret is missing the proxy returns SUBSCRIPTION_NOT_CONFIGURED
+  // instead of rendering a broken page.
+  SUBSCRIPTION_API_URL: Joi.string().uri().allow('').optional(),
+  SUBSCRIPTION_API_KEY: Joi.string().allow('').optional(),
+  SUBSCRIPTION_API_SECRET: Joi.string().allow('').optional(),
+  // Per-attempt HTTP timeout (ms) for subscription calls. Default 15s.
+  SUBSCRIPTION_API_TIMEOUT_MS: Joi.number().integer().min(1000).default(15000),
 });
