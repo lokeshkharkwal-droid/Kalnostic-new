@@ -250,4 +250,59 @@ describe('CommunicationService.enqueue — global notification tags', () => {
     expect(params[idx]).toBe('ORD-00012');
     expect(params).toHaveLength(NOTIFICATION_TAG_KEYS.length + 1); // + {not_a_tag}
   });
+
+  describe('order link (Past Notifications)', () => {
+    const orderIdOf = (i: number) =>
+      (created[i] as unknown as { orderId: string | null }).orderId;
+
+    it("stamps the context's order on every row (manual share)", async () => {
+      await service.enqueue(
+        't-1',
+        null,
+        dto({
+          recipients: [
+            {
+              recipientType: RecipientType.PATIENT,
+              recipientId: 'p-1',
+              recipientName: 'Asha Rao',
+              toAddress: '9999999999',
+            },
+            {
+              recipientType: RecipientType.CUSTOM,
+              recipientName: 'Panel',
+              toAddress: '8888888888',
+            },
+          ],
+        }),
+        'u-1',
+        { context: { orderId: 'o-1' } },
+      );
+      expect(created).toHaveLength(2);
+      expect(orderIdOf(0)).toBe('o-1');
+      expect(orderIdOf(1)).toBe('o-1');
+    });
+
+    it('leaves the order null when the send has no order (manual compose)', async () => {
+      await service.enqueue('t-1', 'b-1', dto(), 'u-1');
+      expect(orderIdOf(0)).toBeNull();
+    });
+
+    it('leaves the order null for a patient-only context', async () => {
+      await service.enqueue('t-1', null, dto(), 'u-1', {
+        context: { patientId: 'p-1' },
+      });
+      expect(orderIdOf(0)).toBeNull();
+    });
+
+    it('stamps the order from context while tags still come pre-resolved (automatic)', async () => {
+      const spy = jest.spyOn(tags, 'resolve');
+      await service.enqueue('t-1', null, dto(), 'system', {
+        resolved: { web_title: 'Pre-resolved' },
+        context: { orderId: 'o-9' },
+      });
+      expect(spy).not.toHaveBeenCalled();
+      expect(created[0]!.body).toContain('web_title=[Pre-resolved]');
+      expect(orderIdOf(0)).toBe('o-9');
+    });
+  });
 });
