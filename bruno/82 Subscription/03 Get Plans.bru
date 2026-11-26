@@ -1,0 +1,31 @@
+meta {
+  name: 03 Get Plans
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/subscription/plans
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an array of plans", function () {
+    expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  The active subscription plans the business can switch to (proxied `GET /plans`),
+  shown in the Change Plan modal. Each plan carries `id`, `title`, `slug`, `price`
+  and `features_json` ([{ feature }]). Returns `[]` when the server has no active
+  plans. Tenant comes from the JWT.
+}

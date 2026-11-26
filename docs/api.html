@@ -1535,6 +1535,41 @@ dateFrom=ISO&amp;dateTo=ISO  # optional inclusive date-range filter</pre>
   <p>Reactivate a suspended business — sets <code>subscriptionStatus</code> to <code>ACTIVE</code>.</p>
 </div>
 
+<!-- ───────────────────────── SUBSCRIPTION USAGE API ───────────────────────── -->
+<h2 id="subscription-usage">Subscription Usage API <span style="font-size:13px;color:var(--muted)">(inbound — called by the subscription scheduler)</span></h2>
+<div class="note">The external <b>subscription service</b> pulls per-tenant usage metrics from Kalnostics
+(ported from EzHealthTrack <code>subscription/api/*</code>). These routes are <b>Public</b> (no business JWT);
+they authenticate with the shared <code>key</code> / <code>secret</code> headers
+(= <code>SUBSCRIPTION_API_KEY</code> / <code>SUBSCRIPTION_API_SECRET</code>), checked constant-time and
+<b>fail-closed</b> (<code>401 SUBSCRIPTION_API_UNAUTHORIZED</code>). <code>business_id</code> (integer) is
+resolved to a tenant via <code>legacyTenantId</code> → <code>exchangeTenantId</code>; no match returns
+HTTP 200 with <code>{ s:"500", m:"Business not found!" }</code>. Responses are the raw EzHealthTrack
+<code>{ s, m, data }</code> envelope (these routes <b>bypass the global response interceptor</b>), and the
+flow is <b>send-only</b> — nothing is persisted. Each metric carries a <code>count</code> or a
+<code>value</code>; metrics with no source yet (<code>transaction_failed</code>,
+<code>transaction_commission_ez/pg</code>, <code>whatsapp_marketing</code>, <code>cms</code>,
+<code>user-app-sales/phlebo</code>, <code>adapter_filled</code>) are emitted as <code>0</code>.</div>
+
+<div class="ep" id="subscription-generate-report">
+  <div><span class="m get">GET</span><span class="path">/api/v1/subscription/api/generate-business-feature-report</span></div>
+  <div class="tags"><span class="tag">Public</span><span class="tag">key/secret headers</span></div>
+  <p>Scheduled daily/monthly report for one business. Query: <code>business_id</code> (required),
+  <code>report_context</code> = <code>yesterday</code> (default) / <code>today</code> (daily set) or
+  <code>monthly</code> (monthly set).</p>
+  <pre>{ "s":"200","m":"Business feature report","data":{ "business_id":347,"report_type":"daily",
+  "date_from":"2026-11-25 00:00:00","date_to":"2026-11-25 23:59:59",
+  "features":{ "order_count":{"count":12},"order_amount":{"value":48200},"sms":{"count":30} } } }</pre>
+</div>
+
+<div class="ep" id="subscription-feature-count">
+  <div><span class="m post">POST</span><span class="path">/api/v1/subscription/api/business-feature-count</span></div>
+  <div class="tags"><span class="tag">Public</span><span class="tag">key/secret headers</span></div>
+  <p>Ad-hoc count for an explicit period + feature subset. Body: <code>business_id</code> (required),
+  optional <code>bill_period_from</code>/<code>bill_period_to</code>
+  (<code>YYYY-MM-DD</code> or <code>YYYY-MM-DD HH:mm:ss</code>) and optional <code>bill_features[]</code>
+  (defaults to the full catalogue). <code>data</code> is the <code>{ code → metric }</code> map.</p>
+</div>
+
 <!-- ───────────────────────── LAB TESTS ───────────────────────── -->
 <h2 id="lab-tests">Lab Tests <span style="font-size:13px;color:var(--muted)">(nested under a master data)</span></h2>
 <div class="note">Lab tests live inside a <b>master data</b> container and are addressed as

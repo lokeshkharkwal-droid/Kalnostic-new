@@ -16,6 +16,7 @@ import { randomBytes } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizePhone } from '../../common/utils/phone.util';
 import { PasswordService } from '../security/password.service';
 import { UsernameGeneratorService } from '../security/username-generator.service';
 import { EncryptionService } from '../security/encryption.service';
@@ -60,6 +61,7 @@ import {
   MultipleDefaultBranchException,
   NoModuleAccessAtBranchException,
   NotOwnerTenantException,
+  PersonAlreadyStaffException,
   PersonEmailTakenException,
   PersonNotFoundException,
   PersonPhoneTakenException,
@@ -726,8 +728,17 @@ export class UsersService {
     const primaryRole = dto.roleKey
       ? await this.authRoleService.resolveByKey(tenantId, dto.roleKey)
       : null;
-    await this.assertContactUnique(dto.mobileNumber, dto.email);
-    await this.assertUsernameUnique(dto.username);
+    // Reuse an existing identity (e.g. a patient) with the same phone instead of
+    // rejecting it; blocks only a duplicate staff membership in THIS tenant.
+    const personLink = await this.resolveStaffPersonForCreate(
+      tenantId,
+      dto.mobileNumber,
+      dto.email,
+    );
+    await this.assertUsernameUnique(
+      dto.username,
+      personLink.mode === 'reuse' ? personLink.personId : undefined,
+    );
 
     const prepared = await this.prepareBranchAssignments(
       tenantId,
@@ -739,7 +750,6 @@ export class UsersService {
     const aadhaarEnc = dto.aadhaarNumber
       ? this.encryptionService.encrypt(dto.aadhaarNumber)
       : null;
-    const platformMrn = this.generatePlatformMrn();
     const status = dto.status ?? StaffStatus.ACTIVE;
     const isTenantLevelRole = primaryRole
       ? this.isTenantLevelRole(primaryRole)
@@ -753,41 +763,57 @@ export class UsersService {
       });
       const userCode = `USR-${String(tenant.staffCounter).padStart(5, '0')}`;
 
-      const person = await tx.person.create({
-        data: {
-          platformMrn,
-          firstName: dto.employeeName,
-          lastName: null,
-          dateOfBirth: new Date(dto.dateOfBirth),
-          gender: dto.gender,
-          bloodGroup: dto.bloodGroup ?? null,
-          phone: dto.mobileNumber,
-          email: dto.email,
-          address: (dto.address ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-          nationality: dto.nationality ?? 'Indian',
-          fatherName: dto.fatherName ?? null,
-          motherName: dto.motherName ?? null,
-          aadhaarNumber: aadhaarEnc,
-          panNumber: dto.panNumber ?? null,
-          emergencyContactName: dto.emergencyContactName ?? null,
-          emergencyContactNumber: dto.emergencyContactNumber ?? null,
-          ownerTenantId: tenantId,
-          isPatient: false,
-          isStaff: true,
-          isActive: true,
-        },
-      });
+      // Reuse the existing person (flag it staff, keep its identity intact) or
+      // create a fresh one. Reuse is how "patient first, then staff with the same
+      // phone" is supported without a duplicate-phone conflict.
+      const person =
+        personLink.mode === 'reuse'
+          ? await tx.person.update({
+              where: { id: personLink.personId },
+              data: { isStaff: true },
+            })
+          : await tx.person.create({
+              data: {
+                platformMrn: this.generatePlatformMrn(),
+                firstName: dto.employeeName,
+                lastName: null,
+                dateOfBirth: new Date(dto.dateOfBirth),
+                gender: dto.gender,
+                bloodGroup: dto.bloodGroup ?? null,
+                phone: dto.mobileNumber,
+                email: dto.email,
+                address: (dto.address ??
+                  Prisma.JsonNull) as Prisma.InputJsonValue,
+                nationality: dto.nationality ?? 'Indian',
+                fatherName: dto.fatherName ?? null,
+                motherName: dto.motherName ?? null,
+                aadhaarNumber: aadhaarEnc,
+                panNumber: dto.panNumber ?? null,
+                emergencyContactName: dto.emergencyContactName ?? null,
+                emergencyContactNumber: dto.emergencyContactNumber ?? null,
+                ownerTenantId: tenantId,
+                isPatient: false,
+                isStaff: true,
+                isActive: true,
+              },
+            });
 
-      await tx.personCredentials.create({
-        data: {
-          personId: person.id,
-          phone: dto.mobileNumber,
-          email: dto.email,
-          systemUsername: dto.username,
-          isSystemGeneratedUsername: false,
-          passwordHash,
-          isTempPassword: false,
-        },
+      // Reserve the email on the shared identity when it has none yet, so email
+      // stays a global de-dup key across patient + staff for the same person.
+      if (personLink.mode === 'reuse' && dto.email) {
+        await tx.person.updateMany({
+          where: { id: person.id, email: null },
+          data: { email: dto.email },
+        });
+      }
+
+      await this.upsertStaffCredentials(tx, person.id, {
+        phone: dto.mobileNumber,
+        email: dto.email,
+        username: dto.username,
+        passwordHash,
+        isTempPassword: false,
+        isSystemGeneratedUsername: false,
       });
 
       const membership = await tx.tenantStaffMembership.create({
@@ -899,7 +925,13 @@ export class UsersService {
       }
     }
 
-    await this.assertContactUnique(dto.mobileNumber, dto.email);
+    // Reuse an existing identity (e.g. a patient) with the same phone instead of
+    // rejecting it; blocks only a duplicate staff membership in THIS tenant.
+    const personLink = await this.resolveStaffPersonForCreate(
+      tenantId,
+      dto.mobileNumber,
+      dto.email,
+    );
 
     const [firstName, ...rest] = dto.name.trim().split(/\s+/);
     const lastName = rest.length > 0 ? rest.join(' ') : null;
@@ -907,7 +939,6 @@ export class UsersService {
     const passwordHash = await this.passwordService.hash(
       this.passwordService.generateTempPassword(),
     );
-    const platformMrn = this.generatePlatformMrn();
 
     const person = await this.prisma.withTenant(tenantId, async (tx) => {
       const tenant = await tx.tenant.update({
@@ -917,33 +948,45 @@ export class UsersService {
       });
       const userCode = `USR-${String(tenant.staffCounter).padStart(5, '0')}`;
 
-      const created = await tx.person.create({
-        data: {
-          platformMrn,
-          firstName: firstName ?? dto.name.trim(),
-          lastName,
-          dateOfBirth: new Date('1990-01-01'),
-          gender: Gender.PREFER_NOT_TO_SAY,
-          phone: dto.mobileNumber ?? null,
-          email: dto.email ?? null,
-          nationality: 'Indian',
-          ownerTenantId: tenantId,
-          isPatient: false,
-          isStaff: true,
-          isActive: true,
-        },
-      });
+      // Reuse the existing person (flag it staff, keep its identity) or create one.
+      const created =
+        personLink.mode === 'reuse'
+          ? await tx.person.update({
+              where: { id: personLink.personId },
+              data: { isStaff: true },
+            })
+          : await tx.person.create({
+              data: {
+                platformMrn: this.generatePlatformMrn(),
+                firstName: firstName ?? dto.name.trim(),
+                lastName,
+                dateOfBirth: new Date('1990-01-01'),
+                gender: Gender.PREFER_NOT_TO_SAY,
+                phone: dto.mobileNumber ?? null,
+                email: dto.email ?? null,
+                nationality: 'Indian',
+                ownerTenantId: tenantId,
+                isPatient: false,
+                isStaff: true,
+                isActive: true,
+              },
+            });
 
-      await tx.personCredentials.create({
-        data: {
-          personId: created.id,
-          phone: dto.mobileNumber ?? null,
-          email: dto.email ?? null,
-          systemUsername: username,
-          isSystemGeneratedUsername: true,
-          passwordHash,
-          isTempPassword: true,
-        },
+      // Reserve the email on the shared identity when it has none yet (see createUser).
+      if (personLink.mode === 'reuse' && dto.email) {
+        await tx.person.updateMany({
+          where: { id: created.id, email: null },
+          data: { email: dto.email },
+        });
+      }
+
+      await this.upsertStaffCredentials(tx, created.id, {
+        phone: dto.mobileNumber ?? null,
+        email: dto.email ?? null,
+        username,
+        passwordHash,
+        isTempPassword: true,
+        isSystemGeneratedUsername: true,
       });
 
       await tx.tenantStaffMembership.create({
@@ -2630,10 +2673,22 @@ export class UsersService {
     return updated;
   }
 
-  /** Throw UsernameTakenException if the username is already in use. */
-  private async assertUsernameUnique(username: string): Promise<void> {
+  /**
+   * Throw UsernameTakenException if the username is already in use by a DIFFERENT
+   * person. `excludePersonId` is passed when reusing an existing identity (staff
+   * added onto an existing patient/person), so that person's own credential row
+   * doesn't count as a conflict.
+   */
+  private async assertUsernameUnique(
+    username: string,
+    excludePersonId?: string,
+  ): Promise<void> {
     const existing = await this.prisma.personCredentials.findFirst({
-      where: { systemUsername: username, deletedAt: null },
+      where: {
+        systemUsername: username,
+        deletedAt: null,
+        ...(excludePersonId ? { NOT: { personId: excludePersonId } } : {}),
+      },
       select: { id: true },
     });
     if (existing) {
@@ -2921,28 +2976,117 @@ export class UsersService {
   }
 
   /** Throw if the phone/email is already registered to another person. */
-  private async assertContactUnique(
-    phone?: string,
-    email?: string,
-  ): Promise<void> {
-    if (phone) {
-      const existing = await this.prisma.person.findFirst({
-        where: { phone, deletedAt: null },
+  /**
+   * Decide how a new staff member connects to the shared `Person` identity, keyed
+   * on **phone** (the global de-dup key — same basis as patient creation). This is
+   * what lets "Create Patient → Create Staff with the same phone" succeed instead
+   * of being blocked: an existing person (e.g. a patient) is REUSED and gains staff
+   * identity, rather than a duplicate person being rejected.
+   *
+   * - Existing person for this phone, NOT yet staff in this tenant → `reuse`.
+   * - Existing person already a staff member of THIS tenant → `PersonAlreadyStaffException`.
+   * - A DIFFERENT person already owns the given email → `PersonEmailTakenException`
+   *   (email can't be attached to two identities).
+   * - No person for this phone → `create` a fresh one.
+   */
+  private async resolveStaffPersonForCreate(
+    tenantId: string,
+    phone?: string | null,
+    email?: string | null,
+  ): Promise<{ mode: 'create' } | { mode: 'reuse'; personId: string }> {
+    // Match the patient flow: `Person.phone` is stored normalized (canonical
+    // 10-digit), so normalize before looking up or the reuse would miss a patient
+    // entered with a country code / spaces.
+    const normalized = normalizePhone(phone);
+    const byPhone = normalized
+      ? await this.prisma.person.findFirst({
+          where: { phone: normalized, deletedAt: null },
+          select: { id: true },
+        })
+      : null;
+
+    if (byPhone) {
+      const membership = await this.prisma.tenantStaffMembership.findFirst({
+        where: { tenantId, personId: byPhone.id, deletedAt: null },
         select: { id: true },
       });
-      if (existing) {
-        throw new PersonPhoneTakenException(phone);
+      if (membership) {
+        throw new PersonAlreadyStaffException(byPhone.id, tenantId);
       }
+      if (email) {
+        const byEmail = await this.prisma.person.findFirst({
+          where: { email, deletedAt: null },
+          select: { id: true },
+        });
+        if (byEmail && byEmail.id !== byPhone.id) {
+          throw new PersonEmailTakenException(email);
+        }
+      }
+      return { mode: 'reuse', personId: byPhone.id };
     }
+
+    // No person for this phone — an email owned by someone else still conflicts.
     if (email) {
-      const existing = await this.prisma.person.findFirst({
+      const byEmail = await this.prisma.person.findFirst({
         where: { email, deletedAt: null },
         select: { id: true },
       });
-      if (existing) {
+      if (byEmail) {
         throw new PersonEmailTakenException(email);
       }
     }
+    return { mode: 'create' };
+  }
+
+  /**
+   * Create or update the person's single `PersonCredentials` row for staff login.
+   * On REUSE the person may already have credentials (e.g. a patient-portal login),
+   * so we UPDATE in place: the staff password becomes the shared password (one
+   * identity → one password), the staff username is set, and existing login
+   * phone/email are preserved (filled only when missing). A `PersonCredentials`
+   * row is unique per person, so a plain create would otherwise violate that.
+   */
+  private async upsertStaffCredentials(
+    tx: Prisma.TransactionClient,
+    personId: string,
+    data: {
+      phone: string | null;
+      email: string | null;
+      username: string;
+      passwordHash: string;
+      isTempPassword: boolean;
+      isSystemGeneratedUsername: boolean;
+    },
+  ): Promise<void> {
+    const existing = await tx.personCredentials.findUnique({
+      where: { personId },
+      select: { id: true, phone: true, email: true },
+    });
+    if (existing) {
+      await tx.personCredentials.update({
+        where: { personId },
+        data: {
+          passwordHash: data.passwordHash,
+          isTempPassword: data.isTempPassword,
+          systemUsername: data.username,
+          isSystemGeneratedUsername: data.isSystemGeneratedUsername,
+          phone: existing.phone ?? data.phone,
+          email: existing.email ?? data.email,
+        },
+      });
+      return;
+    }
+    await tx.personCredentials.create({
+      data: {
+        personId,
+        phone: data.phone,
+        email: data.email,
+        systemUsername: data.username,
+        isSystemGeneratedUsername: data.isSystemGeneratedUsername,
+        passwordHash: data.passwordHash,
+        isTempPassword: data.isTempPassword,
+      },
+    });
   }
 
   /** Generate a globally-unique platform MRN: `KAL-YYYYMMDD-XXXXXXXX`. */

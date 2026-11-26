@@ -26,6 +26,22 @@ export class PatientMobileConflictException extends KaltrosException {
 }
 
 /**
+ * 409 — the email address already belongs to a DIFFERENT person/patient. Email is
+ * a Person-level global de-dup key (like phone): the same person may reuse their
+ * email across tenants, but two different patients may never share one.
+ */
+export class PatientEmailConflictException extends KaltrosException {
+  constructor(email: string) {
+    super(
+      'PATIENT_EMAIL_CONFLICT',
+      'A patient with this email address already exists',
+      { email },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+/**
  * 409 — a patient write hit a unique constraint we couldn't classify as a
  * mobile/UMID conflict (e.g. a DB-level partial unique index whose P2002 carries
  * no `meta.target`). Surfaced as a clean conflict instead of leaking a raw 500.

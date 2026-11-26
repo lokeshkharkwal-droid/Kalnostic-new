@@ -488,8 +488,8 @@ export class PatientAuthService {
     middleName: string | null;
     lastName: string | null;
   } | null> {
-    return this.prisma.runWithTenant(tenantId, () =>
-      this.prisma.patient.findFirst({
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.patient.findFirst({
         where: { tenantId, personId, deletedAt: null },
         select: {
           id: true,

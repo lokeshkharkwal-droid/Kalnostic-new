@@ -1,0 +1,34 @@
+meta {
+  name: 07 Download Bill PDF
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/subscription/bills/{{subscriptionBillId}}/pdf
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  subscriptionBillId: 1
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("is a PDF", function () {
+    expect(res.getHeader("content-type")).to.include("application/pdf");
+  });
+}
+
+docs {
+  One subscription bill as a PDF (proxied `GET /bills/pdf`). Streams the raw PDF
+  bytes with `Content-Type: application/pdf` (served inline) — the response is NOT
+  wrapped in the JSON envelope. Tenant (→ business id) comes from the JWT.
+}
