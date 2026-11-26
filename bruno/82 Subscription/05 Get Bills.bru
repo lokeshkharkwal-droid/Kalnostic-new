@@ -1,0 +1,39 @@
+meta {
+  name: 05 Get Bills
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/subscription/bills
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+script:post-response {
+  const data = res.getBody() && res.getBody().data;
+  if (Array.isArray(data) && data.length && data[0].id != null) {
+    bru.setEnvVar("subscriptionBillId", String(data[0].id));
+  }
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+  test("returns an array of bills", function () {
+    expect(res.getBody().data).to.be.an("array");
+  });
+}
+
+docs {
+  The business's subscription bills (proxied `GET /bills`). Each row carries
+  `id`, `bill_status`, `payment_status`, `reference_number`, `context_date`,
+  `bill_period`, `total_charges`, `total_tax`, `total_tds`, `net_payable`,
+  `balance_amount`. Returns `[]` when there are none. Captures the first bill id
+  into `{{subscriptionBillId}}` for the bill-view / bill-pdf requests below.
+}

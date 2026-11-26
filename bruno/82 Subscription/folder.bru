@@ -1,0 +1,58 @@
+meta {
+  name: 82 Subscription
+  seq: 82
+}
+
+docs {
+  # Subscription
+
+  Business Admin › Business Settings › Subscription Plan — a thin **proxy** to the
+  external subscription microservice (`SUBSCRIPTION_API_URL`), ported from the
+  EzHealthTrack `businessSubscription` flow. Kalnostics stores no subscription
+  data: the subscription server owns the client record, plans, orders and bills.
+
+  How it works:
+  - The caller's tenant comes from the JWT; the integer `business_id` the server
+    keys the client by is resolved server-side from `Tenant.legacyTenantId`
+    (falling back to `exchangeTenantId`). The client never supplies a business id.
+  - Each call is signed with the `key` / `secret` headers. Writes (`register`,
+    `change-plan`) carry the `{ data: { key, secret, peer_tenant_id, … , data } }`
+    envelope; reads send the signed headers plus a query string.
+  - The server answers `{ s, m, data: { original } }` with `s === '200'` on success;
+    list payloads live in `data.original.data`.
+
+  Error codes:
+  - `SUBSCRIPTION_NOT_CONFIGURED` (503) — the env vars are not set for this
+    environment.
+  - `SUBSCRIPTION_BUSINESS_ID_MISSING` (409) — the tenant has no integer business id
+    yet, so it cannot be keyed on the subscription server.
+  - `SUBSCRIPTION_REGISTRATION_FAILED` / `SUBSCRIPTION_PLAN_CHANGE_FAILED` (502) —
+    the subscription server rejected the write.
+  - `SUBSCRIPTION_UNREACHABLE` (502) — the subscription server did not respond.
+
+  Use a Business Admin token (`{{businessAccessToken}}`). Requires
+  `SUBSCRIPTION_API_URL` / `SUBSCRIPTION_API_KEY` / `SUBSCRIPTION_API_SECRET` to be
+  set, and the caller's tenant to have a `legacyTenantId` / `exchangeTenantId`.
+
+  ---
+
+  ## Inbound usage reporting (requests 08–09)
+
+  The opposite direction: the external **subscription scheduler** calls Kalnostics
+  to pull per-tenant usage metrics (ported from EzHealthTrack
+  `subscription/api/generateBusinessFeatureReport` + `businessFeatureCount`).
+
+  - These routes are **`@Public()`** (no business JWT) and authenticated by the
+    shared **`key` / `secret` headers** (= `SUBSCRIPTION_API_KEY` /
+    `SUBSCRIPTION_API_SECRET`), checked constant-time and **fail-closed**
+    (`401 SUBSCRIPTION_API_UNAUTHORIZED` when unconfigured or mismatched) — closing
+    the hole the legacy PHP endpoint left open.
+  - `business_id` (integer) is resolved to a tenant via `legacyTenantId` →
+    `exchangeTenantId`. No match → HTTP 200 with `{ s: "500", m: "Business not
+    found!" }` (legacy contract).
+  - Responses are the raw EzHealthTrack `{ s, m, data }` envelope (these routes
+    bypass the global `ResponseInterceptor`), so the scheduler is drop-in
+    compatible. The flow is **send-only** — nothing is persisted locally.
+  - Scheduling lives on the subscription service (daily `report_context=yesterday`
+    + monthly `report_context=monthly`); Kalnostics runs no cron for this.
+}

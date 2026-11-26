@@ -210,6 +210,18 @@ export class InvalidModuleKeyException extends KaltrosException {
   }
 }
 
+/** 409 — the person is already a staff member of this tenant. */
+export class PersonAlreadyStaffException extends KaltrosException {
+  constructor(personId: string, tenantId: string) {
+    super(
+      'PERSON_ALREADY_STAFF',
+      'This person is already a staff member of this business',
+      { personId, tenantId },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
 /** 404 — no staff membership for this person in the tenant. */
 export class StaffMembershipNotFoundException extends KaltrosException {
   constructor(personId: string, tenantId: string) {

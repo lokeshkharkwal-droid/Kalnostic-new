@@ -1,0 +1,38 @@
+meta {
+  name: 02 Register Subscription
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/subscription/register
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  **Register Subscription** — registers the business as a client on the subscription
+  server (proxied `POST /clients`). This is the prerequisite that unlocks plans and
+  bills; the equivalent of the legacy "Register Subscription" button.
+
+  No body: the payload is built server-side from the tenant record —
+  `name`, `code` (shortName), `address` (addressLine), `address_2` (area), `city`,
+  `country`, `postcode` (pincode), `contact_email`, `contact_phone`, and the
+  resolved `business_id`. PAN / GST / contact-person are not held on the Tenant, so
+  they are sent blank (as the legacy flow did when absent).
+
+  Returns the created client record (`data.original`). Throws
+  `SUBSCRIPTION_REGISTRATION_FAILED` (502) if the server rejects the call,
+  `SUBSCRIPTION_NOT_CONFIGURED` (503) when unconfigured, or
+  `SUBSCRIPTION_BUSINESS_ID_MISSING` (409) when the tenant has no business id.
+}

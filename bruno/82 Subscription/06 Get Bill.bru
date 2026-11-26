@@ -1,0 +1,32 @@
+meta {
+  name: 06 Get Bill
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/subscription/bills/{{subscriptionBillId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+vars:pre-request {
+  subscriptionBillId: 1
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  One subscription bill as JSON (proxied `GET /bills/json`). The bill is returned in
+  `data` (the server's top-level `bill_json`), or `null` when not found. The
+  `subscriptionBillId` defaults to 1 here and is overwritten by "05 Get Bills".
+  Tenant (→ business id) comes from the JWT.
+}

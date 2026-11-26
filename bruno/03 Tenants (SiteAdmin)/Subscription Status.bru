@@ -1,0 +1,22 @@
+meta {
+  name: Subscription Status
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/siteadmin/tenants/{{tenantId}}/subscription-status
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{siteAdminToken}}
+}
+
+docs {
+  The tenant's current Subscription client record (`GET /clients/show`), or `null`
+  in `data` when the business is not yet registered on the Subscription server.
+  SiteAdmin only — requires `business:read`. The record carries name / address /
+  PAN / GST / contact and a nested `plan` (or `false`).
+}

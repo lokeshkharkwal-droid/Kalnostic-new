@@ -1,0 +1,76 @@
+meta {
+  name: 09 Business Feature Count
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/subscription/api/business-feature-count
+  body: json
+  auth: none
+}
+
+headers {
+  key: {{subscriptionApiKey}}
+  secret: {{subscriptionApiSecret}}
+  Content-Type: application/json
+}
+
+vars:pre-request {
+  subscriptionBusinessId: 347
+  subscriptionApiKey: business_ezhealthtrack_com
+  subscriptionApiSecret: bus_ez_msg@123!
+}
+
+body:json {
+  {
+    "business_id": "{{subscriptionBusinessId}}",
+    "bill_period_from": "2026-11-01",
+    "bill_period_to": "2026-11-30",
+    "bill_features": ["order_count", "order_amount", "sms", "email", "users", "branch"]
+  }
+}
+
+tests {
+  test("200 OK (HTTP)", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  # Business Feature Count (INBOUND — ad-hoc)
+
+  The ad-hoc variant, ported from EzHealthTrack
+  `subscription/api/businessFeatureCount`. Lets the subscription service request an
+  **arbitrary period + feature subset** and get the counts back directly.
+
+  - **Auth:** shared `key` / `secret` headers (same as `08` — `@Public()`, not a
+    JWT). Fail-closed on a bad/absent pair (`401`).
+  - **Body:**
+    - `business_id` (required) — integer id (as a string), resolved to a tenant.
+    - `bill_period_from` / `bill_period_to` (optional) — `YYYY-MM-DD` or
+      `YYYY-MM-DD HH:mm:ss`. A date-only bound snaps to the start/end of that day.
+      Omitted → the current day.
+    - `bill_features` (optional) — the feature codes to compute. Omitted → the full
+      daily + monthly catalogue.
+
+  Response (raw EzHealthTrack envelope; `data` is the `{ code → metric }` map):
+
+  ```json
+  {
+    "s": "200",
+    "m": "Business feature details",
+    "data": {
+      "order_count": { "count": 210 },
+      "order_amount": { "value": 845000 },
+      "sms": { "count": 640 },
+      "email": { "count": 512 },
+      "users": { "count": 23 },
+      "branch": { "count": 4 }
+    }
+  }
+  ```
+
+  A `business_id` with no matching tenant returns HTTP 200 + `{ s: "500", m:
+  "Business not found!" }`.
+}

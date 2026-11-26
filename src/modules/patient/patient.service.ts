@@ -42,6 +42,7 @@ import {
   FamilyLinkNotFoundException,
   MedicalHistoryNotFoundException,
   PatientDocumentNotFoundException,
+  PatientEmailConflictException,
   PatientMobileConflictException,
   PatientNotFoundException,
   PatientOtherBranchException,
@@ -566,7 +567,28 @@ export class PatientService {
       !ctx.isFamilyMember &&
       ctx.legacyPatientId == null &&
       isValidPhone(normalized);
+
+    // Email is a Person-level global de-dup key (like phone): a given email may
+    // belong to exactly one person. Resolve who (if anyone) owns it so we can
+    // reject two DIFFERENT patients sharing an email, while still allowing the
+    // SAME person to reuse their own email across tenants. Family members /
+    // migrated rows are exempt (they legitimately share contact details).
+    const emailGuarded = !ctx.isFamilyMember && ctx.legacyPatientId == null;
+    const email = dto.email?.trim() || null;
+    const personByEmail =
+      emailGuarded && email
+        ? await this.prisma.person.findFirst({
+            where: { email, deletedAt: null },
+            select: { id: true },
+          })
+        : null;
+
     if (!identityBacked) {
+      // No phone identity (e.g. B2B patient without a mobile): the email still
+      // can't already belong to someone else.
+      if (personByEmail) {
+        throw new PatientEmailConflictException(email ?? '');
+      }
       return { mode: 'none' };
     }
     const existing = await this.prisma.person.findFirst({
@@ -574,6 +596,11 @@ export class PatientService {
       select: { id: true },
     });
     if (!existing) {
+      // Brand-new phone → a new identity. Its email must be free, or it would be
+      // a second patient sharing another person's email.
+      if (personByEmail) {
+        throw new PatientEmailConflictException(email ?? '');
+      }
       return { mode: 'create', phone: normalized };
     }
     const localActive = await this.prisma.patient.findFirst({
@@ -592,11 +619,17 @@ export class PatientService {
     if (localActive) {
       throw new PatientMobileConflictException(dto.mobile ?? '');
     }
+    // The email, when supplied, must not belong to a DIFFERENT person than the one
+    // this phone resolves to (an inconsistent "person X's phone + person Y's email").
+    if (personByEmail && personByEmail.id !== existing.id) {
+      throw new PatientEmailConflictException(email ?? '');
+    }
     // The mobile belongs to a Person registered only at OTHER tenants. Rather
     // than blocking registration / Create Order with a cross-tenant prompt,
     // link this new patient to the shared platform identity. `resolvePersonId`
-    // only flags `isPatient` on it — the owning tenant's basic details are never
-    // edited (CLAUDE.md §4.4) — so isolation is preserved.
+    // only flags `isPatient` (and reserves the email if the person had none) — the
+    // owning tenant's basic details are never overwritten (CLAUDE.md §4.4) — so
+    // isolation is preserved.
     return { mode: 'existing', personId: existing.id };
   }
 
@@ -637,7 +670,12 @@ export class PatientService {
             personLink,
           );
         } catch (e) {
-          this.rethrowPatientWriteConflict(e, dto.mobile ?? '', manualUmId);
+          this.rethrowPatientWriteConflict(
+            e,
+            dto.mobile ?? '',
+            manualUmId,
+            dto.email ?? null,
+          );
         }
       }
       if (!options?.allowAutoUmId) {
@@ -695,6 +733,9 @@ export class PatientService {
         }
         if (this.isMobileConflict(e)) {
           throw new PatientMobileConflictException(dto.mobile ?? '');
+        }
+        if (this.isEmailConflict(e)) {
+          throw new PatientEmailConflictException(dto.email ?? '');
         }
         throw e;
       }
@@ -788,9 +829,21 @@ export class PatientService {
       return null;
     }
     if (personLink.mode === 'existing') {
+      // Reserve the email on the shared identity when it has none yet, so email
+      // stays a global uniqueness key across patients even on the reuse path.
+      // Never overwrite an existing email (CLAUDE.md §4.4 — don't edit the owning
+      // tenant's basic details); the conflict pre-check already guaranteed the
+      // email isn't another person's.
+      const current = await tx.person.findUnique({
+        where: { id: personLink.personId },
+        select: { email: true },
+      });
       await tx.person.update({
         where: { id: personLink.personId },
-        data: { isPatient: true },
+        data: {
+          isPatient: true,
+          ...(dto.email && !current?.email ? { email: dto.email } : {}),
+        },
       });
       return personLink.personId;
     }
@@ -1263,7 +1316,12 @@ export class PatientService {
       });
       return updated;
     } catch (e) {
-      this.rethrowPatientWriteConflict(e, dto.mobile ?? '', dto.umId ?? null);
+      this.rethrowPatientWriteConflict(
+        e,
+        dto.mobile ?? '',
+        dto.umId ?? null,
+        dto.email ?? null,
+      );
     }
   }
 
@@ -1947,7 +2005,9 @@ export class PatientService {
         return { link, member };
       });
     } catch (e) {
-      this.rethrowPatientWriteConflict(e, dto.mobile, dto.umId ?? null);
+      // Family members are exempt from the email de-dup guard (they may share a
+      // household email), so no email is classified here.
+      this.rethrowPatientWriteConflict(e, dto.mobile, dto.umId ?? null, null);
     }
   }
 
@@ -2196,6 +2256,11 @@ export class PatientService {
     return this.violationTargets(e, 'mobile');
   }
 
+  /** True when a P2002 comes from the globally-unique `Person.email` index. */
+  private isEmailConflict(e: unknown): boolean {
+    return this.violationTargets(e, 'email');
+  }
+
   /**
    * Map a patient write's unique-violation (P2002) to a typed conflict — UMID vs
    * mobile — or rethrow anything else unchanged. Never returns.
@@ -2204,12 +2269,16 @@ export class PatientService {
     e: unknown,
     mobile: string,
     umId: string | null,
+    email: string | null = null,
   ): never {
     if (this.isUmIdConflict(e)) {
       throw new PatientUmIdConflictException(umId ?? '');
     }
     if (this.isMobileConflict(e)) {
       throw new PatientMobileConflictException(mobile);
+    }
+    if (this.isEmailConflict(e)) {
+      throw new PatientEmailConflictException(email ?? '');
     }
     // Any OTHER unique violation (P2002) — e.g. a DB-level partial index whose
     // error carries no recognizable `meta.target` — must not escape as a raw

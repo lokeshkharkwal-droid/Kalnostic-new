@@ -1,0 +1,35 @@
+meta {
+  name: 01 Get Subscription
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/subscription
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{businessAccessToken}}
+}
+
+tests {
+  test("200 OK", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+}
+
+docs {
+  The business's current subscription client record (proxied from the subscription
+  server's `GET /clients/show`). Returns `null` in `data` when the business is not
+  yet registered — the frontend then shows the **Register Subscription** button.
+
+  The record (when present) carries `name`, `code`, address fields, `pan_number` /
+  `gst_number`, contact details, and a nested `plan` ({ title, slug, start_date,
+  end_date, features_json }) or `false` when no plan is attached yet.
+
+  Tenant (→ business id) comes from the JWT. Throws `SUBSCRIPTION_NOT_CONFIGURED`
+  (503) when the integration is unconfigured, or `SUBSCRIPTION_BUSINESS_ID_MISSING`
+  (409) when the tenant has no integer business id.
+}

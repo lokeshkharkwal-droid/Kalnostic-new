@@ -6,6 +6,7 @@ import { AuthRoleModule } from '../auth-role/auth-role.module';
 import { BranchModule } from '../branch/branch.module';
 import { LocationModule } from '../location/location.module';
 import { ExchangeModule } from '../communication/exchange/exchange.module';
+import { SubscriptionModule } from '../subscription/subscription.module';
 import { TenantController } from './tenant.controller';
 import { TenantLocaleController } from './tenant-locale.controller';
 import { TenantAccessionSettingsController } from './tenant-accession-settings.controller';
@@ -29,6 +30,7 @@ import { ExchangeTenantIdService } from './exchange-tenant-id.service';
     BranchModule,
     LocationModule,
     ExchangeModule,
+    SubscriptionModule,
     TenantTimeZoneModule,
   ],
   controllers: [
