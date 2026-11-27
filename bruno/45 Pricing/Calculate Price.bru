@@ -61,6 +61,12 @@ docs {
     `GET /registration-settings/emergency-pricing`, or the edited order's
     `isEmergencyPricing`). Preview only — the order save resolves the
     authoritative state itself. Omitted/false = list prices (Quotations).
+  - Optional `orderId` + `keptItemIds` (Update Order only) — on an ACTIVE order
+    (ORDER, or a checked-in appointment) the listed `OrderItem` ids that are still
+    in `labTestIds`/`labPanelIds` are priced at the price they were sold at
+    (`OrderItem.unitPrice`), never today's master price; every other id (newly
+    added tests) uses the live list. Ignored for DRAFT/QUOTE/not-yet-checked-in
+    appointments (not billed yet) and when omitted (Create Order).
   - `orderDiscount` is echoed from the body, clamped to `≤ totalAmount`. A
     fractional value (e.g. from percentage math on the client) is accepted and
     **rounded to a whole minor unit**, matching how the discount is stored when

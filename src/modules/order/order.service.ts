@@ -172,11 +172,7 @@ import {
  * both; only Collection displays it.
  */
 type BillingReport =
-  | 'billing'
-  | 'collection'
-  | 'outstanding'
-  | 'refund'
-  | 'cancel';
+  'billing' | 'collection' | 'outstanding' | 'refund' | 'cancel';
 
 /**
  * Order-level (or line-level) money figures, whole rupees. The payment-mode
@@ -317,6 +313,12 @@ import {
   isDisallowedOverpayment,
   type IncomingOrderItem,
 } from './utils/order-item-diff';
+import {
+  buildPanelSnapshot,
+  buildTestSnapshot,
+  shouldFreezeKeptLines,
+  type CatalogSnapshot,
+} from './utils/catalog-snapshot';
 import { assertQuoteTakesNoNewMoney } from './utils/quote-payment';
 
 /**
@@ -747,6 +749,11 @@ export class OrderService {
       dto.items ?? [],
       isEmergencyPricing,
     );
+    const itemSnapshots = await this.loadCatalogSnapshots(
+      tenantId,
+      branchId,
+      dto.items ?? [],
+    );
 
     // B2B orders bypass ONLY the branch Previous-Dues + Partial-Billing rules:
     // when a referral panel is attached the order follows that panel's own credit/
@@ -1023,6 +1030,11 @@ export class OrderService {
                 : (itemPrices.get(
                     i.branchLabTestId ?? i.branchLabPanelId ?? '',
                   ) ?? 0),
+              catalogSnapshot: this.snapshotJson(
+                itemSnapshots.get(
+                  i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                ),
+              ),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
@@ -1503,6 +1515,54 @@ export class OrderService {
       prices.set(p.id, p.listPrice);
     }
     return prices;
+  }
+
+  /** Prisma JSON value for a snapshot (`undefined` = leave the column NULL). */
+  private snapshotJson(
+    snap: CatalogSnapshot | undefined,
+  ): Prisma.InputJsonValue | undefined {
+    return snap ? (snap as unknown as Prisma.InputJsonValue) : undefined;
+  }
+
+  /**
+   * Snapshot the catalogue test/panel behind each non-direct line as it is right
+   * now (see {@link CatalogSnapshot}). Keyed by test/panel id. Direct lines and
+   * ids that no longer resolve are simply absent (their column stays NULL).
+   */
+  private async loadCatalogSnapshots(
+    tenantId: string,
+    branchId: string | null,
+    items: Array<{ branchLabTestId?: string; branchLabPanelId?: string }>,
+  ): Promise<Map<string, CatalogSnapshot>> {
+    const out = new Map<string, CatalogSnapshot>();
+    if (!branchId || !items.length) return out;
+    const testIds = items
+      .map((i) => i.branchLabTestId)
+      .filter((v): v is string => Boolean(v));
+    const panelIds = items
+      .map((i) => i.branchLabPanelId)
+      .filter((v): v is string => Boolean(v));
+    const [tests, panels] = await Promise.all([
+      testIds.length
+        ? this.prisma.branchLabTest.findMany({
+            where: { id: { in: testIds }, tenantId, branchId, deletedAt: null },
+          })
+        : Promise.resolve([]),
+      panelIds.length
+        ? this.prisma.branchLabPanel.findMany({
+            where: {
+              id: { in: panelIds },
+              tenantId,
+              branchId,
+              deletedAt: null,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    const now = new Date();
+    for (const t of tests) out.set(t.id, buildTestSnapshot(t, now));
+    for (const p of panels) out.set(p.id, buildPanelSnapshot(p, now));
+    return out;
   }
 
   /**
@@ -6955,6 +7015,40 @@ export class OrderService {
       }
     }
 
+    // Billed orders: stored price of every kept (id-matched) catalogue line,
+    // keyed by test/panel id — see shouldFreezeKeptLines. Also drives the
+    // kept-line write below, which then leaves price + snapshot untouched.
+    const freezeKept = shouldFreezeKeptLines(wasActiveOrder);
+    const keptFrozenPrices = new Map<string, number>();
+    const keptFrozenItemIds = new Set<string>();
+    if (freezeKept && dto.items !== undefined) {
+      const incomingIds = dto.items
+        .map((i) => (i as { id?: string }).id)
+        .filter((v): v is string => Boolean(v));
+      if (incomingIds.length) {
+        const stored = await this.prisma.orderItem.findMany({
+          where: {
+            id: { in: incomingIds },
+            orderId: id,
+            tenantId,
+            deletedAt: null,
+            direct: null,
+          },
+          select: {
+            id: true,
+            unitPrice: true,
+            branchLabTestId: true,
+            branchLabPanelId: true,
+          },
+        });
+        for (const row of stored) {
+          keptFrozenItemIds.add(row.id);
+          const key = row.branchLabTestId ?? row.branchLabPanelId;
+          if (key) keptFrozenPrices.set(key, row.unitPrice);
+        }
+      }
+    }
+
     // Enforce the branch's Previous-Dues + Partial-Billing + TDS/Discount rules
     // when a draft is finalized (or an order re-saved) to `status = ORDER`, OR when
     // an appointment is checked in (`isActiveOrder`). Uses the incoming ledger/items
@@ -6997,6 +7091,12 @@ export class OrderService {
           dto.items,
           isEmergencyPricing,
         );
+        // An already-billed order keeps its kept lines at the price they were
+        // sold at: gate/discount maths must see the stored price, not today's
+        // master price.
+        for (const [catalogId, price] of keptFrozenPrices) {
+          itemPrices.set(catalogId, price);
+        }
       } else {
         const stored = await this.prisma.orderItem.findMany({
           where: { orderId: id, tenantId, deletedAt: null },
@@ -7287,23 +7387,41 @@ export class OrderService {
             data: { deletedAt: now },
           });
         }
-        // Update kept items (price may have changed if the list was re-priced).
+        // Update kept items. On an already-billed order the line keeps the price
+        // and catalogue snapshot it was sold with (master-data edits/syncs must
+        // never alter it); before billing (DRAFT/APPOINTMENT/QUOTE) it still
+        // follows the current list.
+        const repriceKept = itemDiff.keep.filter(
+          (k) => !keptFrozenItemIds.has(k.id),
+        );
         const keepPrices = await this.loadItemUnitPrices(
           tenantId,
           branchId,
-          itemDiff.keep.map((k) => k.incoming as OrderItemDto),
+          repriceKept.map((k) => k.incoming as OrderItemDto),
           isEmergencyPricing,
+        );
+        const keepSnapshots = await this.loadCatalogSnapshots(
+          tenantId,
+          branchId,
+          repriceKept.map((k) => k.incoming as OrderItemDto),
         );
         for (const { id: itemId, incoming } of itemDiff.keep) {
           const i = incoming as OrderItemDto;
+          const frozen = keptFrozenItemIds.has(itemId);
+          const catalogKey = i.branchLabTestId ?? i.branchLabPanelId ?? '';
           await tx.orderItem.update({
             where: { id: itemId },
             data: {
-              unitPrice: i.direct
-                ? (i.unitPrice ?? 0)
-                : (keepPrices.get(
-                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
-                  ) ?? 0),
+              ...(frozen
+                ? {}
+                : {
+                    unitPrice: i.direct
+                      ? (i.unitPrice ?? 0)
+                      : (keepPrices.get(catalogKey) ?? 0),
+                    catalogSnapshot: this.snapshotJson(
+                      keepSnapshots.get(catalogKey),
+                    ),
+                  }),
               discount: i.discount ?? 0,
               discountMode: i.discountMode ?? null,
               discountValue: i.discountValue ?? null,
@@ -7318,6 +7436,11 @@ export class OrderService {
             branchId,
             itemDiff.add,
             isEmergencyPricing,
+          );
+          const addSnapshots = await this.loadCatalogSnapshots(
+            tenantId,
+            branchId,
+            itemDiff.add,
           );
           for (const raw of itemDiff.add) {
             const i = raw as OrderItemDto;
@@ -7341,6 +7464,11 @@ export class OrderService {
                   : (addPrices.get(
                       i.branchLabTestId ?? i.branchLabPanelId ?? '',
                     ) ?? 0),
+                catalogSnapshot: this.snapshotJson(
+                  addSnapshots.get(
+                    i.branchLabTestId ?? i.branchLabPanelId ?? '',
+                  ),
+                ),
                 discount: i.discount ?? 0,
                 discountMode: i.discountMode ?? null,
                 discountValue: i.discountValue ?? null,

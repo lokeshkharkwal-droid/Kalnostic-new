@@ -2823,6 +2823,18 @@ the state the client priced with — a mismatch → <span class="pill">409 EMERG
 <code>POST /pricing/calculate</code> accepts the same optional <code>emergencyPricing</code> for the preview, and
 <code>GET /branch-lab-tests/options</code> returns each test's <code>emergencyPrice</code>.</div>
 
+<div class="note"><b>An active order keeps the prices it was billed at.</b> Master-data edits and syncs update branch
+tests/panels in place, so <code>PATCH /orders/:id</code> no longer re-prices <b>kept</b> lines (items sent with an existing
+<code>id</code>) once the order is active (ORDER, or a checked-in appointment): their <code>unitPrice</code> and
+<code>catalogSnapshot</code> are left untouched, and the discount/TDS gates use the stored price. Only newly added lines
+(no <code>id</code>, or removed-then-re-added) are priced from the current list and snapshotted. DRAFT / QUOTE /
+not-yet-checked-in APPOINTMENT still follow the current list. <code>OrderItem.catalogSnapshot</code> (returned on each item of
+<code>GET /orders/:id</code>; <code>null</code> on direct lines) records the test/panel as sold: <code>v</code>, <code>kind</code>,
+<code>name</code>, <code>code</code>, <code>departmentId</code>, <code>listId</code>, <code>listPrice</code>, <code>emergencyPrice</code>,
+<code>priceMsrp</code>, <code>isAllowDiscounts</code>, <code>tat</code>, <code>schedule</code>, <code>capturedAt</code>
+(<code>backfilled: true</code> on rows migrated from before the column existed). <code>POST /pricing/calculate</code> accepts optional
+<code>orderId</code> + <code>keptItemIds</code> so the Update Order preview prices kept lines at their sold price.</div>
+
 <div class="note"><b>Lab test Age Restriction is enforced on orders.</b> <code>POST /orders</code> (every status except
 QUOTE) rejects a test line whose branch test is age-restricted — and a panel line containing such a member — when the
 patient's age on <code>orderDate</code> is outside its range (min inclusive, max covers its whole unit):

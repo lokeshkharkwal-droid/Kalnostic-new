@@ -123,6 +123,7 @@ describe('OrderService.create — idempotent submissions', () => {
       spyOn(name).mockReturnValue(undefined);
     }
     spyOn('loadItemUnitPrices').mockResolvedValue(new Map());
+    spyOn('loadCatalogSnapshots').mockResolvedValue(new Map());
   });
 
   it('returns the already-created order for a repeated submission, without validating or writing again', async () => {

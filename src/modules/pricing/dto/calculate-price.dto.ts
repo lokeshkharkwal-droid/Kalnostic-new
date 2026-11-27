@@ -65,4 +65,26 @@ export class CalculatePriceDto {
   @IsBoolean()
   @IsOptional()
   emergencyPricing?: boolean;
+
+  /**
+   * Update Order only: the order being edited. Together with `keptItemIds` it
+   * makes the server price the order's kept lines at the price they were sold at
+   * (`OrderItem.unitPrice`) instead of today's master price — but only once the
+   * order is active/billed, mirroring `OrderService.update`. Omitted = every id
+   * is priced from the live list (Create Order, quotations).
+   */
+  @IsUUID('all')
+  @IsOptional()
+  orderId?: string;
+
+  /**
+   * Update Order only: `OrderItem.id`s of the lines the form is keeping. Lines in
+   * `labTestIds`/`labPanelIds` that belong to these items use their stored
+   * price; every other id (newly added tests) uses the live price.
+   */
+  @IsArray()
+  @IsOptional()
+  @IsUUID('all', { each: true })
+  @ArrayUnique()
+  keptItemIds?: string[];
 }

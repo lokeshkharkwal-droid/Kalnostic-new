@@ -7315,6 +7315,16 @@ model OrderItem {
   /// `listPrice`. Stable even if the list is later re-priced.
   unitPrice Int @default(0) @map("unit_price")
 
+  /// Versioned (`v`) snapshot of the catalogue test/panel as it was when this
+  /// line was created: name, code, department, list, list/emergency/MSRP price,
+  /// discount flag, TAT and schedule. Master-data edits and syncs update
+  /// BranchLabTest/Panel in place, so this is what keeps an existing order
+  /// showing what was actually sold. `unitPrice` remains the authoritative
+  /// charged amount. NULL on direct lines, and on rows not yet backfilled
+  /// (readers fall back to the live join). `backfilled: true` marks rows whose
+  /// metadata was captured after the fact from the then-current master data.
+  catalogSnapshot Json? @map("catalog_snapshot")
+
   /// Per-line discount in rupees, up to 2 decimal places (0 = none). Captured
   /// at order/quotation time so item-level discounts round-trip on edit; the
   /// order-level aggregate still lives on PaymentDetails.orderDiscount for

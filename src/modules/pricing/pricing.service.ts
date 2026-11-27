@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isActiveOrderForGates } from '../order/utils/order-gate-scope.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CalculatePriceDto } from './dto/calculate-price.dto';
 import {
@@ -46,8 +47,19 @@ export class PricingService {
     branchId: string,
     dto: CalculatePriceDto,
   ): Promise<PriceCalculation> {
-    const testIds = dto.labTestIds ?? [];
-    const panelIds = dto.labPanelIds ?? [];
+    let testIds = dto.labTestIds ?? [];
+    let panelIds = dto.labPanelIds ?? [];
+
+    // Update Order on an active (billed) order: kept lines are priced at what
+    // they were sold for, so only the remaining (new) ids go through the live list.
+    const frozen = await this.loadFrozenKeptPrices(tenantId, dto);
+    const frozenTotal = frozen.reduce((acc, f) => acc + f.unitPrice, 0);
+    if (frozen.length) {
+      const frozenTests = new Set(frozen.map((f) => f.branchLabTestId));
+      const frozenPanels = new Set(frozen.map((f) => f.branchLabPanelId));
+      testIds = testIds.filter((id) => !frozenTests.has(id));
+      panelIds = panelIds.filter((id) => !frozenPanels.has(id));
+    }
 
     const [tests, panels] = await Promise.all([
       testIds.length
@@ -83,7 +95,7 @@ export class PricingService {
         acc + effectiveLabTestPrice(t.listPrice, t.emergencyPrice, emergency),
       0,
     );
-    const totalAmount = testsTotal + sum(panels);
+    const totalAmount = testsTotal + sum(panels) + frozenTotal;
     // The form sends the summed per-line diagnostic discounts; never let it
     // exceed the items total (which would make the payable negative).
     const orderDiscount = roundToTwoDecimalPlaces(
@@ -105,5 +117,62 @@ export class PricingService {
       visitingCharges,
       payableAmount,
     };
+  }
+
+  /**
+   * Stored prices of the order's kept catalogue lines, when (and only when) the
+   * order is active so its prices are frozen. Empty for any other request.
+   */
+  private async loadFrozenKeptPrices(
+    tenantId: string,
+    dto: CalculatePriceDto,
+  ): Promise<
+    Array<{
+      unitPrice: number;
+      branchLabTestId: string | null;
+      branchLabPanelId: string | null;
+    }>
+  > {
+    if (!dto.orderId || !dto.keptItemIds?.length) return [];
+    const order = await this.prisma.order.findFirst({
+      where: { id: dto.orderId, tenantId, deletedAt: null },
+      select: {
+        status: true,
+        appointment: { select: { status: true } },
+      },
+    });
+    if (
+      !order ||
+      !isActiveOrderForGates({
+        effectiveStatus: order.status,
+        appointmentStatus: order.appointment?.status ?? null,
+        checkIn: false,
+      })
+    ) {
+      return [];
+    }
+    const rows = await this.prisma.orderItem.findMany({
+      where: {
+        id: { in: dto.keptItemIds },
+        orderId: dto.orderId,
+        tenantId,
+        deletedAt: null,
+        direct: null,
+      },
+      select: {
+        unitPrice: true,
+        branchLabTestId: true,
+        branchLabPanelId: true,
+      },
+    });
+    // Only lines the form still lists are frozen (a kept id whose test was
+    // dropped from the id arrays must not be added to the total).
+    const tests = new Set(dto.labTestIds ?? []);
+    const panels = new Set(dto.labPanelIds ?? []);
+    return rows.filter(
+      (r) =>
+        (r.branchLabTestId && tests.has(r.branchLabTestId)) ||
+        (r.branchLabPanelId && panels.has(r.branchLabPanelId)),
+    );
   }
 }
